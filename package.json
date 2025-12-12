@@ -10,7 +10,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/2aCD-creator/volumio-plugins.git"
+    "url": "https://github.com/foonerd/peppy_screensaver.git"
   },
   "volumio_info": {
     "prettyName": "PeppyMeter Screensaver",
