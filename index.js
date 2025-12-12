@@ -83,7 +83,7 @@ peppyScreensaver.prototype.onStart = function() {
     var self = this;
     var defer=libQ.defer();
     var lastStateIsPlaying = false;
-    var Timeout;
+    self.Timeout = null;
 
     // load language strings here again, otherwise needs restart after installation
     self.commandRouter.loadI18nStrings();
@@ -208,7 +208,7 @@ peppyScreensaver.prototype.onStart = function() {
             var ScreenTimeout = (parseInt(self.config.get('timeout'),10)) * 1000;
           
             if (ScreenTimeout > 0){ // for 0 do nothing
-                Timeout = setInterval(function () {
+                self.Timeout = setInterval(function () {
                   if (!fs.existsSync(runFlag)){
                     exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {        
                     if (error !== null) {
@@ -224,7 +224,8 @@ peppyScreensaver.prototype.onStart = function() {
         } else if (lastStateIsPlaying) {
             if (state.status === 'pause' || (state.status === 'stop' && (state.service === 'webradio' || state.uri === ''))) {
                 if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
-                clearTimeout(Timeout);
+                clearInterval(self.Timeout);
+                self.Timeout = null;
                 lastStateIsPlaying = false;
             }
         }
@@ -264,6 +265,12 @@ peppyScreensaver.prototype.onStop = function() {
         // redirect spotify to volumio
         if (fs.existsSync(spotify_config)){self.switch_Spotify(false);}
 		
+        // clear timeout interval
+        if (self.Timeout) {
+            clearInterval(self.Timeout);
+            self.Timeout = null;
+        }
+        
         // remove old flag
         if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
         
@@ -736,6 +743,8 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
     if (!noChanges) {
         fs.writeFileSync(PeppyConf, ini.stringify(peppy_config, {whitespace: true}));
         fs.writeFileSync(SpectrumConf, ini.stringify(spectrum_config, {whitespace: true}));
+        // Restart meter to apply new settings
+        if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
         // unmount /tmp/config to make changes permanent
         //self.unmount_tmpl(SpectrumConf)
         //    .then(function() {
@@ -822,6 +831,8 @@ peppyScreensaver.prototype.saveVUMeterConf = function (confData) {
     
     if (!noChanges) {
         fs.writeFileSync(PeppyConf, ini.stringify(peppy_config, {whitespace: true}));
+        // Restart meter to apply new settings
+        if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
     }
   } else {
       self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));
