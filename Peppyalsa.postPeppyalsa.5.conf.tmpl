@@ -1,0 +1,103 @@
+#------ PeppyMeter section -------
+
+# ---> pass throught audio pipeline
+# if separat alsa pipeline enabled (DSD direct)
+pcm.${alsaDirect} {
+  type empty
+  slave.pcm "postpeppyalsa"
+}
+
+# ---> input from modular alsa 
+# duplicate route for meters to play also DSD files
+pcm.${alsaMeter} {
+  type plug
+  route_policy "duplicate"
+  slave.channels 4
+  slave.pcm {
+    type multi
+
+    slaves.a.pcm "postpeppyalsa"
+    slaves.a.channels 2
+    slaves.b.pcm "mpd_peppyalsa"
+    slaves.b.channels 2
+
+    bindings.0 { slave a; channel 0; }
+    bindings.1 { slave a; channel 1; }
+    bindings.2 { slave b; channel 0; }
+    bindings.3 { slave b; channel 1; }
+  }
+}
+
+# ---> input from exclusive MPD output for peppyalsa
+# without audio output (dummy)
+pcm.mpd_peppyalsa{
+	type meter
+	slave.pcm "dummy"
+	scopes.0 peppyalsa
+}
+
+# ---> separate airplay input
+pcm.airplay {
+	type meter
+	slave.pcm "postpeppyalsa"
+	scopes.0 peppyalsa
+}
+
+# ---> separate spotify input
+pcm.${spotDirect} {
+  type empty
+  slave.pcm "postpeppyalsa"
+}
+
+pcm.${spotMeter} {
+  type plug
+  slave {
+    pcm "spd_peppyalsa"
+    format "S16_LE"   
+  }
+}
+
+# spotify meter definition
+pcm.spd_peppyalsa{
+	type meter
+	slave.pcm "copy_output"
+	scopes.0 peppyalsa
+}
+
+# standard scope
+pcm_scope.peppyalsa {
+  type peppyalsa
+  decay_ms 500
+  meter "/tmp/myfifo"
+  meter_max 100
+  meter_show 0
+  spectrum "/tmp/myfifosa"
+  spectrum_max 100
+  spectrum_size 20
+  logarithmic_frequency 1
+  logarithmic_amplitude 1
+  smoothing_factor 60
+}
+
+pcm_scope_type.peppyalsa {
+    lib /data/plugins/user_interface/peppy_screensaver/lib/libpeppyalsa.so
+}
+
+# null output
+pcm.dummy {
+  type hw
+	card Dummy
+	device 0
+}
+
+# needed for some sound cards otherwiese Spotify stops playing after 10 seconds
+pcm.copy_output {
+  type ${type}
+  slave.pcm "postpeppyalsa"
+}
+
+pcm.postpeppyalsa {
+  type empty
+  slave.pcm "postPeppyalsa"
+}
+#------ End of PeppyMeter section ------
