@@ -1,7 +1,8 @@
 # Copyright 2024 PeppyMeter for Volumio by 2aCD
-# 
-# This file is part of PeppyMeter for Volumio
-# 
+# Copyright 2025 Volumio 4 adaptation by Just a Nerd
+# Rewritten 2025 for Volumio 4 / Bookworm (Python 3.11)
+#
+# This file is part of PeppyMeter for Volumio 
 
 import os
 from configparser import ConfigParser

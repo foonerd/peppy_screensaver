@@ -1,8 +1,9 @@
 # Copyright 2024 PeppyMeter for Volumio by 2aCD
-# 
-# This file is part of PeppyMeter for Volumio
-# It's overwrite ScreensaverSpectrum from PeppySpectrum
+# Copyright 2025 Volumio 4 adaptation by Just a Nerd
+# Rewritten 2025 for Volumio 4 / Bookworm (Python 3.11)
 #
+# This file is part of PeppyMeter for Volumio
+# Overwrites ScreensaverSpectrum from PeppySpectrum
 
 import pygame as pg
 from spectrum.spectrumconfigparser import SpectrumConfigParser, SPECTRUM_X, SPECTRUM_Y, AVAILABLE_SPECTRUM_NAMES

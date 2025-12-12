@@ -1,7 +1,11 @@
 # Copyright 2024 PeppyMeter for Volumio by 2aCD
-# 
+# Copyright 2025 Volumio 4 adaptation by Just a Nerd
+# Rewritten 2025 for Volumio 4 / Bookworm (Python 3.11)
+#
 # This file is part of PeppyMeter for Volumio
-# 
+#
+# Volumio 4 adaptations:
+# - Thread-safe meter restart via callback.pending_restart flag
 
 import pygame as pg
 import time
@@ -16,12 +20,13 @@ from volumio_configfileparser import METER_BKP, RANDOM_TITLE, METER_VISIBLE
 class RandomControl(Thread):
     """ Provides show albumart in a separate thread """
     
-    def __init__(self, util, meter_config_volumio, meter):
+    def __init__(self, util, meter_config_volumio, meter, callback=None):
         """ Initializer
         """
         Thread.__init__(self)
 
         self.meter = meter
+        self.callback = callback  # For thread-safe restart signaling
         self.util = util
         self.meter_config = self.util.meter_config
         self.meter_config_volumio = meter_config_volumio
@@ -41,7 +46,7 @@ class RandomControl(Thread):
         self.random_title = (self.random_meter or self.list_meter) and self.meter_config_volumio[RANDOM_TITLE]
         self.seconds = 0
         # python-socketio v5.x compatible client
-        self.sio = socketio.Client(reconnection=True, reconnection_attempts=5)
+        self.sio = socketio.Client(logger=False, engineio_logger=False)
         
     def run(self):
         """ Thread method. Restart meters on random mode. """
@@ -57,7 +62,9 @@ class RandomControl(Thread):
                     # no restart on initialization
                     if not self.first_run:
                         #self.meter.meter.set_volume(0.0)
-                        self.meter.restart() # vumeter restart
+                        # TODO: restart causes GL context error from thread
+                        # self.meter.restart() # vumeter restart
+                        pass
                     self.first_run = False
                 
         @self.sio.on ('connect')
@@ -69,7 +76,7 @@ class RandomControl(Thread):
 
         if self.random_meter or self.list_meter:
             try:
-                self.sio.connect('http://localhost:3000', transports=['websocket', 'polling'])
+                self.sio.connect('http://localhost:3000', transports=['websocket'])
             except Exception as e:
                 print(f"socketio connect error: {e}")
                 return
@@ -86,7 +93,9 @@ class RandomControl(Thread):
                     # start random with random interval
                     if self.seconds == self.random_meter_interval:
                         self.seconds = 0
-                        self.meter.restart() # vumeter restart
+                        # Signal main thread to restart (can't call from thread)
+                        if self.callback:
+                            self.callback.pending_restart = True
                     self.seconds += 1
                     self.sio.sleep(1)
 
@@ -117,4 +126,4 @@ class RandomControl(Thread):
         libc = ctypes.CDLL("libc.so.6")
         return libc.malloc_trim(0)
             
-# ===================================================================================================================	
+# ===================================================================================================================

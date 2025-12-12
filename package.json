@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "2aCD (original), Just a Nerd",
-  "license": "ISC",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/2aCD-creator/volumio-plugins.git"
@@ -31,7 +31,7 @@
     "fs-extra": "^11.2.0",
     "kew": "^0.7.0",
     "v-conf": "^1.4.3",
-    "socket.io-client": "^4.7.4",
+    "socket.io-client": "^2.4.0",
     "ini": "^4.1.1",
     "line-reader": "^0.4.0",
     "image-size": "^1.1.1"

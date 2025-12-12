@@ -1,7 +1,13 @@
 # Copyright 2024 PeppyMeter for Volumio by 2aCD
-# 
+# Copyright 2025 Volumio 4 adaptation by Just a Nerd
+# Rewritten 2025 for Volumio 4 / Bookworm (Python 3.11, pygame 2.5)
+#
 # This file is part of PeppyMeter for Volumio
-# 
+#
+# Volumio 4 adaptations:
+# - Main-thread meter rendering (pygame/X11 requirement)
+# - Thread-safe random meter restart via callback
+# - Albumart/metadata queue for main-thread rendering
 
 import os, sys
 import time
@@ -10,15 +16,8 @@ import resource
 import pygame as pg
 from pygame.time import Clock
 
-# for pygame2 with sdl2 fadeIn and position is available
+# VOLUMIO 4 FIX: Disable sdl2 features - causes display issues
 use_sdl2 = False
-if pg.version.ver.startswith("2"):
-    try:
-        import pyscreenshot
-        from pygame._sdl2 import Window
-        use_sdl2 = True
-    except:
-        pass
 
 from pathlib import Path
 from threading import Thread
@@ -38,11 +37,12 @@ PeppyPath = CurDir + '/screensaver/peppymeter'
 class CallBack:
     """ Implements CallBack functions to start and stop albumart/spectrum animator """
     
-    def __init__(self, util, meter_config_volumio, sdl2):
+    def __init__(self, util, meter_config_volumio, sdl2, meter=None):
         """ Initializer
 
         :param util: peppymeter utility class
         :param meter_config_volumio: volumio meter configuration
+        :param meter: meter object for restart capability
         """
 
         self.util = util
@@ -50,6 +50,8 @@ class CallBack:
         self.meter_config_volumio = meter_config_volumio        
         self.first_run = True
         self.use_sdl2 = sdl2
+        self.pending_restart = False  # For thread-safe random meter restart
+        self.meter = meter  # Store meter reference for restart
         
     def vol_FadeIn_thread(self, arg):
         meter = arg
@@ -64,7 +66,6 @@ class CallBack:
         pg.display.update()
             
     def peppy_meter_start(self, meter):
-        # print('start')                
         meter_section = self.meter_config[self.meter_config[METER]]
         meter_section_volumio = self.meter_config_volumio[self.meter_config[METER]]        
         animation = self.meter_config_volumio[START_ANIMATION]
@@ -94,8 +95,6 @@ class CallBack:
                 self.spectrum_output = None
                 self.spectrum_output = SpectrumOutput(self.util, self.meter_config_volumio, CurDir)
                 self.spectrum_output.start()
-        
-            # print (self.get_memory() / 1024)
 
         # start albumart animator
         self.album_animator = None
@@ -110,8 +109,6 @@ class CallBack:
         self.FadeIn.start()
         
     def peppy_meter_stop(self, meter):
-        # print('stop')
-
         # save the current screen and reroute display output to a temporary surface        
         meter.util.screen_copy = meter.util.PYGAME_SCREEN
         meter.util.PYGAME_SCREEN = meter.util.PYGAME_SCREEN.copy()
@@ -133,15 +130,49 @@ class CallBack:
             del self.FadeIn
             
     def peppy_meter_update(self):
+        # VOLUMIO 4 FIX: Handle random meter restart from main thread
+        if hasattr(self, 'pending_restart') and self.pending_restart:
+            self.pending_restart = False
+            if self.meter:
+                self.meter.restart()
+            return
+        
         if hasattr(self, 'spectrum_output') and self.spectrum_output is not None:
-            self.spectrum_output.update()    
+            self.spectrum_output.update()
+        
+        # VOLUMIO 4 FIX: Process albumart rendering queue from main thread
+        # Background threads cannot call pg.display.update() on Volumio 4
+        if hasattr(self, 'album_animator') and self.album_animator is not None:
+            animator = self.album_animator
+            tf = getattr(animator, 'title_factory', None)
+            
+            if tf is not None:
+                # Process pending albumart
+                if hasattr(animator, 'pending_albumart') and animator.pending_albumart is not None:
+                    try:
+                        albumart_url = animator.pending_albumart
+                        animator.pending_albumart = None
+                        tf.init_aa()
+                        tf.get_albumart_data(albumart_url)
+                        tf.render_aa()
+                    except Exception as e:
+                        pass  # Silently handle errors
+                
+                # Process pending title
+                if hasattr(animator, 'pending_title') and animator.pending_title is not None:
+                    try:
+                        title_data = animator.pending_title
+                        animator.pending_title = None
+                        tf.get_title_data(title_data)
+                        tf.render_text()
+                    except Exception as e:
+                        pass  # Silently handle errors
     
     def get_memory(self):
         with open('/proc/meminfo', 'r') as mem:
             free_memory = 0
             for i in mem:
                 sline = i.split()
-                #if str(sline[0]) in ('MemFree:', 'Buffers:', 'Cached:'):
                 if str(sline[0]) in ('MemAvailable:'):
                     free_memory += int(sline[1])
         return free_memory
@@ -153,7 +184,6 @@ class CallBack:
 
     # cleanup memory called on exit
     def exit_trim_memory(self):
-            
         # cleanup    
         if os.path.exists(PeppyRunning):
             os.remove(PeppyRunning)
@@ -297,14 +327,12 @@ def memory_limit():
     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
     free_memory = get_memory() * 1024
     resource.setrlimit(resource.RLIMIT_AS, (free_memory + 90000000, hard))
-    # print(free_memory / 1024 /1024)
            
 def get_memory():
     with open('/proc/meminfo', 'r') as mem:
         free_memory = 0
         for i in mem:
             sline = i.split()
-            #if str(sline[0]) in ('MemFree:', 'Buffers:', 'Cached:'):
             if str(sline[0]) in ('MemAvailable:'):
                 free_memory += int(sline[1])
     return free_memory
@@ -313,11 +341,19 @@ def get_memory():
 def trim_memory() -> int:
     libc = ctypes.CDLL("libc.so.6")
     return libc.malloc_trim(0)
+
+# Background thread to watch for stop signal
+def stop_watcher():
+    """Watch for PeppyRunning file deletion to trigger stop"""
+    while os.path.exists(PeppyRunning):
+        time.sleep(1)
+    # File deleted - send quit event to pygame
+    pg.event.post(pg.event.Event(pg.MOUSEBUTTONUP))
         
 if __name__ == "__main__":
     """ This is called by Volumio """
 
-    #enable threading!! 
+    # enable threading!! 
     ctypes.CDLL('libX11.so.6').XInitThreads()
     
     # get the peppy meter object
@@ -329,7 +365,7 @@ if __name__ == "__main__":
     meter_config_volumio = parser.meter_config_volumio
     
     # define the callback functions
-    callback = CallBack(pm.util, meter_config_volumio, use_sdl2)
+    callback = CallBack(pm.util, meter_config_volumio, use_sdl2, pm.meter)
     pm.meter.callback_start = callback.peppy_meter_start
     pm.meter.callback_stop = callback.peppy_meter_stop
     pm.dependent = callback.peppy_meter_update
@@ -343,20 +379,18 @@ if __name__ == "__main__":
         Path(PeppyRunning).chmod(0o0777)
      
         # start random control in separate thread
-        Random_Control = RandomControl(pm.util, meter_config_volumio, pm.meter)
-        # Random_Control.callback_start = callback.peppy_meter_start
+        Random_Control = RandomControl(pm.util, meter_config_volumio, pm.meter, callback)
         Random_Control.start()
         
-        # start meter output in separate thread
-        meter_output = Thread(target = meter_thread, args=(pm, meter_config_volumio, ))
-        meter_output.start()
-                
-        # stop if PeppyRunning deleted from external script
-        while os.path.exists(PeppyRunning):
-            time.sleep(1)
+        # VOLUMIO 4 FIX: Start stop watcher in background thread
+        watcher = Thread(target=stop_watcher, daemon=True)
+        watcher.start()
         
+        # VOLUMIO 4 FIX: Run meter in MAIN THREAD (required for pygame/X11)
+        meter_thread(pm, meter_config_volumio)
+        
+        # After meter exits, cleanup
         Random_Control.stop_thread()
-        pg.event.post(pg.event.Event(pg.MOUSEBUTTONUP))
         
     except MemoryError:
         print('ERROR: Memory Exception')

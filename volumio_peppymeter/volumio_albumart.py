@@ -1,8 +1,12 @@
 # Copyright 2021 PeppyMeter for Volumio by 2aCD
-# Refactored 2024 for Volumio 4 (Python 3.11, python-socketio 5.x)
-# 
+# Copyright 2025 Volumio 4 adaptation by Just a Nerd
+# Rewritten 2025 for Volumio 4 / Bookworm (Python 3.11, python-socketio 5.x)
+#
 # This file is part of PeppyMeter for Volumio
-# 
+#
+# Volumio 4 adaptations:
+# - Main-thread rendering queue (pending_albumart, pending_title)
+# - Thread-safe socketio 5.x client
 
 import time
 import os
@@ -43,7 +47,7 @@ class AlbumartAnimator(Thread):
         self.meter_section = self.meter_config_volumio[self.meter_config[METER]]
         self.random_title = (self.meter_config_volumio[METER_BKP] == "random" or "," in self.meter_config_volumio[METER_BKP]) and self.meter_config_volumio[RANDOM_TITLE]
         # python-socketio v5.x compatible client
-        self.sio = socketio.Client(reconnection=True, reconnection_attempts=5)
+        self.sio = socketio.Client(logger=False, engineio_logger=False)
         # print ('<-- init')
         
     def run(self):
@@ -57,38 +61,20 @@ class AlbumartAnimator(Thread):
                 if self.meter_section[EXTENDED_CONF] == True:                        
                     # for random/list mode with 'change on title' start only on initializiation (first run)
                     if self.random_title == False or self.first_run == True:
-                        # print ('play')
 
-                        # draw albumart
+                        # draw albumart - VOLUMIO 4 FIX: render synchronously, not in thread
                         if args[0]['albumart'] != self.albumart_mem:
                             self.albumart_mem = args[0]['albumart']
-                            title_factory.init_aa()
-                            #title_factory.get_albumart_data(self.albumart_mem)
-                            #title_factory.render_aa()
-                            
-                            # as thread to speedup start
-                            try:
-                                if hasattr(self, 'AA_Thread'):
-                                    del self.AA_Thread
-                                self.AA_Thread = Thread(target = albumart_thread, args=(title_factory, self.albumart_mem, ))
-                                self.AA_Thread.start()
-                            except:
-                                pass
+                            # Queue albumart for main thread rendering (init_aa + render_aa)
+                            self.pending_albumart = self.albumart_mem
                                 
-                        # draw title info
-                        if args[0]['title'] + args[0]['artist'] != self.position_mem:                        
-                            self.position_mem = args[0]['title'] + args[0]['artist']
-                            #title_factory.get_title_data(args[0])
-                            #title_factory.render_text()
-                        
-                            # as thread to speedup start
-                            try:
-                                if hasattr(self, 'TI_Thread'):
-                                    del self.TI_Thread
-                                TI_Thread = Thread(target = titleinfo_thread, args=(title_factory, args[0], ))
-                                TI_Thread.start()
-                            except:
-                                pass
+                        # draw title info - VOLUMIO 4 FIX: render synchronously, not in thread
+                        title = args[0].get('title') or ''
+                        artist = args[0].get('artist') or ''
+                        if title + artist != self.position_mem:                        
+                            self.position_mem = title + artist
+                            # Queue title for main thread rendering
+                            self.pending_title = args[0].copy()
                                 
                         self.first_run = False
                         
@@ -112,15 +98,23 @@ class AlbumartAnimator(Thread):
 
         def albumart_thread(*args):
             """ render albumart as thread """
-            tf = args[0]
-            tf.get_albumart_data(args[1])
-            tf.render_aa()
+            try:
+                tf = args[0]
+                tf.get_albumart_data(args[1])
+                tf.render_aa()
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
 
         def titleinfo_thread(*args):
             """ render titleinfo as thread """
-            tf = args[0]
-            tf.get_title_data(args[1])
-            tf.render_text()
+            try:
+                tf = args[0]
+                tf.get_title_data(args[1])
+                tf.render_text()
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
             
         def remaining_time():
             if self.timer_part == 0:
@@ -149,20 +143,24 @@ class AlbumartAnimator(Thread):
         self.position_mem = ''
         self.seek_mem = -1
         self.first_run = True
-        # print ('start')
 
-        if self.meter_section[EXTENDED_CONF] == True:		
-            title_factory = ImageTitleFactory(self.util, self.meter_config_volumio)
-            title_factory.load_fonts() # load fonts for title info
-            title_factory.init_surfaces() # copy clean surfaces to backup
+        # Initialize pending render queues - VOLUMIO 4 FIX
+        self.pending_albumart = None
+        self.pending_title = None
+        self.title_factory = None
 
-        else:
-            title_factory = None
+        if self.meter_section[EXTENDED_CONF] == True:
+            self.title_factory = ImageTitleFactory(self.util, self.meter_config_volumio)
+            self.title_factory.load_fonts() # load fonts for title info
+            self.title_factory.init_surfaces() # copy clean surfaces to backup
+
+        # Keep local reference for backward compatibility
+        title_factory = self.title_factory
 
         self.timer_part = 0
         timer = RepeatTimer(0.1, remaining_time)
         try:
-            self.sio.connect('http://localhost:3000', transports=['websocket', 'polling'])
+            self.sio.connect('http://localhost:3000', transports=['websocket'])
         except Exception as e:
             print(f"socketio connect error: {e}")
             timer.cancel()
@@ -179,9 +177,9 @@ class AlbumartAnimator(Thread):
         timer.cancel()
         del timer
         
-        if self.meter_section[EXTENDED_CONF] == True:
-            title_factory.stop_text_animator()
-            title_factory.stop_AA_FadeIn()
+        if self.meter_section[EXTENDED_CONF] == True and self.title_factory is not None:
+            self.title_factory.stop_text_animator()
+            self.title_factory.stop_AA_FadeIn()
         
         time.sleep(0.1)
         
@@ -362,6 +360,8 @@ class ImageTitleFactory():
             pg.display.update(self.aa_rect)
             
         if self.meter_section[ALBUMART_POS]:
+            # copy clean surface from backup
+            self.screen.blit(self.AABackup, self.aa_rect)
             # copy clean surface from backup
             self.screen.blit(self.AABackup, self.aa_rect)
 
