@@ -25,5 +25,58 @@ if [ -f "$PLUGIN_DIR/createConf.js" ]; then
   node "$PLUGIN_DIR/createConf.js"
 fi
 
+# =============================================================================
+# CLEANUP: Plugin-installed components
+# =============================================================================
+DATA_DIR="/data/INTERNAL/peppy_screensaver"
+
+# Remove library symlink
+if [ -L "$PLUGIN_DIR/lib/libpeppyalsa.so" ]; then
+  echo "Removing library symlink..."
+  rm -f "$PLUGIN_DIR/lib/libpeppyalsa.so"
+fi
+
+# Remove arch-specific binaries and libraries
+echo "Removing binaries and libraries..."
+rm -rf "$PLUGIN_DIR/bin"
+rm -rf "$PLUGIN_DIR/lib"
+
+# Remove Python packages
+echo "Removing Python packages..."
+rm -rf "$PLUGIN_DIR/packages"
+
+# Remove PeppyMeter
+if [ -d "$PLUGIN_DIR/screensaver/peppymeter" ]; then
+  echo "Removing PeppyMeter..."
+  rm -rf "$PLUGIN_DIR/screensaver/peppymeter"
+fi
+
+# Remove PeppySpectrum
+if [ -d "$PLUGIN_DIR/screensaver/spectrum" ]; then
+  echo "Removing PeppySpectrum..."
+  rm -rf "$PLUGIN_DIR/screensaver/spectrum"
+fi
+
+# Remove Volumio integration files
+if [ -d "$PLUGIN_DIR/screensaver" ]; then
+  echo "Removing screensaver integration..."
+  rm -rf "$PLUGIN_DIR/screensaver"
+fi
+
+# Remove templates and data
+if [ -d "$DATA_DIR" ]; then
+  echo "Removing templates..."
+  rm -rf "$DATA_DIR"
+fi
+
+# Remove system packages if not needed by other software
+echo "Removing system dependencies if unused..."
+for pkg in libsdl2-ttf-2.0-0 libsdl2-image-2.0-0 libsdl2-mixer-2.0-0 libfftw3-double3; do
+  if dpkg -s "$pkg" &> /dev/null; then
+    apt-get remove -y "$pkg" 2>/dev/null || echo "$pkg in use by other software, skipped"
+  fi
+done
+apt-get autoremove -y 2>/dev/null || true
+
 echo "Uninstall complete"
 echo "pluginuninstallend"

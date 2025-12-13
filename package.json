@@ -18,8 +18,13 @@
     "plugin_type": "user_interface",
     "boot_priority": 10,
     "has_alsa_contribution": true,
-    "os": ["bookworm"],
-    "architectures": ["arm", "armv7", "armv8", "x64"],
+    "os": [
+      "bookworm"
+    ],
+    "architectures": [
+      "armhf",
+      "amd64"
+    ],
     "details": "VU meter screensaver using PeppyMeter",
     "changelog": "3.0.0 - Refactored for Volumio 4 (Bookworm, Node 20, Python 3.11)"
   },

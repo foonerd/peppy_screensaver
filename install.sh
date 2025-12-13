@@ -34,8 +34,23 @@ echo "Using packages from: $PKG_SOURCE"
 echo ""
 echo "Installing system dependencies..."
 
-apt-get update
-apt-get install -y libsdl2-ttf-2.0-0 libsdl2-image-2.0-0 libsdl2-mixer-2.0-0
+# Check and install runtime dependencies
+NEEDED_PKGS=""
+for pkg in libsdl2-ttf-2.0-0 libsdl2-image-2.0-0 libsdl2-mixer-2.0-0 libfftw3-double3; do
+  if ! dpkg -s "$pkg" &> /dev/null; then
+    NEEDED_PKGS="$NEEDED_PKGS $pkg"
+  else
+    echo "$pkg already installed"
+  fi
+done
+
+if [ -n "$NEEDED_PKGS" ]; then
+  echo "Installing:$NEEDED_PKGS"
+  apt-get update
+  apt-get install -y $NEEDED_PKGS
+else
+  echo "All runtime dependencies already present"
+fi
 
 echo "System dependencies installed"
 
