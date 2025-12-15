@@ -207,6 +207,15 @@ if [ "$ARCH" = "x64" ]; then
     echo "WARNING: x64 template not found: $X64_TMPL"
     echo "         Using standard template - meter may not work on x64"
   fi
+
+  # Add xhost to X session startup - allows volumio user to access display
+  echo "Setting up X11 access for volumio user..."
+  cat > /etc/X11/Xsession.d/50-peppy-xhost << 'XHOSTEOF'
+# Allow local users to access X display (for PeppyMeter)
+xhost +local: >/dev/null 2>&1
+XHOSTEOF
+  chmod 644 /etc/X11/Xsession.d/50-peppy-xhost
+  echo "X11 access configured (requires X restart or reboot)"
 fi
 
 # =============================================================================

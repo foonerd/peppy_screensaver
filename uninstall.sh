@@ -30,6 +30,12 @@ fi
 # =============================================================================
 DATA_DIR="/data/INTERNAL/peppy_screensaver"
 
+# Remove x64 X session script if present
+if [ -f /etc/X11/Xsession.d/50-peppy-xhost ]; then
+  echo "Removing x64 X11 access script..."
+  rm -f /etc/X11/Xsession.d/50-peppy-xhost
+fi
+
 # Remove library symlink
 if [ -L "$PLUGIN_DIR/lib/libpeppyalsa.so" ]; then
   echo "Removing library symlink..."

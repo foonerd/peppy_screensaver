@@ -97,27 +97,6 @@ peppyScreensaver.prototype.onStart = function() {
     // remove old flag
     if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
 
-    // x64: Setup X11 access for volumio user and enable mpd_peppyalsa output
-    try {
-        var arch = execSync('cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'').toString().trim();
-        if (arch === 'x64') {
-            // Find X11 serverauth file and allow volumio user to access display
-            exec('SERVERAUTH=$(ls /tmp/serverauth.* 2>/dev/null | head -1); if [ -n "$SERVERAUTH" ]; then DISPLAY=:0 XAUTHORITY=$SERVERAUTH xhost +SI:localuser:volumio; fi', function(error, stdout, stderr) {
-                if (error) {
-                    self.logger.warn(id + 'xhost command failed: ' + error);
-                }
-            });
-            // Enable mpd_peppyalsa output for meter data
-            exec('mpc enable 1', function(error, stdout, stderr) {
-                if (error) {
-                    self.logger.warn(id + 'mpc enable failed: ' + error);
-                }
-            });
-        }
-    } catch (e) {
-        self.logger.warn(id + 'x64 setup failed: ' + e);
-    }
-
     // get peppyMeter config and new baseFolder
     if (fs.existsSync(PeppyConf)){
         peppy_config = ini.parse(fs.readFileSync(PeppyConf, 'utf-8'));
@@ -212,6 +191,8 @@ peppyScreensaver.prototype.onStart = function() {
             if (ScreenTimeout > 0){ // for 0 do nothing
                 self.Timeout = setInterval(function () {
                   if (!fs.existsSync(runFlag)){
+                    // x64: Enable mpd_peppyalsa output before starting meter
+                    exec('mpc enable 1 2>/dev/null', function(err) {});
                     exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {        
                     if (error !== null) {
                         self.logger.error(id + 'Error start PeppyMeter: ' + error);
