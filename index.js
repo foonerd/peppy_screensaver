@@ -119,8 +119,8 @@ peppyScreensaver.prototype.onStart = function() {
     var arch = '';
     try { arch = execSync(arch_cmd).toString().trim(); } catch(e) {}
     var isX64 = (arch === 'x64');
-    var enableDSD = parseInt(self.config.get('alsaSelection'),10) == 1 ? true : false;
-    var enableMPDOutput = isX64 ? true : enableDSD;
+    // Always enable MPD output for meter data - more reliable than inline meter
+    var enableMPDOutput = true;
     self.MPD_setOutput(MPD_include, enableMPDOutput);
 
     // check pygame 2 installed
@@ -181,13 +181,23 @@ peppyScreensaver.prototype.onStart = function() {
 
     // event function on change state, to start PeppyMeter    
     socket.emit('getState', '');
+    var lastService = '';
+    var lastUri = '';
+    
     socket.on('pushState', function (state) {
         
         // screensaver only for enabled Spotify/Airplay support, enabled DSP and all other
         var DSP_ON = fs.existsSync(dsp_config) && self.config.get('useDSP');
-		var Spotify_ON = fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED' && self.config.get('useSpotify') && state.service === 'spop';
+        var Spotify_ON = fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED' && self.config.get('useSpotify') && state.service === 'spop';
         var Airplay_ON = fs.existsSync(AIRtmpl) && self.getPluginStatus ('music_service', 'airplay_emulation') === 'STARTED' && self.config.get('useAirplay') && state.service === 'airplay_emulation';
-		var Other_ON = state.service !== 'spop' && state.service !== 'airplay_emulation';
+        var Other_ON = state.service !== 'spop' && state.service !== 'airplay_emulation';
+        
+        // Detect if this is a transitional state (track change, seeking, etc.)
+        // volatile=true indicates Volumio is in transition between states
+        var isVolatile = state.volatile === true;
+        
+        // Detect track change within same service (next/previous)
+        var isTrackChange = (state.service === lastService && state.uri !== lastUri && lastUri !== '');
         
         if (state.status === 'play' && !lastStateIsPlaying) {
           if (DSP_ON || Spotify_ON || Airplay_ON || Other_ON) {
@@ -197,7 +207,7 @@ peppyScreensaver.prototype.onStart = function() {
             if (ScreenTimeout > 0){ // for 0 do nothing
                 self.Timeout = setInterval(function () {
                   if (!fs.existsSync(runFlag)){
-                    // x64: Enable mpd_peppyalsa output before starting meter
+                    // Enable mpd_peppyalsa output before starting meter
                     exec('mpc enable 1 2>/dev/null', function(err) {});
                     exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {        
                     if (error !== null) {
@@ -211,13 +221,27 @@ peppyScreensaver.prototype.onStart = function() {
             }
           }
         } else if (lastStateIsPlaying) {
-            if (state.status === 'pause' || (state.status === 'stop' && (state.service === 'webradio' || state.uri === ''))) {
-                if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
-                clearInterval(self.Timeout);
-                self.Timeout = null;
-                lastStateIsPlaying = false;
+            // Only stop on genuine pause/stop, not during track transitions
+            // Ignore volatile states and brief stop during track change
+            if (!isVolatile && !isTrackChange) {
+                if (state.status === 'pause' || (state.status === 'stop' && state.service === 'webradio')) {
+                    if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+                    clearInterval(self.Timeout);
+                    self.Timeout = null;
+                    lastStateIsPlaying = false;
+                } else if (state.status === 'stop' && state.service !== 'webradio' && state.uri === '' && lastUri === '') {
+                    // True stop - queue cleared, not a track transition
+                    if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+                    clearInterval(self.Timeout);
+                    self.Timeout = null;
+                    lastStateIsPlaying = false;
+                }
             }
         }
+        
+        // Track state for next event
+        lastService = state.service || '';
+        lastUri = state.uri || '';
     });
     
     // Once the Plugin has successfull started resolve the promise
@@ -1003,8 +1027,8 @@ peppyScreensaver.prototype.switch_alsaConfig = function (alsaConf) {
     var arch = '';
     try { arch = execSync(arch_cmd).toString().trim(); } catch(e) {}
     var isX64 = (arch === 'x64');
-    var enableDSD = alsaConf == 1 ? true : false;
-    var enableMPDOutput = isX64 ? true : enableDSD;
+    // Always enable MPD output for meter data - more reliable than inline meter
+    var enableMPDOutput = true;
     
     self.MPD_setOutput(MPD_include, enableMPDOutput)
 //        .then(self.MPD_allowedFormats.bind(self, MPD, enableDSD)) // not more needed
@@ -1387,8 +1411,10 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
             conf = asounddata.replace('${alsaDirect}', 'Peppyalsa');
         }
 
-    } else {  // modular alsa                  
-        conf = asounddata.replace('${alsaMeter}', 'Peppyalsa');
+    } else {  // modular alsa
+        // Use simple passthrough - meter data comes from separate MPD output
+        // This matches x64 behavior and is more reliable during service transitions
+        conf = asounddata.replace('${alsaDirect}', 'Peppyalsa');
     }
 
     conf = conf.replace('${alsaMeter}', 'peppy1_off');

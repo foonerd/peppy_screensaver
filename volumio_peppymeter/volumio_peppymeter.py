@@ -479,6 +479,7 @@ def start_display_output(pm, callback, meter_config_volumio):
     active_meter_name = None
     last_cover_url = None
     cover_img = None
+    scaled_cover_img = None  # Cached scaled cover to avoid per-frame scaling
     
     # Shared metadata dict - updated by MetadataWatcher via socket.io
     last_metadata = {
@@ -905,6 +906,8 @@ def start_display_output(pm, callback, meter_config_volumio):
             if ov["art_pos"] and ov["art_dim"]:
                 if albumart != last_cover_url:
                     last_cover_url = albumart
+                    cover_img = None
+                    scaled_cover_img = None  # Reset cached scaled image
                     try:
                         if albumart:
                             url = albumart if not albumart.startswith("/") else f"http://localhost:3000{albumart}"
@@ -933,15 +936,19 @@ def start_display_output(pm, callback, meter_config_volumio):
                                     except Exception:
                                         img_bytes.seek(0)
                                         cover_img = pg.image.load(img_bytes).convert()
+                                
+                                # Scale ONCE on load, not every frame
+                                if cover_img:
+                                    try:
+                                        scaled_cover_img = pg.transform.smoothscale(cover_img, ov["art_dim"])
+                                    except Exception:
+                                        scaled_cover_img = cover_img
                     except Exception:
                         pass
                 
-                if cover_img:
-                    try:
-                        scaled = pg.transform.smoothscale(cover_img, ov["art_dim"])
-                    except Exception:
-                        scaled = cover_img
-                    screen.blit(scaled, ov["art_pos"])
+                # Blit cached scaled image (no per-frame scaling)
+                if scaled_cover_img:
+                    screen.blit(scaled_cover_img, ov["art_pos"])
                     
                     # Border
                     if ov["art_border"]:

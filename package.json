@@ -1,6 +1,6 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.0.1 - Simplified inline with peppymeterbasic code."
+    "changelog": "3.0.2 - Reworked volatile state handling to fix issues with screensaver not starting properly in some cases."
   },
   "engines": {
     "node": ">=20",
