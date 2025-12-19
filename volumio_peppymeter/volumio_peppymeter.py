@@ -6,7 +6,8 @@
 #
 # Volumio 4 architecture:
 # - Main-thread rendering (pygame/X11 requirement)
-# - HTTP polling for metadata (replaces socket.io threads)
+# - Socket.io for metadata (pushState events - no HTTP polling)
+# - HTTP only for album art image fetching
 # - ScrollingLabel for text animation (replaces TextAnimator threads)
 # - Backing surface capture for clean redraws
 # - Random meter support with overlay reinit
@@ -73,6 +74,108 @@ PeppyPath = CurDir + '/screensaver/peppymeter'
 
 # SDL2 disabled for Volumio 4 compatibility
 use_sdl2 = False
+
+
+# =============================================================================
+# MetadataWatcher - Socket.io listener for pushState events
+# =============================================================================
+class MetadataWatcher:
+    """
+    Watches Volumio pushState events via socket.io.
+    Updates shared metadata dict and signals title changes for random meter mode.
+    Eliminates HTTP polling - state updates are event-driven.
+    """
+    
+    def __init__(self, metadata_dict, title_changed_callback=None):
+        self.metadata = metadata_dict
+        self.title_callback = title_changed_callback
+        self.sio = socketio.Client(logger=False, engineio_logger=False)
+        self.run_flag = True
+        self.thread = None
+        self.last_title = None
+        self.first_run = True
+        
+        # Time tracking for countdown (moved here from main loop)
+        self.time_remain_sec = -1
+        self.time_last_update = 0
+        self.time_service = ""
+    
+    def start(self):
+        self.thread = Thread(target=self._run, daemon=True)
+        self.thread.start()
+    
+    def _run(self):
+        @self.sio.on('pushState')
+        def on_push_state(data):
+            if not self.run_flag:
+                return
+            
+            # Extract metadata
+            self.metadata["artist"] = data.get("artist", "") or ""
+            self.metadata["title"] = data.get("title", "") or ""
+            self.metadata["album"] = data.get("album", "") or ""
+            self.metadata["albumart"] = data.get("albumart", "") or ""
+            self.metadata["samplerate"] = str(data.get("samplerate", "") or "")
+            self.metadata["bitdepth"] = str(data.get("bitdepth", "") or "")
+            self.metadata["trackType"] = data.get("trackType", "") or ""
+            self.metadata["bitrate"] = str(data.get("bitrate", "") or "")
+            self.metadata["service"] = data.get("service", "") or ""
+            self.metadata["status"] = data.get("status", "") or ""
+            
+            # Update time tracking
+            import time
+            duration = data.get("duration", 0) or 0
+            seek = data.get("seek", 0) or 0
+            service = data.get("service", "")
+            
+            if service != self.time_service or abs(seek / 1000 - (duration - self.time_remain_sec)) > 3:
+                # Reset time on track change or significant seek
+                if duration > 0:
+                    self.time_remain_sec = max(0, duration - (seek // 1000))
+                else:
+                    self.time_remain_sec = -1  # No time to display for webradio
+                self.time_last_update = time.time()
+                self.time_service = service
+            
+            self.metadata["_time_remain"] = self.time_remain_sec
+            self.metadata["_time_update"] = self.time_last_update
+            
+            # Check for title change (for random meter mode)
+            current_title = self.metadata["title"]
+            if self.title_callback and current_title != self.last_title:
+                self.last_title = current_title
+                if not self.first_run:
+                    self.title_callback()
+                self.first_run = False
+        
+        @self.sio.on('connect')
+        def on_connect():
+            if self.run_flag:
+                self.sio.emit('getState')
+        
+        while self.run_flag:
+            try:
+                self.sio.connect('http://localhost:3000', transports=['websocket'])
+                while self.run_flag and self.sio.connected:
+                    self.sio.sleep(0.5)
+            except Exception as e:
+                print(f"MetadataWatcher connect error: {e}")
+                import time
+                time.sleep(1)  # Retry delay
+            finally:
+                if self.sio.connected:
+                    try:
+                        self.sio.disconnect()
+                    except Exception:
+                        pass
+    
+    def stop(self):
+        self.run_flag = False
+        if self.sio.connected:
+            try:
+                self.sio.disconnect()
+            except Exception:
+                pass
 
 
 # =============================================================================
@@ -154,53 +257,6 @@ class ScrollingLabel:
             self.offset = float(limit)
             self.direction = -1
             self._pause_until = now + self.pause_ms
-
-
-# =============================================================================
-# RandomTitleWatcher - Minimal socket.io for title change detection only
-# =============================================================================
-class RandomTitleWatcher(Thread):
-    """Watch for title changes to trigger random meter switch."""
-    
-    def __init__(self, callback_func):
-        Thread.__init__(self, daemon=True)
-        self.callback_func = callback_func
-        self.run_flag = True
-        self.position_mem = -1
-        self.first_run = True
-        self.sio = socketio.Client(logger=False, engineio_logger=False)
-        
-    def run(self):
-        @self.sio.on('pushState')
-        def on_push_state(*args):
-            if args[0]['status'] == 'play':
-                position = args[0].get('position', 0)
-                if position != self.position_mem:
-                    self.position_mem = position
-                    if not self.first_run:
-                        # Signal title change
-                        self.callback_func()
-                    self.first_run = False
-        
-        @self.sio.on('connect')
-        def on_connect():
-            if self.run_flag:
-                self.sio.emit('getState')
-        
-        try:
-            self.sio.connect('http://localhost:3000', transports=['websocket'])
-            while self.run_flag and self.sio.connected:
-                self.sio.sleep(0.5)
-        except Exception as e:
-            print(f"RandomTitleWatcher connect error: {e}")
-        finally:
-            if self.sio.connected:
-                self.sio.disconnect()
-    
-    def stop(self):
-        self.run_flag = False
-        if self.sio.connected:
-            self.sio.disconnect()
 
 
 # =============================================================================
@@ -423,14 +479,13 @@ def start_display_output(pm, callback, meter_config_volumio):
     active_meter_name = None
     last_cover_url = None
     cover_img = None
-    last_metadata = {}
-    metadata_poll_time = 0
-    METADATA_POLL_INTERVAL = 0.1  # 100ms
     
-    # Time tracking for countdown
-    time_remain_sec = -1  # -1 means no time to display
-    time_last_update = 0
-    time_service = ""
+    # Shared metadata dict - updated by MetadataWatcher via socket.io
+    last_metadata = {
+        "artist": "", "title": "", "album": "", "albumart": "",
+        "samplerate": "", "bitdepth": "", "trackType": "", "bitrate": "",
+        "service": "", "status": "", "_time_remain": -1, "_time_update": 0
+    }
     
     # Random meter tracking
     random_mode = meter_config_volumio[METER_BKP] == "random" or "," in meter_config_volumio[METER_BKP]
@@ -439,16 +494,18 @@ def start_display_output(pm, callback, meter_config_volumio):
     random_interval = cfg.get(RANDOM_METER_INTERVAL, 60)
     random_timer = 0
     
-    # Title change watcher for random-on-title mode
-    title_watcher = None
+    # Title change flag for random-on-title mode
     title_changed_flag = [False]  # Mutable for closure
     
     def on_title_change():
         title_changed_flag[0] = True
     
-    if random_title:
-        title_watcher = RandomTitleWatcher(on_title_change)
-        title_watcher.start()
+    # Start MetadataWatcher - handles both metadata updates and title change detection
+    metadata_watcher = MetadataWatcher(
+        last_metadata,
+        title_changed_callback=on_title_change if random_title else None
+    )
+    metadata_watcher.start()
     
     # -------------------------------------------------------------------------
     # Resolve active meter name
@@ -730,47 +787,6 @@ def start_display_output(pm, callback, meter_config_volumio):
         }
     
     # -------------------------------------------------------------------------
-    # Fetch Volumio metadata via HTTP
-    # -------------------------------------------------------------------------
-    def get_volumio_metadata():
-        nonlocal time_remain_sec, time_last_update, time_service
-        try:
-            r = requests.get("http://localhost:3000/api/v1/getstate", timeout=1)
-            s = r.json()
-        except Exception:
-            return last_metadata if last_metadata else {
-                "artist": "", "title": "", "album": "", "albumart": "",
-                "samplerate": "", "bitdepth": "", "trackType": "", "bitrate": ""
-            }
-        
-        # Update time tracking
-        duration = s.get("duration", 0) or 0
-        seek = s.get("seek", 0) or 0
-        service = s.get("service", "")
-        
-        if service != time_service or abs(seek / 1000 - (duration - time_remain_sec)) > 3:
-            # Reset time on track change or significant seek
-            # For webradio or when duration is 0, don't show countdown
-            if duration > 0:
-                time_remain_sec = max(0, duration - (seek // 1000))
-            else:
-                time_remain_sec = -1  # Signal: no time to display
-            time_last_update = time.time()
-            time_service = service
-        
-        return {
-            "artist": s.get("artist", "") or "",
-            "title": s.get("title", "") or "",
-            "album": s.get("album", "") or "",
-            "albumart": s.get("albumart", "") or "",
-            "samplerate": str(s.get("samplerate", "") or ""),
-            "bitdepth": str(s.get("bitdepth", "") or ""),
-            "trackType": s.get("trackType", "") or "",
-            "bitrate": str(s.get("bitrate", "") or ""),
-            "service": service
-        }
-    
-    # -------------------------------------------------------------------------
     # Render format icon
     # -------------------------------------------------------------------------
     def render_format_icon(track_type, type_rect, type_color):
@@ -874,11 +890,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             # Run meter animation
             pm.meter.run()
             
-            # Poll metadata
-            if current_time - metadata_poll_time >= METADATA_POLL_INTERVAL:
-                metadata_poll_time = current_time
-                last_metadata.update(get_volumio_metadata())
-            
+            # Read metadata from socket.io watcher (no polling needed)
             meta = last_metadata
             artist = meta.get("artist", "")
             title = meta.get("title", "")
@@ -956,12 +968,16 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             # Time remaining
             if ov["time_pos"]:
+                # Read time from socket.io metadata watcher
+                time_remain_sec = meta.get("_time_remain", -1)
+                time_last_update = meta.get("_time_update", 0)
+                
                 # Update countdown (only if we have valid time)
                 if time_remain_sec >= 0:
                     elapsed = current_time - time_last_update
                     if elapsed >= 1.0:
+                        # Calculate updated remaining time
                         time_remain_sec = max(0, time_remain_sec - int(elapsed))
-                        time_last_update = current_time
                 
                 # Format time (skip if no valid time, e.g. webradio)
                 if time_remain_sec >= 0:
@@ -1016,8 +1032,7 @@ def start_display_output(pm, callback, meter_config_volumio):
         clock.tick(cfg[FRAME_RATE])
     
     # Cleanup
-    if title_watcher:
-        title_watcher.stop()
+    metadata_watcher.stop()
     
     pm.exit()
 

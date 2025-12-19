@@ -1361,8 +1361,18 @@ peppyScreensaver.prototype.recreate_mpdconf = function () {
 // write asound.conf from template and remove variables
 peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
   var self = this;
-  var asoundTmpl = __dirname + asound + '.tmpl';
-  var asoundConf = __dirname + '/asound' + asound;
+  
+  // Detect architecture and select appropriate template
+  var arch_cmd = 'cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'';
+  var arch = '';
+  try { arch = execSync(arch_cmd).toString().trim(); } catch(e) {}
+  var isX64 = (arch === 'x64');
+  
+  // Use x64-specific template on x64 systems, but keep output filename same
+  var tmplFile = isX64 ? '/Peppyalsa.postPeppyalsa.5.x64.conf' : asound;
+  var asoundTmpl = __dirname + tmplFile + '.tmpl';
+  var asoundConf = __dirname + '/asound' + asound;  // Output always uses standard name
+  self.logger.info(id + 'ALSA template: ' + asoundTmpl + ' (isX64=' + isX64 + ')');
   var conf;
   var defer = libQ.defer();
   var useDSP = fs.existsSync(dsp_config) && self.config.get('useDSP');
