@@ -49,6 +49,33 @@ After installation, enable and configure the plugin:
 - Random meter rotation
 - Touch to exit
 
+## Performance
+
+Expected CPU usage varies by resolution and build type:
+
+| Resolution | Pi 5 (NEON) | Pi 5 (no NEON) | x64 |
+|------------|-------------|----------------|-----|
+| 800x480 | 10-15% | 20-25% | 1-2% |
+| 1024x600 | 15-20% | 25-30% | 1-2% |
+| 1280x720 | 25-35% | 35-40% | 1-2% |
+
+### NEON Optimization (ARM)
+
+The bundled pygame package for ARM (armv7/armv8) is built with NEON SIMD
+optimization enabled, providing significantly better performance on Pi 2/3/4/5.
+
+To verify NEON is enabled:
+```bash
+PYTHONPATH=/data/plugins/user_interface/peppy_screensaver/lib/arm/python \
+  python3 -c "import pygame; pygame.init()"
+```
+
+If you see "neon capable but pygame was not built with support" warning,
+the package needs to be rebuilt with NEON support. See Build Information below.
+
+**Note:** NEON-optimized builds require ARMv7 or later. Pi Zero and Pi 1 (ARMv6)
+use a separate non-NEON build with higher CPU usage.
+
 ## Troubleshooting
 
 ### Plugin won't start
@@ -78,6 +105,14 @@ sudo apt-get install -y libsdl2-ttf-2.0-0 libsdl2-image-2.0-0 libsdl2-mixer-2.0-
 sudo chown -R volumio:volumio /data/plugins/user_interface/peppy_screensaver
 ```
 
+### High CPU usage on Pi
+
+If CPU usage is higher than expected:
+
+1. Verify NEON is enabled (see above)
+2. Use a lower resolution meter template
+3. Disable spectrum visualization if not needed
+
 ## Directory Structure
 
 ```
@@ -96,7 +131,25 @@ peppy_screensaver/
 Pre-built binaries included for all supported architectures. No compilation required on target system.
 
 - peppyalsa: Native ALSA scope plugin for audio data capture
-- Python packages: pygame 2.5.2, python-socketio 5.x, Pillow, etc.
+- Python packages: pygame 2.1.2 (Debian, NEON), python-socketio 5.x, Pillow, etc.
+
+### ARM Python Packages (NEON Build)
+
+The ARM python packages must be built natively on a Raspberry Pi to get
+NEON-optimized pygame. Docker/QEMU cross-compilation produces non-NEON builds.
+
+For build instructions and native Pi build scripts, see the separate build repository:
+
+**https://github.com/foonerd/peppy_builds**
+
+### Architecture Package Mapping
+
+| Plugin Path | Target Devices | NEON |
+|-------------|----------------|------|
+| arm | Pi Zero, Pi 1 (ARMv6) | No |
+| armv7 | Pi 2/3/4/5 32-bit (ARMv7+) | Yes |
+| armv8 | Pi 3/4/5 64-bit (ARMv8) | Yes |
+| x64 | x86_64 PCs | N/A (SSE/AVX) |
 
 ## License
 
