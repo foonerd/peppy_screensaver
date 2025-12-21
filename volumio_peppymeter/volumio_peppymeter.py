@@ -419,12 +419,29 @@ def as_int(val, default=0):
 
 
 def set_color(surface, color):
-    """Tint a surface with given color (preserving alpha)."""
+    """Colorize a surface with given color (preserving alpha). Modifies surface in place."""
     try:
-        r, g, b = color
-        surface.fill((r, g, b, 255), special_flags=pg.BLEND_RGBA_MULT)
+        r, g, b = color.r, color.g, color.b
+        # Get pixel array for direct manipulation (requires numpy)
+        arr = pg.surfarray.pixels3d(surface)
+        alpha = pg.surfarray.pixels_alpha(surface)
+        # Replace all non-transparent pixel colors with target color
+        mask = alpha > 0
+        arr[mask] = [r, g, b]
+        del arr
+        del alpha
     except Exception:
-        pass
+        # Fallback: pixel-by-pixel (slow but works without numpy)
+        try:
+            r, g, b = color.r, color.g, color.b
+            w, h = surface.get_size()
+            for x in range(w):
+                for y in range(h):
+                    px = surface.get_at((x, y))
+                    if px.a > 0:
+                        surface.set_at((x, y), (r, g, b, px.a))
+        except Exception:
+            pass
 
 
 def get_memory():
@@ -877,6 +894,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                     img = pg.transform.smoothscale(img, new_size)
                 except Exception:
                     img = pg.transform.scale(img, new_size)
+                # Convert to format suitable for pixel manipulation
+                img = img.convert_alpha()
                 set_color(img, pg.Color(type_color[0], type_color[1], type_color[2]))
                 dx = type_rect.x + (type_rect.width - img.get_width()) // 2
                 dy = type_rect.y + (type_rect.height - img.get_height()) // 2
@@ -888,6 +907,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                                               output_height=type_rect.height)
                 pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
                 img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
+                img = img.convert_alpha()
                 set_color(img, pg.Color(type_color[0], type_color[1], type_color[2]))
                 dx = type_rect.x + (type_rect.width - img.get_width()) // 2
                 dy = type_rect.y + (type_rect.height - img.get_height()) // 2
