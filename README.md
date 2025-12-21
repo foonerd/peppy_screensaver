@@ -95,8 +95,8 @@ For diagnosing display issues (white backgrounds, missing graphics, etc.), enabl
 To dump the current meter configuration (useful for diagnosing missing backgrounds, wrong paths, etc.):
 
 ```bash
-cd /data/plugins/user_interface/peppy_screensaver/screensaver/peppymeter
-python3 ../diagnose_config.py
+cd /data/plugins/user_interface/peppy_screensaver/screensaver
+python3 diagnose_config.py
 ```
 
 This shows:
