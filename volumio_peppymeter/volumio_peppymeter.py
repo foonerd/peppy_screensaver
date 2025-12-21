@@ -617,26 +617,32 @@ def start_display_output(pm, callback, meter_config_volumio):
         meter_x = mc.get('meter.x', 0)
         meter_y = mc.get('meter.y', 0)
         
-        try:
-            if screen_bgr_name:
-                img = pg.image.load(os.path.join(meter_path, screen_bgr_name)).convert()
+        # Draw full screen background
+        if screen_bgr_name:
+            try:
+                img_path = os.path.join(meter_path, screen_bgr_name)
+                img = pg.image.load(img_path).convert()
                 screen.blit(img, (0, 0))
-        except Exception:
-            pass
+            except Exception as e:
+                print(f"[draw_static_assets] Failed to load screen.bgr '{screen_bgr_name}': {e}")
         
-        try:
-            if bgr_name:
-                img = pg.image.load(os.path.join(meter_path, bgr_name)).convert()
+        # Draw meter background at meter position
+        if bgr_name:
+            try:
+                img_path = os.path.join(meter_path, bgr_name)
+                img = pg.image.load(img_path).convert()
                 screen.blit(img, (meter_x, meter_y))
-        except Exception:
-            pass
+            except Exception as e:
+                print(f"[draw_static_assets] Failed to load bgr '{bgr_name}': {e}")
         
-        try:
-            if fgr_name:
-                img = pg.image.load(os.path.join(meter_path, fgr_name)).convert_alpha()
+        # Draw meter foreground at meter position
+        if fgr_name:
+            try:
+                img_path = os.path.join(meter_path, fgr_name)
+                img = pg.image.load(img_path).convert_alpha()
                 screen.blit(img, (meter_x, meter_y))
-        except Exception:
-            pass
+            except Exception as e:
+                print(f"[draw_static_assets] Failed to load fgr '{fgr_name}': {e}")
     
     # -------------------------------------------------------------------------
     # Initialize overlay for a meter
@@ -647,6 +653,9 @@ def start_display_output(pm, callback, meter_config_volumio):
         mc = cfg.get(meter_name, {}) if meter_name else {}
         mc_vol = meter_config_volumio.get(meter_name, {}) if meter_name else {}
         active_meter_name = meter_name
+        
+        # Fill screen black before drawing anything (prevents white background if assets fail to load)
+        screen.fill((0, 0, 0))
         
         # Check if extended config enabled
         if not mc_vol.get(EXTENDED_CONF, False):
