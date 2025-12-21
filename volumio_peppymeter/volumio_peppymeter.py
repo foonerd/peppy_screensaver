@@ -223,7 +223,8 @@ class ScrollingLabel:
         if not self.pos or self.box_width <= 0:
             return
         x, y = self.pos
-        height = self.font.get_height()
+        # Use linesize for full height including descenders
+        height = self.font.get_linesize()
         self._backing_rect = pg.Rect(x, y, self.box_width, height)
         try:
             self._backing = surface.subsurface(self._backing_rect).copy()
@@ -775,15 +776,15 @@ def start_display_output(pm, callback, meter_config_volumio):
                     backing.append((r, s))
         
         if artist_pos:
-            capture_rect(artist_pos, artist_box, artist_font.get_height())
+            capture_rect(artist_pos, artist_box, artist_font.get_linesize())
         if title_pos:
-            capture_rect(title_pos, title_box, title_font.get_height())
+            capture_rect(title_pos, title_box, title_font.get_linesize())
         if album_pos:
-            capture_rect(album_pos, album_box, album_font.get_height())
+            capture_rect(album_pos, album_box, album_font.get_linesize())
         if time_pos:
-            capture_rect(time_pos, fontDigi.size('00:00')[0] + 10, fontDigi.get_height())
+            capture_rect(time_pos, fontDigi.size('00:00')[0] + 10, fontDigi.get_linesize())
         if sample_pos and sample_box:
-            capture_rect(sample_pos, sample_box, sample_font.get_height())
+            capture_rect(sample_pos, sample_box, sample_font.get_linesize())
         if type_pos and type_dim:
             capture_rect(type_pos, type_dim[0], type_dim[1])
         if art_pos and art_dim:

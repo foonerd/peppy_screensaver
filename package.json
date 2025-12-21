@@ -1,6 +1,6 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.0.4",
+  "version": "3.0.5",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.0.4 - Fixed spectrum bar bleeding and metadata display on spectrum themes."
+    "changelog": "3.0.5 - Fixed text descender artifacts on scrolling labels."
   },
   "engines": {
     "node": ">=20",
