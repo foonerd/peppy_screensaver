@@ -973,10 +973,10 @@ def start_display_output(pm, callback, meter_config_volumio):
             return max(0, SCREEN_WIDTH - pos[0] - RIGHT_MARGIN)
         
         def get_box_width(pos, field_max):
-            if global_max:
-                return global_max
             if field_max:
                 return field_max
+            if global_max:
+                return global_max
             return auto_box_width(pos)
         
         artist_box = get_box_width(artist_pos, artist_max)
