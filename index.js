@@ -199,7 +199,7 @@ peppyScreensaver.prototype.onStart = function() {
     var lastUri = '';
     
     socket.on('pushState', function (state) {
-        
+        self.logger.info('peppy_screensaver: pushState - status=' + state.status + ' service=' + state.service + ' volatile=' + state.volatile);
         // screensaver only for enabled Spotify/Airplay support, enabled DSP and all other
         var DSP_ON = fs.existsSync(dsp_config) && self.config.get('useDSP');
         var Spotify_ON = fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED' && self.config.get('useSpotify') && state.service === 'spop';
@@ -243,20 +243,15 @@ peppyScreensaver.prototype.onStart = function() {
         } else if (lastStateIsPlaying) {
             // Only stop on genuine pause/stop, not during track transitions
             // Ignore volatile states and brief stop during track change
-            if (!isVolatile && !isTrackChange) {
-                var shouldStop = false;
-                
+            if (!isTrackChange) {
                 if (state.status === 'pause') {
-                    shouldStop = true;
-                } else if (state.status === 'stop') {
-                    if (state.service === 'webradio') {
-                        shouldStop = false;
-                    } else {
-                        shouldStop = true;
-                    }
-                }
-                    // True stop - queue cleared, not a track transition
-                if (shouldStop) {
+                    // Always honor pause, regardless of volatile
+                    if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+                    clearInterval(self.Timeout);
+                    self.Timeout = null;
+                    lastStateIsPlaying = false;
+                } else if (state.status === 'stop' && !isVolatile) {
+                    // Only honor stop if not volatile (avoids track transition false stops)
                     if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
                     clearInterval(self.Timeout);
                     self.Timeout = null;
