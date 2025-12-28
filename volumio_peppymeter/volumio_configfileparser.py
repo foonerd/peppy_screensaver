@@ -26,6 +26,9 @@ POS_Y = "position.y"
 
 UPDATE_INTERVAL = "update.interval"
 
+TRANSITION_TYPE = "transition.type"
+TRANSITION_DURATION = "transition.duration"
+
 EXTENDED_CONF = "config.extend"
 METER_VISIBLE = "meter.visible"
 ALBUMART_POS = "albumart.pos"
@@ -125,6 +128,15 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[UPDATE_INTERVAL] = c.getint(CURRENT, UPDATE_INTERVAL)
         except:
             self.meter_config_volumio[UPDATE_INTERVAL] = 2
+
+        try:
+            self.meter_config_volumio[TRANSITION_TYPE] = c.get(CURRENT, TRANSITION_TYPE)
+        except:
+            self.meter_config_volumio[TRANSITION_TYPE] = "fade"
+        try:
+            self.meter_config_volumio[TRANSITION_DURATION] = c.getfloat(CURRENT, TRANSITION_DURATION)
+        except:
+            self.meter_config_volumio[TRANSITION_DURATION] = 0.5
 
         try:
             self.meter_config_volumio[FONT_PATH] = c.get(CURRENT, FONT_PATH)

@@ -72,6 +72,12 @@
     "FRAME_RATE":"Frame rate",
     "FRAME_RATE_DOC":"Display refresh rate in frames per second (FPS).<br /><br /><b>Default: 30</b><br /><br />Lower values reduce CPU usage but may appear less smooth.<br />Recommended: 20-30 for Pi 4, 15-20 for Pi 3",
     "UPDATE_INTERVAL":"Update interval",
-    "UPDATE_INTERVAL_DOC":"Spectrum and needle update frequency.<br /><br /><b>Default: 2</b> (updates every 2nd frame)<br /><br />Higher values reduce CPU usage but decrease visual responsiveness.<br />At 30 FPS with interval 2: 15 updates/sec<br />At 20 FPS with interval 3: 6.7 updates/sec"
+    "UPDATE_INTERVAL_DOC":"Spectrum and needle update frequency.<br /><br /><b>Default: 2</b> (updates every 2nd frame)<br /><br />Higher values reduce CPU usage but decrease visual responsiveness.<br />At 30 FPS with interval 2: 15 updates/sec<br />At 20 FPS with interval 3: 6.7 updates/sec",
+    "TRANSITION_TYPE":"Transition effect",
+    "TRANSITION_TYPE_DOC":"Visual transition when meter starts or stops.<br /><br /><b>None:</b> Instant switch, no transition<br /><b>Fade:</b> Smooth fade in/out effect",
+    "TRANSITION_NONE":"None",
+    "TRANSITION_FADE":"Fade",
+    "TRANSITION_DURATION":"Transition duration",
+    "TRANSITION_DURATION_DOC":"Duration of fade transition in seconds.<br /><br /><b>Default: 0.5</b><br /><br />Range: 0.1 to 2.0 seconds"
   }
 }

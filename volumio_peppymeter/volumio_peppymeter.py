@@ -42,6 +42,7 @@ from configfileparser import (
 from volumio_configfileparser import (
     Volumio_ConfigFileParser, EXTENDED_CONF, METER_VISIBLE, SPECTRUM_VISIBLE,
     COLOR_DEPTH, POSITION_TYPE, POS_X, POS_Y, START_ANIMATION, UPDATE_INTERVAL,
+    TRANSITION_TYPE, TRANSITION_DURATION,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
     ALBUMART_ROT, ALBUMART_ROT_SPEED,
@@ -705,10 +706,85 @@ class CallBack:
             time.sleep(0.07)
         meter.set_volume(100)
 
+    def screen_fade_in(self, screen, duration=0.5):
+        """Fade in the screen from black/previous state.
+        
+        :param screen: pygame screen surface
+        :param duration: fade duration in seconds
+        """
+        transition_type = self.meter_config_volumio.get(TRANSITION_TYPE, "fade")
+        if transition_type == "none":
+            return
+            
+        clock = Clock()
+        frame_rate = self.meter_config.get(FRAME_RATE, 30)
+        
+        # Capture current screen content
+        screen_copy = screen.copy()
+        
+        # Calculate steps based on duration and frame rate
+        total_frames = max(int(duration * frame_rate), 1)
+        alpha_step = 255 / total_frames
+        
+        for i in range(total_frames + 1):
+            alpha = int(i * alpha_step)
+            if alpha > 255:
+                alpha = 255
+            screen_copy.set_alpha(alpha)
+            screen.fill((0, 0, 0))
+            screen.blit(screen_copy, (0, 0))
+            pg.display.update()
+            clock.tick(frame_rate)
+        
+        # Ensure full opacity at end
+        screen_copy.set_alpha(255)
+        screen.blit(screen_copy, (0, 0))
+        pg.display.update()
+
+    def screen_fade_out(self, screen, duration=0.5):
+        """Fade out the screen to black.
+        
+        :param screen: pygame screen surface
+        :param duration: fade duration in seconds
+        """
+        transition_type = self.meter_config_volumio.get(TRANSITION_TYPE, "fade")
+        if transition_type == "none":
+            return
+            
+        clock = Clock()
+        frame_rate = self.meter_config.get(FRAME_RATE, 30)
+        
+        # Create black overlay
+        overlay = pg.Surface(screen.get_size())
+        overlay.fill((0, 0, 0))
+        
+        # Calculate steps based on duration and frame rate
+        total_frames = max(int(duration * frame_rate), 1)
+        alpha_step = 255 / total_frames
+        
+        # Capture current screen
+        screen_copy = screen.copy()
+        
+        for i in range(total_frames + 1):
+            alpha = int(i * alpha_step)
+            if alpha > 255:
+                alpha = 255
+            screen.blit(screen_copy, (0, 0))
+            overlay.set_alpha(alpha)
+            screen.blit(overlay, (0, 0))
+            pg.display.update()
+            clock.tick(frame_rate)
+
     def peppy_meter_start(self, meter):
         """Called when meter starts - initialize spectrum and albumart overlay."""
         meter_section = self.meter_config[self.meter_config[METER]]
         meter_section_volumio = self.meter_config_volumio[self.meter_config[METER]]
+        
+        # Screen fade-in transition (before restoring screen)
+        duration = self.meter_config_volumio.get(TRANSITION_DURATION, 0.5)
+        if not self.first_run:
+            # Fade in on meter change (not first run)
+            self.screen_fade_in(meter.util.PYGAME_SCREEN, duration)
         
         # Restore screen reference
         meter.util.PYGAME_SCREEN = meter.util.screen_copy
@@ -1727,6 +1803,10 @@ def start_display_output(pm, callback, meter_config_volumio):
                     running = False
         
         clock.tick(cfg[FRAME_RATE])
+    
+    # Fade-out transition before cleanup
+    duration = meter_config_volumio.get(TRANSITION_DURATION, 0.5)
+    callback.screen_fade_out(screen, duration)
     
     # Cleanup
     metadata_watcher.stop()

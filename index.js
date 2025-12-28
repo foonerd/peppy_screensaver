@@ -33,7 +33,7 @@ var RunPeppyFile = PluginPath + '/run_peppymeter.sh';
 var PeppyConf = PeppyPath + '/config.txt';
 const meterFolderStr = 'meter.folder'; // entry in config.txt to detect template folder
 
-var minmax = new Array(8);
+var minmax = new Array(9);
 var last_outputdevice, last_softmixer;
 var peppy_config, base_folder_P;
 
@@ -574,6 +574,23 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 uiconf.sections[2].content[1].attributes[3].max,
                 uiconf.sections[2].content[1].attributes[0].placeholder];
             
+            // transition type
+            var transitionType = peppy_config.current['transition.type'] || 'fade';
+            var transitionOptions = uiconf.sections[2].content[2].options;
+            for (var i = 0; i < transitionOptions.length; i++) {
+                if (transitionOptions[i].value === transitionType) {
+                    uiconf.sections[2].content[2].value = transitionOptions[i];
+                    break;
+                }
+            }
+            
+            // transition duration
+            var transitionDuration = parseFloat(peppy_config.current['transition.duration']) || 0.5;
+            uiconf.sections[2].content[3].value = transitionDuration;
+            minmax[8] = [uiconf.sections[2].content[3].attributes[2].min,
+                uiconf.sections[2].content[3].attributes[3].max,
+                uiconf.sections[2].content[3].attributes[0].placeholder];
+            
         } else {
             self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));            
         }
@@ -930,6 +947,27 @@ peppyScreensaver.prototype.savePerformanceConf = function (confData) {
         confData.updateInterval = self.minmax('UPDATE_INTERVAL', confData.updateInterval, minmax[7]);
         if (peppy_config.current['update.interval'] != confData.updateInterval) {
             peppy_config.current['update.interval'] = confData.updateInterval;
+            noChanges = false;
+        }
+    }
+    
+    // write transition type
+    var transitionType = confData.transitionType.value || 'fade';
+    if (peppy_config.current['transition.type'] != transitionType) {
+        peppy_config.current['transition.type'] = transitionType;
+        noChanges = false;
+    }
+    
+    // write transition duration
+    if (Number.isNaN(parseFloat(confData.transitionDuration)) || !isFinite(confData.transitionDuration)) {
+        uiNeedsUpdate = true;
+        setTimeout(function () {
+            self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.TRANSITION_DURATION') + self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NAN'));
+        }, 500);
+    } else {
+        confData.transitionDuration = self.minmax('TRANSITION_DURATION', confData.transitionDuration, minmax[8]);
+        if (peppy_config.current['transition.duration'] != confData.transitionDuration) {
+            peppy_config.current['transition.duration'] = confData.transitionDuration;
             noChanges = false;
         }
     }

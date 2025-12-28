@@ -72,6 +72,12 @@
     "FRAME_RATE":"Taux de rafraîchissement",
     "FRAME_RATE_DOC":"Taux de rafraîchissement en images par seconde (FPS).<br /><br /><b>Par défaut: 30</b><br /><br />Des valeurs plus basses réduisent l'utilisation du CPU mais peuvent sembler moins fluides.<br />Recommandé: 20-30 pour Pi 4, 15-20 pour Pi 3",
     "UPDATE_INTERVAL":"Intervalle de mise à jour",
-    "UPDATE_INTERVAL_DOC":"Fréquence de mise à jour du spectre et des aiguilles.<br /><br /><b>Par défaut: 2</b> (mise à jour toutes les 2 images)<br /><br />Des valeurs plus élevées réduisent l'utilisation du CPU mais diminuent la réactivité visuelle.<br />À 30 FPS avec intervalle 2: 15 mises à jour/sec<br />À 20 FPS avec intervalle 3: 6,7 mises à jour/sec"
+    "UPDATE_INTERVAL_DOC":"Fréquence de mise à jour du spectre et des aiguilles.<br /><br /><b>Par défaut: 2</b> (mise à jour toutes les 2 images)<br /><br />Des valeurs plus élevées réduisent l'utilisation du CPU mais diminuent la réactivité visuelle.<br />À 30 FPS avec intervalle 2: 15 mises à jour/sec<br />À 20 FPS avec intervalle 3: 6,7 mises à jour/sec",
+    "TRANSITION_TYPE":"Effet de transition",
+    "TRANSITION_TYPE_DOC":"Transition visuelle au démarrage ou à l'arrêt du mètre.<br /><br /><b>Aucun:</b> Changement instantané, pas de transition<br /><b>Fondu:</b> Effet de fondu entrant/sortant",
+    "TRANSITION_NONE":"Aucun",
+    "TRANSITION_FADE":"Fondu",
+    "TRANSITION_DURATION":"Durée de transition",
+    "TRANSITION_DURATION_DOC":"Durée de l'effet de fondu en secondes.<br /><br /><b>Par défaut: 0,5</b><br /><br />Plage: 0,1 à 2,0 secondes"
   }
 }

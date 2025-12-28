@@ -328,7 +328,9 @@
                               "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
                               "data": [
                                       "frameRate",
-                                      "updateInterval"
+                                      "updateInterval",
+                                      "transitionType",
+                                      "transitionDuration"
                                       ]
                               },
                 "content": [
@@ -359,6 +361,32 @@
                                              {"max": 10}
                                            ],
                              "value": 2
+                            },
+                            {
+                             "id": "transitionType",
+                             "element": "select",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_TYPE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_TYPE",
+                             "value": {"value": "fade", "label": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_FADE"},
+                             "options": [
+                                          {"value": "none", "label": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_NONE"},
+                                          {"value": "fade", "label": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_FADE"}
+                                        ]
+                            },
+                            {
+                             "id": "transitionDuration",
+                             "element": "input",
+                             "type": "number",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_DURATION_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_DURATION",
+                             "attributes": [
+                                             {"placeholder": "0.5"},
+                                             {"maxlength": 3},
+                                             {"min": 0.1},
+                                             {"max": 2.0},
+                                             {"step": 0.1}
+                                           ],
+                             "value": 0.5
                             }
                             ]
                 }

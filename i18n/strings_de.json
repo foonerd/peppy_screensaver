@@ -72,6 +72,12 @@
     "FRAME_RATE":"Bildrate",
     "FRAME_RATE_DOC":"Bildwiederholrate in Bildern pro Sekunde (FPS).<br /><br /><b>Standard: 30</b><br /><br />Niedrigere Werte reduzieren die CPU-Auslastung, können aber weniger flüssig erscheinen.<br />Empfohlen: 20-30 für Pi 4, 15-20 für Pi 3",
     "UPDATE_INTERVAL":"Update-Intervall",
-    "UPDATE_INTERVAL_DOC":"Aktualisierungsfrequenz für Spektrum und Zeiger.<br /><br /><b>Standard: 2</b> (Aktualisierung jeden 2. Frame)<br /><br />Höhere Werte reduzieren die CPU-Auslastung, verringern aber die visuelle Reaktionsfähigkeit.<br />Bei 30 FPS mit Intervall 2: 15 Updates/Sek<br />Bei 20 FPS mit Intervall 3: 6,7 Updates/Sek"
+    "UPDATE_INTERVAL_DOC":"Aktualisierungsfrequenz für Spektrum und Zeiger.<br /><br /><b>Standard: 2</b> (Aktualisierung jeden 2. Frame)<br /><br />Höhere Werte reduzieren die CPU-Auslastung, verringern aber die visuelle Reaktionsfähigkeit.<br />Bei 30 FPS mit Intervall 2: 15 Updates/Sek<br />Bei 20 FPS mit Intervall 3: 6,7 Updates/Sek",
+    "TRANSITION_TYPE":"Übergangseffekt",
+    "TRANSITION_TYPE_DOC":"Visueller Übergang beim Start oder Stopp des Meters.<br /><br /><b>Keine:</b> Sofortiger Wechsel, kein Übergang<br /><b>Einblenden:</b> Sanfter Ein-/Ausblendeffekt",
+    "TRANSITION_NONE":"Keine",
+    "TRANSITION_FADE":"Einblenden",
+    "TRANSITION_DURATION":"Übergangsdauer",
+    "TRANSITION_DURATION_DOC":"Dauer des Übergangseffekts in Sekunden.<br /><br /><b>Standard: 0,5</b><br /><br />Bereich: 0,1 bis 2,0 Sekunden"
   }
 }
