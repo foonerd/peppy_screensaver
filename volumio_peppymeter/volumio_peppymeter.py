@@ -701,6 +701,7 @@ class CallBack:
         self.pending_restart = False
         self.spectrum_output = None
         self.last_fade_time = 0  # Cooldown to prevent multiple fade-ins
+        self.did_fade_in = False  # Track if this instance did fade-in
         
     def vol_FadeIn_thread(self, meter):
         """Volume fade-in thread."""
@@ -842,10 +843,12 @@ class CallBack:
                 log_debug("-> will fade (first_run + animation)")
                 # Touch lock file
                 Path(fade_lockfile).touch()
+                self.did_fade_in = True
                 self.screen_fade_in(meter.util.PYGAME_SCREEN, duration)
             elif not self.first_run:
                 log_debug("-> will fade (meter change)")
                 Path(fade_lockfile).touch()
+                self.did_fade_in = True
                 self.screen_fade_in(meter.util.PYGAME_SCREEN, duration)
             else:
                 log_debug("-> no fade (first_run but no animation)")
@@ -1880,9 +1883,22 @@ def start_display_output(pm, callback, meter_config_volumio):
         
         clock.tick(cfg[FRAME_RATE])
     
-    # Fade-out transition before cleanup
-    duration = meter_config_volumio.get(TRANSITION_DURATION, 0.5)
-    callback.screen_fade_out(screen, duration)
+    # Fade-out transition before cleanup (only if we did fade-in)
+    if callback.did_fade_in:
+        # Recreate runFlag to prevent new instance starting during our fade_out
+        # index.js checks this flag before starting peppymeter
+        Path(PeppyRunning).touch()
+        log_debug("runFlag recreated for fade_out protection")
+        
+        duration = meter_config_volumio.get(TRANSITION_DURATION, 0.5)
+        callback.screen_fade_out(screen, duration)
+        
+        # Remove runFlag after fade_out complete
+        if os.path.exists(PeppyRunning):
+            os.remove(PeppyRunning)
+            log_debug("runFlag removed after fade_out")
+    else:
+        log_debug("screen_fade_out skipped (no fade_in was done)")
     
     # Cleanup
     metadata_watcher.stop()
