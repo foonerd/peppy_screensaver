@@ -80,8 +80,10 @@
     "TRANSITION_DURATION":"Transition duration",
     "TRANSITION_DURATION_DOC":"Duration of fade transition in seconds.<br /><br /><b>Default: 0.5</b><br /><br />Range: 0.1 to 5.0 seconds",
     "TRANSITION_COLOR":"Transition color",
-    "TRANSITION_COLOR_DOC":"Background color for fade transition.<br /><br /><b>White:</b> Fade from/to white (default)<br /><b>Black:</b> Fade from/to black",
+    "TRANSITION_COLOR_DOC":"Background color for fade transition.<br /><br /><b>Black:</b> Fade from/to black (default)<br /><b>White:</b> Fade from/to white",
     "TRANSITION_WHITE":"White",
-    "TRANSITION_BLACK":"Black"
+    "TRANSITION_BLACK":"Black",
+    "TRANSITION_OPACITY":"Transition opacity",
+    "TRANSITION_OPACITY_DOC":"Opacity of the fade overlay.<br /><br /><b>100%:</b> Solid color fade (default)<br /><b>50%:</b> Semi-transparent fade<br /><b>0%:</b> No fade effect<br /><br />Range: 0 to 100%"
   }
 }

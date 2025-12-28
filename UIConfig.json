@@ -331,7 +331,8 @@
                                       "updateInterval",
                                       "transitionType",
                                       "transitionDuration",
-                                      "transitionColor"
+                                      "transitionColor",
+                                      "transitionOpacity"
                                       ]
                               },
                 "content": [
@@ -399,6 +400,21 @@
                                           {"value": "black", "label": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_BLACK"},
                                           {"value": "white", "label": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_WHITE"}
                                         ]
+                            },
+                            {
+                             "id": "transitionOpacity",
+                             "element": "input",
+                             "type": "number",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_OPACITY_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRANSITION_OPACITY",
+                             "attributes": [
+                                             {"placeholder": "100"},
+                                             {"maxlength": 3},
+                                             {"min": 0},
+                                             {"max": 100},
+                                             {"step": 5}
+                                           ],
+                             "value": 100
                             }
                             ]
                 }

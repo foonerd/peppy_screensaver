@@ -601,6 +601,12 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 }
             }
             
+            // transition opacity
+            uiconf.sections[2].content[5].value = peppy_config.current['transition.opacity'] || 100;
+            minmax[9] = [uiconf.sections[2].content[5].attributes[2].min,
+                uiconf.sections[2].content[5].attributes[3].max,
+                uiconf.sections[2].content[5].attributes[0].placeholder];
+            
         } else {
             self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));            
         }
@@ -987,6 +993,20 @@ peppyScreensaver.prototype.savePerformanceConf = function (confData) {
     if (peppy_config.current['transition.color'] != transitionColor) {
         peppy_config.current['transition.color'] = transitionColor;
         noChanges = false;
+    }
+    
+    // write transition opacity
+    if (Number.isNaN(parseInt(confData.transitionOpacity, 10)) || !isFinite(confData.transitionOpacity)) {
+        uiNeedsUpdate = true;
+        setTimeout(function () {
+            self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.TRANSITION_OPACITY') + self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NAN'));
+        }, 500);
+    } else {
+        confData.transitionOpacity = self.minmax('TRANSITION_OPACITY', confData.transitionOpacity, minmax[9]);
+        if (peppy_config.current['transition.opacity'] != confData.transitionOpacity) {
+            peppy_config.current['transition.opacity'] = confData.transitionOpacity;
+            noChanges = false;
+        }
     }
     
     if (!noChanges) {

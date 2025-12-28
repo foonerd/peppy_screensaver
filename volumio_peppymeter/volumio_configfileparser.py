@@ -29,6 +29,7 @@ UPDATE_INTERVAL = "update.interval"
 TRANSITION_TYPE = "transition.type"
 TRANSITION_DURATION = "transition.duration"
 TRANSITION_COLOR = "transition.color"
+TRANSITION_OPACITY = "transition.opacity"
 
 EXTENDED_CONF = "config.extend"
 METER_VISIBLE = "meter.visible"
@@ -142,6 +143,10 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[TRANSITION_COLOR] = c.get(CURRENT, TRANSITION_COLOR)
         except:
             self.meter_config_volumio[TRANSITION_COLOR] = "black"
+        try:
+            self.meter_config_volumio[TRANSITION_OPACITY] = c.getint(CURRENT, TRANSITION_OPACITY)
+        except:
+            self.meter_config_volumio[TRANSITION_OPACITY] = 100
 
         try:
             self.meter_config_volumio[FONT_PATH] = c.get(CURRENT, FONT_PATH)

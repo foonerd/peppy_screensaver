@@ -80,8 +80,10 @@
     "TRANSITION_DURATION":"Übergangsdauer",
     "TRANSITION_DURATION_DOC":"Dauer des Übergangseffekts in Sekunden.<br /><br /><b>Standard: 0,5</b><br /><br />Bereich: 0,1 bis 5,0 Sekunden",
     "TRANSITION_COLOR":"Übergangsfarbe",
-    "TRANSITION_COLOR_DOC":"Hintergrundfarbe für den Übergangseffekt.<br /><br /><b>Weiß:</b> Ein-/Ausblenden von/zu Weiß (Standard)<br /><b>Schwarz:</b> Ein-/Ausblenden von/zu Schwarz",
+    "TRANSITION_COLOR_DOC":"Hintergrundfarbe für den Übergangseffekt.<br /><br /><b>Schwarz:</b> Ein-/Ausblenden von/zu Schwarz (Standard)<br /><b>Weiß:</b> Ein-/Ausblenden von/zu Weiß",
     "TRANSITION_WHITE":"Weiß",
-    "TRANSITION_BLACK":"Schwarz"
+    "TRANSITION_BLACK":"Schwarz",
+    "TRANSITION_OPACITY":"Übergangsdeckkraft",
+    "TRANSITION_OPACITY_DOC":"Deckkraft der Überblendung.<br /><br /><b>100%:</b> Vollständige Farbüberblendung (Standard)<br /><b>50%:</b> Halbtransparente Überblendung<br /><b>0%:</b> Kein Übergangseffekt<br /><br />Bereich: 0 bis 100%"
   }
 }

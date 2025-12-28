@@ -80,8 +80,10 @@
     "TRANSITION_DURATION":"Durée de transition",
     "TRANSITION_DURATION_DOC":"Durée de l'effet de fondu en secondes.<br /><br /><b>Par défaut: 0,5</b><br /><br />Plage: 0,1 à 5,0 secondes",
     "TRANSITION_COLOR":"Couleur de transition",
-    "TRANSITION_COLOR_DOC":"Couleur de fond pour l'effet de transition.<br /><br /><b>Blanc:</b> Fondu depuis/vers le blanc (par défaut)<br /><b>Noir:</b> Fondu depuis/vers le noir",
+    "TRANSITION_COLOR_DOC":"Couleur de fond pour l'effet de transition.<br /><br /><b>Noir:</b> Fondu depuis/vers le noir (par défaut)<br /><b>Blanc:</b> Fondu depuis/vers le blanc",
     "TRANSITION_WHITE":"Blanc",
-    "TRANSITION_BLACK":"Noir"
+    "TRANSITION_BLACK":"Noir",
+    "TRANSITION_OPACITY":"Opacité de transition",
+    "TRANSITION_OPACITY_DOC":"Opacité de l'effet de fondu.<br /><br /><b>100%:</b> Fondu de couleur solide (par défaut)<br /><b>50%:</b> Fondu semi-transparent<br /><b>0%:</b> Aucun effet de fondu<br /><br />Plage: 0 à 100%"
   }
 }
