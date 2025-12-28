@@ -97,7 +97,7 @@ class SpectrumOutput(Thread):
                 prev_clip = self.util.pygame_screen.get_clip()
                 self.util.pygame_screen.set_clip(self.util.screen_rect)
                 
-                self.sp.clean_draw_update()
+                self.sp.dirty_draw_update()
                 
                 # Restore previous clip
                 self.util.pygame_screen.set_clip(prev_clip)
