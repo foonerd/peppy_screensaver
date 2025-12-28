@@ -26,10 +26,20 @@ POS_Y = "position.y"
 
 UPDATE_INTERVAL = "update.interval"
 
+# Debug settings
+DEBUG_LEVEL = "debug.level"
+
 TRANSITION_TYPE = "transition.type"
 TRANSITION_DURATION = "transition.duration"
 TRANSITION_COLOR = "transition.color"
 TRANSITION_OPACITY = "transition.opacity"
+
+# Rotation settings (global)
+ROTATION_QUALITY = "rotation.quality"
+ROTATION_FPS = "rotation.fps"
+ROTATION_SPEED = "rotation.speed"
+SPOOL_LEFT_SPEED = "spool.left.speed"
+SPOOL_RIGHT_SPEED = "spool.right.speed"
 
 EXTENDED_CONF = "config.extend"
 METER_VISIBLE = "meter.visible"
@@ -147,6 +157,34 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[TRANSITION_OPACITY] = c.getint(CURRENT, TRANSITION_OPACITY)
         except:
             self.meter_config_volumio[TRANSITION_OPACITY] = 100
+
+        # Debug settings
+        try:
+            self.meter_config_volumio[DEBUG_LEVEL] = c.get(CURRENT, DEBUG_LEVEL)
+        except:
+            self.meter_config_volumio[DEBUG_LEVEL] = "off"
+
+        # Rotation settings (global)
+        try:
+            self.meter_config_volumio[ROTATION_QUALITY] = c.get(CURRENT, ROTATION_QUALITY)
+        except:
+            self.meter_config_volumio[ROTATION_QUALITY] = "medium"
+        try:
+            self.meter_config_volumio[ROTATION_FPS] = c.getint(CURRENT, ROTATION_FPS)
+        except:
+            self.meter_config_volumio[ROTATION_FPS] = 8
+        try:
+            self.meter_config_volumio[ROTATION_SPEED] = c.getfloat(CURRENT, ROTATION_SPEED)
+        except:
+            self.meter_config_volumio[ROTATION_SPEED] = 1.0
+        try:
+            self.meter_config_volumio[SPOOL_LEFT_SPEED] = c.getfloat(CURRENT, SPOOL_LEFT_SPEED)
+        except:
+            self.meter_config_volumio[SPOOL_LEFT_SPEED] = 1.0
+        try:
+            self.meter_config_volumio[SPOOL_RIGHT_SPEED] = c.getfloat(CURRENT, SPOOL_RIGHT_SPEED)
+        except:
+            self.meter_config_volumio[SPOOL_RIGHT_SPEED] = 1.0
 
         try:
             self.meter_config_volumio[FONT_PATH] = c.get(CURRENT, FONT_PATH)

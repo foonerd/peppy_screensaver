@@ -43,6 +43,8 @@ from volumio_configfileparser import (
     Volumio_ConfigFileParser, EXTENDED_CONF, METER_VISIBLE, SPECTRUM_VISIBLE,
     COLOR_DEPTH, POSITION_TYPE, POS_X, POS_Y, START_ANIMATION, UPDATE_INTERVAL,
     TRANSITION_TYPE, TRANSITION_DURATION, TRANSITION_COLOR, TRANSITION_OPACITY,
+    DEBUG_LEVEL, ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
+    SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
     ALBUMART_ROT, ALBUMART_ROT_SPEED,
@@ -90,14 +92,26 @@ try:
 except Exception:
     PIL_AVAILABLE = False
 
-# Debug logging - set to True for troubleshooting, False for production
-# When enabled, writes to /tmp/peppy_debug.log (warning: can fill disk on volatile /tmp)
-DEBUG_LOG = True
+# Debug logging - controlled by config debug.level setting
+# Levels: off, basic, verbose
+# When enabled, writes to /tmp/peppy_debug.log
 DEBUG_LOG_FILE = '/tmp/peppy_debug.log'
 
-def log_debug(msg):
-    """Write debug message to log file if DEBUG_LOG is enabled."""
-    if DEBUG_LOG:
+# Global debug level - will be set from config after parsing
+# Default to off until config is loaded
+DEBUG_LEVEL_CURRENT = "off"
+
+def log_debug(msg, level="basic"):
+    """Write debug message to log file based on debug level.
+    
+    :param msg: Message to log
+    :param level: Required level - 'basic' or 'verbose'
+    """
+    if DEBUG_LEVEL_CURRENT == "off":
+        return
+    if DEBUG_LEVEL_CURRENT == "basic" and level == "verbose":
+        return
+    # verbose level logs everything
         try:
             import datetime
             ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
@@ -346,10 +360,35 @@ class ScrollingLabel:
 # =============================================================================
 # Album Art Renderer (round cover + optional LP rotation)
 # =============================================================================
-# Rotation performance: FPS gating reduces CPU by limiting rotation updates
-ROTATE_TARGET_FPS = 8  # Target FPS for rotation updates (lower = less CPU)
-ROTATE_STEP_DEG = 6    # Degrees per pre-computed frame (60 frames for 360 degrees)
-USE_PRECOMPUTED_FRAMES = True  # Set False to disable pre-computed frames for debugging
+# Rotation quality presets (FPS, step_degrees):
+#   low:    4 FPS, 12 deg step (30 frames, choppy, lowest CPU)
+#   medium: 8 FPS, 6 deg step (60 frames, balanced) - default
+#   high:   15 FPS, 3 deg step (120 frames, smooth, higher CPU)
+#   custom: uses rotation.fps from config
+ROTATION_PRESETS = {
+    "low":    (4, 12),
+    "medium": (8, 6),
+    "high":   (15, 3),
+}
+
+# Default values (will be overridden by config)
+ROTATE_TARGET_FPS = 8
+ROTATE_STEP_DEG = 6
+USE_PRECOMPUTED_FRAMES = True
+
+def get_rotation_params(quality, custom_fps=8):
+    """Get rotation FPS and step degrees based on quality setting.
+    
+    :param quality: 'low', 'medium', 'high', or 'custom'
+    :param custom_fps: FPS to use when quality is 'custom'
+    :return: (fps, step_degrees)
+    """
+    if quality == "custom":
+        # Calculate step from FPS to maintain smooth rotation
+        # Higher FPS = smaller steps
+        step = max(2, int(180 / custom_fps))
+        return (custom_fps, step)
+    return ROTATION_PRESETS.get(quality, ROTATION_PRESETS["medium"])
 
 class AlbumArtRenderer:
     """
@@ -357,14 +396,14 @@ class AlbumArtRenderer:
     scaling, rotation (LP-style), and drawing with optional circular border.
     Rotation is optional and disabled if config params are missing.
     
-    OPTIMIZATION: FPS gating limits rotation updates for CPU reduction.
+    OPTIMIZATION: Pre-computes rotation frames and uses FPS gating for CPU reduction.
     """
 
     def __init__(self, base_path, meter_folder, art_pos, art_dim, screen_size,
                  font_color=(255, 255, 255), border_width=0,
                  mask_filename=None, rotate_enabled=False, rotate_rpm=0.0,
                  angle_step_deg=0.5, spindle_radius=5, ring_radius=None,
-                 circle=True):
+                 circle=True, rotation_fps=8, rotation_step=6, speed_multiplier=1.0):
         self.base_path = base_path
         self.meter_folder = meter_folder
         self.art_pos = art_pos
@@ -374,11 +413,13 @@ class AlbumArtRenderer:
         self.border_width = border_width
         self.mask_filename = mask_filename
         self.rotate_enabled = bool(rotate_enabled)
-        self.rotate_rpm = float(rotate_rpm)
+        self.rotate_rpm = float(rotate_rpm) * float(speed_multiplier)  # Apply speed multiplier
         self.angle_step_deg = float(angle_step_deg)
         self.spindle_radius = max(1, int(spindle_radius))
         self.ring_radius = ring_radius or max(3, min(art_dim[0], art_dim[1]) // 10)
         self.circle = bool(circle)
+        self.rotation_fps = int(rotation_fps)
+        self.rotation_step = int(rotation_step)
 
         # Derived center
         self.art_center = (int(art_pos[0] + art_dim[0] // 2),
@@ -391,7 +432,7 @@ class AlbumArtRenderer:
         self._rot_frames = None  # OPTIMIZATION: Pre-computed rotation frames
         self._current_angle = 0.0
         self._last_blit_tick = 0
-        self._blit_interval_ms = int(1000 / max(1, ROTATE_TARGET_FPS))
+        self._blit_interval_ms = int(1000 / max(1, self.rotation_fps))
         # OPTIMIZATION: Track if redraw needed
         self._needs_redraw = True
         self._need_first_blit = False
@@ -486,7 +527,7 @@ class AlbumArtRenderer:
                     try:
                         self._rot_frames = [
                             pg.transform.rotate(self._scaled_surf, -a)
-                            for a in range(0, 360, ROTATE_STEP_DEG)
+                            for a in range(0, 360, self.rotation_step)
                         ]
                     except Exception:
                         self._rot_frames = None
@@ -565,7 +606,7 @@ class AlbumArtRenderer:
             
             # OPTIMIZATION: Use pre-computed frame lookup if available
             if self._rot_frames:
-                idx = int(self._current_angle // ROTATE_STEP_DEG) % len(self._rot_frames)
+                idx = int(self._current_angle // self.rotation_step) % len(self._rot_frames)
                 rot = self._rot_frames[idx]
             else:
                 # Fallback: real-time rotation
@@ -624,7 +665,8 @@ class ReelRenderer:
     """
 
     def __init__(self, base_path, meter_folder, filename, pos, center, 
-                 rotate_rpm=1.5, angle_step_deg=1.0):
+                 rotate_rpm=1.5, angle_step_deg=1.0, rotation_fps=8, rotation_step=6,
+                 speed_multiplier=1.0):
         """
         Initialize reel renderer.
         
@@ -635,14 +677,19 @@ class ReelRenderer:
         :param center: Center point tuple (x, y) for rotation pivot
         :param rotate_rpm: Rotation speed in RPM
         :param angle_step_deg: Minimum angle change to trigger re-render (legacy)
+        :param rotation_fps: Target FPS for rotation updates
+        :param rotation_step: Degrees per pre-computed frame
+        :param speed_multiplier: Multiplier for rotation speed (from config)
         """
         self.base_path = base_path
         self.meter_folder = meter_folder
         self.filename = filename
         self.pos = pos
         self.center = center
-        self.rotate_rpm = float(rotate_rpm)
+        self.rotate_rpm = float(rotate_rpm) * float(speed_multiplier)  # Apply speed multiplier
         self.angle_step_deg = float(angle_step_deg)
+        self.rotation_fps = int(rotation_fps)
+        self.rotation_step = int(rotation_step)
         
         # Runtime state
         self._original_surf = None
@@ -650,7 +697,7 @@ class ReelRenderer:
         self._current_angle = 0.0
         self._loaded = False
         self._last_blit_tick = 0
-        self._blit_interval_ms = int(1000 / max(1, ROTATE_TARGET_FPS))
+        self._blit_interval_ms = int(1000 / max(1, self.rotation_fps))
         self._needs_redraw = True
         self._need_first_blit = False
         
@@ -674,7 +721,7 @@ class ReelRenderer:
                     try:
                         self._rot_frames = [
                             pg.transform.rotate(self._original_surf, -a)
-                            for a in range(0, 360, ROTATE_STEP_DEG)
+                            for a in range(0, 360, self.rotation_step)
                         ]
                     except Exception:
                         self._rot_frames = None
@@ -748,7 +795,7 @@ class ReelRenderer:
         
         # OPTIMIZATION: Use pre-computed frame lookup if available
         if self._rot_frames:
-            idx = int(self._current_angle // ROTATE_STEP_DEG) % len(self._rot_frames)
+            idx = int(self._current_angle // self.rotation_step) % len(self._rot_frames)
             rot = self._rot_frames[idx]
         else:
             # Fallback: real-time rotation
@@ -1489,6 +1536,12 @@ def start_display_output(pm, callback, meter_config_volumio):
             rotate_rpm = as_float(mc_vol.get(ALBUMART_ROT_SPEED), 0.0)
             screen_size = (cfg[SCREEN_INFO][WIDTH], cfg[SCREEN_INFO][HEIGHT])
             
+            # Get rotation quality settings from global config
+            rot_quality = meter_config_volumio.get(ROTATION_QUALITY, "medium")
+            rot_custom_fps = meter_config_volumio.get(ROTATION_FPS, 8)
+            rot_fps, rot_step = get_rotation_params(rot_quality, rot_custom_fps)
+            rot_speed_mult = meter_config_volumio.get(ROTATION_SPEED, 1.0)
+            
             album_renderer = AlbumArtRenderer(
                 base_path=cfg.get(BASE_PATH),
                 meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
@@ -1503,7 +1556,10 @@ def start_display_output(pm, callback, meter_config_volumio):
                 angle_step_deg=0.5,
                 spindle_radius=5,
                 ring_radius=max(3, min(art_dim[0], art_dim[1]) // 10),
-                circle=rotate_enabled  # Only circular when rotation enabled
+                circle=rotate_enabled,  # Only circular when rotation enabled
+                rotation_fps=rot_fps,
+                rotation_step=rot_step,
+                speed_multiplier=rot_speed_mult
             )
         
         # Create reel renderers (for cassette skins)
@@ -1518,6 +1574,13 @@ def start_display_output(pm, callback, meter_config_volumio):
         reel_right_center = mc_vol.get(REEL_RIGHT_CENTER)
         reel_rpm = as_float(mc_vol.get(REEL_ROTATION_SPEED), 0.0)
         
+        # Get rotation quality settings from global config (shared with album art)
+        rot_quality = meter_config_volumio.get(ROTATION_QUALITY, "medium")
+        rot_custom_fps = meter_config_volumio.get(ROTATION_FPS, 8)
+        rot_fps, rot_step = get_rotation_params(rot_quality, rot_custom_fps)
+        spool_left_mult = meter_config_volumio.get(SPOOL_LEFT_SPEED, 1.0)
+        spool_right_mult = meter_config_volumio.get(SPOOL_RIGHT_SPEED, 1.0)
+        
         if reel_left_file and reel_left_center:
             reel_left_renderer = ReelRenderer(
                 base_path=cfg.get(BASE_PATH),
@@ -1526,7 +1589,10 @@ def start_display_output(pm, callback, meter_config_volumio):
                 pos=reel_left_pos,
                 center=reel_left_center,
                 rotate_rpm=reel_rpm,
-                angle_step_deg=1.0
+                angle_step_deg=1.0,
+                rotation_fps=rot_fps,
+                rotation_step=rot_step,
+                speed_multiplier=spool_left_mult
             )
             # Capture backing for left reel
             backing_rect = reel_left_renderer.get_backing_rect()
@@ -1541,7 +1607,10 @@ def start_display_output(pm, callback, meter_config_volumio):
                 pos=reel_right_pos,
                 center=reel_right_center,
                 rotate_rpm=reel_rpm,
-                angle_step_deg=1.0
+                angle_step_deg=1.0,
+                rotation_fps=rot_fps,
+                rotation_step=rot_step,
+                speed_multiplier=spool_right_mult
             )
             # Capture backing for right reel
             backing_rect = reel_right_renderer.get_backing_rect()
@@ -2018,15 +2087,6 @@ def start_display_output(pm, callback, meter_config_volumio):
 if __name__ == "__main__":
     """Called by Volumio to start PeppyMeter."""
     
-    # Clear debug log on fresh start
-    if DEBUG_LOG:
-        try:
-            with open(DEBUG_LOG_FILE, 'w') as f:
-                f.write("")
-        except Exception:
-            pass
-    log_debug("=== PeppyMeter starting ===")
-    
     # Enable X11 threading
     ctypes.CDLL('libX11.so.6').XInitThreads()
     
@@ -2037,6 +2097,19 @@ if __name__ == "__main__":
     # Parse Volumio configuration
     parser = Volumio_ConfigFileParser(pm.util)
     meter_config_volumio = parser.meter_config_volumio
+    
+    # Set debug level from config early so logging works
+    DEBUG_LEVEL_CURRENT = meter_config_volumio.get(DEBUG_LEVEL, "off")
+    
+    # Clear debug log on fresh start (after config is loaded)
+    if DEBUG_LEVEL_CURRENT != "off":
+        try:
+            with open(DEBUG_LOG_FILE, 'w') as f:
+                f.write("")
+        except Exception:
+            pass
+    log_debug(f"Debug level set to: {DEBUG_LEVEL_CURRENT}", "basic")
+    log_debug("=== PeppyMeter starting ===", "basic")
     
     # Create callback handler
     callback = CallBack(pm.util, meter_config_volumio, pm.meter)

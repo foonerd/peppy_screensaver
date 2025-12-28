@@ -1,6 +1,6 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.0.8",
+  "version": "3.0.9",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.0.8 - Add screen fade transition effects, configurable transition duration"
+    "changelog": "3.0.9 - UI reorganization - Performance, Animation, Rotation sections."
   },
   "engines": {
     "node": ">=20",
