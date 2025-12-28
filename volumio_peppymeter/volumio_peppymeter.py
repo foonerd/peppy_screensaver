@@ -1,6 +1,7 @@
 # Copyright 2024 PeppyMeter for Volumio by 2aCD
 # Copyright 2025 Volumio 4 adaptation by Just a Nerd
 # Rewritten 2025 for Volumio 4 / Bookworm (Python 3.11, pygame 2.5)
+# Optimized 2025 - dirty rectangle updates, reduced per-frame overhead
 #
 # This file is part of PeppyMeter for Volumio
 #
@@ -11,6 +12,8 @@
 # - ScrollingLabel for text animation (replaces TextAnimator threads)
 # - Backing surface capture for clean redraws
 # - Random meter support with overlay reinit
+# - OPTIMIZED: Dirty rectangle updates instead of full screen flip
+# - OPTIMIZED: Conditional redraw based on actual changes
 
 import os
 import sys
@@ -236,6 +239,9 @@ class ScrollingLabel:
         self._pause_until = 0
         self._backing = None
         self._backing_rect = None
+        # OPTIMIZATION: Track if redraw needed
+        self._needs_redraw = True
+        self._last_draw_offset = -1
 
     def capture_backing(self, surface):
         """Capture backing surface for this label's area."""
@@ -255,7 +261,7 @@ class ScrollingLabel:
         """Update text content, reset scroll position if changed."""
         new_text = new_text or ""
         if new_text == self.text and self.surf is not None:
-            return
+            return False  # No change
         self.text = new_text
         self.surf = self.font.render(self.text, True, self.color)
         self.text_w, self.text_h = self.surf.get_size()
@@ -263,53 +269,75 @@ class ScrollingLabel:
         self.direction = 1
         self._pause_until = 0
         self._last_time = pg.time.get_ticks()
+        self._needs_redraw = True
+        self._last_draw_offset = -1
+        return True  # Changed
 
     def draw(self, surface):
-        """Draw label, handling scroll animation with self-backing."""
+        """Draw label, handling scroll animation with self-backing.
+        Returns dirty rect if drawn, None if skipped."""
         if not self.surf or not self.pos or self.box_width <= 0:
-            return
+            return None
+        
         x, y = self.pos
         box_rect = pg.Rect(x, y, self.box_width, self.text_h)
         
-        # Restore backing before drawing (prevents artifacts)
-        if self._backing and self._backing_rect:
-            surface.blit(self._backing, self._backing_rect.topleft)
-        
         # Text fits - no scrolling needed
         if self.text_w <= self.box_width:
+            # OPTIMIZATION: Only redraw if text changed
+            if not self._needs_redraw:
+                return None
+            
+            # Restore backing before drawing (prevents artifacts)
+            if self._backing and self._backing_rect:
+                surface.blit(self._backing, self._backing_rect.topleft)
+            
             if self.center and self.box_width > 0:
                 left = box_rect.x + (self.box_width - self.text_w) // 2
                 surface.blit(self.surf, (left, box_rect.y))
             else:
                 surface.blit(self.surf, (box_rect.x, box_rect.y))
-            return
+            self._needs_redraw = False
+            return self._backing_rect.copy() if self._backing_rect else box_rect.copy()
         
-        # Scrolling text
-        prev_clip = surface.get_clip()
-        surface.set_clip(box_rect)
-        draw_x = box_rect.x - int(self.offset)
-        surface.blit(self.surf, (draw_x, box_rect.y))
-        surface.set_clip(prev_clip)
-        
-        # Advance scroll position
+        # Scrolling text - check if offset changed enough to warrant redraw
         now = pg.time.get_ticks()
         dt = (now - self._last_time) / 1000.0
         self._last_time = now
         
-        if now < self._pause_until:
-            return
+        # Calculate new offset
+        if now >= self._pause_until:
+            limit = max(0, self.text_w - self.box_width)
+            self.offset += self.direction * self.speed * dt
             
-        limit = max(0, self.text_w - self.box_width)
-        self.offset += self.direction * self.speed * dt
+            if self.offset <= 0:
+                self.offset = 0
+                self.direction = 1
+                self._pause_until = now + self.pause_ms
+            elif self.offset >= limit:
+                self.offset = float(limit)
+                self.direction = -1
+                self._pause_until = now + self.pause_ms
         
-        if self.offset <= 0:
-            self.offset = 0
-            self.direction = 1
-            self._pause_until = now + self.pause_ms
-        elif self.offset >= limit:
-            self.offset = float(limit)
-            self.direction = -1
-            self._pause_until = now + self.pause_ms
+        # OPTIMIZATION: Only redraw if offset changed by at least 1 pixel
+        current_offset_int = int(self.offset)
+        if current_offset_int == self._last_draw_offset and not self._needs_redraw:
+            return None
+        
+        # Restore backing before drawing (prevents artifacts)
+        if self._backing and self._backing_rect:
+            surface.blit(self._backing, self._backing_rect.topleft)
+        
+        # Draw scrolling text
+        prev_clip = surface.get_clip()
+        surface.set_clip(box_rect)
+        draw_x = box_rect.x - current_offset_int
+        surface.blit(self.surf, (draw_x, box_rect.y))
+        surface.set_clip(prev_clip)
+        
+        self._last_draw_offset = current_offset_int
+        self._needs_redraw = False
+        return self._backing_rect.copy() if self._backing_rect else box_rect.copy()
 
 
 # =============================================================================
@@ -352,6 +380,8 @@ class AlbumArtRenderer:
         self._scaled_surf = None
         self._rotated_cache_surf = None
         self._last_angle = 0.0
+        # OPTIMIZATION: Track if redraw needed
+        self._needs_redraw = True
 
         # Mask path (if provided)
         self._mask_path = None
@@ -403,6 +433,7 @@ class AlbumArtRenderer:
         self._scaled_surf = None
         self._rotated_cache_surf = None
         self._last_angle = 0.0
+        self._needs_redraw = True
 
         if not url:
             return
@@ -466,14 +497,17 @@ class AlbumArtRenderer:
             return pg.Rect(self.art_pos[0], self.art_pos[1], self.art_dim[0], self.art_dim[1])
 
     def render(self, screen, status, current_time):
-        """Render album art (rotated if enabled) plus border and LP center markers."""
+        """Render album art (rotated if enabled) plus border and LP center markers.
+        Returns dirty rect if drawn, None if skipped."""
         if not self.art_pos or not self.art_dim or not self._scaled_surf:
-            return
+            return None
+
+        dirty_rect = None
 
         if self.rotate_enabled and self.art_center and self.rotate_rpm > 0.0:
             angle = self._compute_angle(status, current_time)
 
-            # Update rotation cache only when angle changed enough
+            # OPTIMIZATION: Only update rotation cache when angle changed enough
             if (self._rotated_cache_surf is None or abs(angle - self._last_angle) >= self.angle_step_deg):
                 try:
                     rotated = pg.transform.rotate(self._scaled_surf, -angle)  # clockwise LP feel
@@ -481,19 +515,27 @@ class AlbumArtRenderer:
                     rotated = pg.transform.rotate(self._scaled_surf, int(-angle))
                 self._rotated_cache_surf = rotated
                 self._last_angle = angle
+                self._needs_redraw = True
 
-            rot = self._rotated_cache_surf
-            if rot:
-                rot_rect = rot.get_rect(center=self.art_center)
-                screen.blit(rot, rot_rect.topleft)
-            else:
-                screen.blit(self._scaled_surf, self.art_pos)
+            if self._needs_redraw:
+                rot = self._rotated_cache_surf
+                if rot:
+                    rot_rect = rot.get_rect(center=self.art_center)
+                    screen.blit(rot, rot_rect.topleft)
+                    dirty_rect = self.get_backing_rect()
+                else:
+                    screen.blit(self._scaled_surf, self.art_pos)
+                    dirty_rect = pg.Rect(self.art_pos[0], self.art_pos[1], self.art_dim[0], self.art_dim[1])
+                self._needs_redraw = False
         else:
             # Rotation disabled or parameters missing - static
-            screen.blit(self._scaled_surf, self.art_pos)
+            if self._needs_redraw:
+                screen.blit(self._scaled_surf, self.art_pos)
+                dirty_rect = pg.Rect(self.art_pos[0], self.art_pos[1], self.art_dim[0], self.art_dim[1])
+                self._needs_redraw = False
 
         # Border: circle if cover is round; else rect
-        if self.border_width:
+        if self.border_width and dirty_rect:
             try:
                 if self.circle and self.art_center:
                     rad = min(self.art_dim[0], self.art_dim[1]) // 2
@@ -504,12 +546,14 @@ class AlbumArtRenderer:
                 pass
 
         # LP center markers (spindle + inner thin ring)
-        if self.rotate_enabled and self.art_center and self.rotate_rpm > 0.0:
+        if self.rotate_enabled and self.art_center and self.rotate_rpm > 0.0 and dirty_rect:
             try:
                 pg.draw.circle(screen, self.font_color, self.art_center, self.spindle_radius, 0)
                 pg.draw.circle(screen, self.font_color, self.art_center, self.ring_radius, 1)
             except Exception:
                 pass
+
+        return dirty_rect
 
 
 # =============================================================================
@@ -548,6 +592,8 @@ class ReelRenderer:
         self._rotated_surf = None
         self._last_angle = 0.0
         self._loaded = False
+        # OPTIMIZATION: Track if redraw needed
+        self._needs_redraw = True
         
         # Load the reel image
         self._load_image()
@@ -595,19 +641,29 @@ class ReelRenderer:
         return pg.Rect(ext_x, ext_y, diag, diag)
     
     def render(self, screen, status, current_time):
-        """Render the reel (rotated if playing)."""
+        """Render the reel (rotated if playing).
+        Returns dirty rect if drawn, None if skipped."""
         if not self._loaded or not self._original_surf:
-            return
+            return None
         
         if not self.center:
             # No rotation - just blit at position
-            screen.blit(self._original_surf, self.pos)
-            return
+            if self._needs_redraw:
+                screen.blit(self._original_surf, self.pos)
+                self._needs_redraw = False
+                return pg.Rect(self.pos[0], self.pos[1], 
+                             self._original_surf.get_width(), 
+                             self._original_surf.get_height())
+            return None
         
         # Compute current angle
         angle = self._compute_angle(status, current_time)
         
-        # Only re-render if angle changed enough
+        # OPTIMIZATION: Only re-render if angle changed enough
+        if self._rotated_surf is not None and abs(angle - self._last_angle) < self.angle_step_deg:
+            if not self._needs_redraw:
+                return None
+        
         if self._rotated_surf is None or abs(angle - self._last_angle) >= self.angle_step_deg:
             try:
                 # Rotate clockwise (negative angle)
@@ -615,10 +671,16 @@ class ReelRenderer:
             except Exception:
                 self._rotated_surf = pg.transform.rotate(self._original_surf, int(-angle))
             self._last_angle = angle
+            self._needs_redraw = True
         
-        # Get rect centered on rotation center
-        rot_rect = self._rotated_surf.get_rect(center=self.center)
-        screen.blit(self._rotated_surf, rot_rect.topleft)
+        if self._needs_redraw:
+            # Get rect centered on rotation center
+            rot_rect = self._rotated_surf.get_rect(center=self.center)
+            screen.blit(self._rotated_surf, rot_rect.topleft)
+            self._needs_redraw = False
+            return self.get_backing_rect()
+        
+        return None
 
 
 # =============================================================================
@@ -855,10 +917,11 @@ def stop_watcher():
 
 
 # =============================================================================
-# Main Display Output with Overlay
+# Main Display Output with Overlay - OPTIMIZED
 # =============================================================================
 def start_display_output(pm, callback, meter_config_volumio):
-    """Main display loop with integrated overlay rendering."""
+    """Main display loop with integrated overlay rendering.
+    OPTIMIZED: Uses dirty rectangle updates instead of full screen flip."""
     
     pg.event.clear()
     screen = pm.util.PYGAME_SCREEN
@@ -872,6 +935,14 @@ def start_display_output(pm, callback, meter_config_volumio):
     last_cover_url = None
     cover_img = None
     scaled_cover_img = None  # Cached scaled cover to avoid per-frame scaling
+    
+    # OPTIMIZATION: Cache for static overlay elements
+    last_time_str = ""
+    last_time_surf = None
+    last_sample_text = ""
+    last_sample_surf = None
+    last_track_type = ""
+    last_format_icon_surf = None
     
     # Shared metadata dict - updated by MetadataWatcher via socket.io
     last_metadata = {
@@ -1022,10 +1093,20 @@ def start_display_output(pm, callback, meter_config_volumio):
     # -------------------------------------------------------------------------
     def overlay_init_for_meter(meter_name):
         nonlocal active_meter_name, overlay_state, last_cover_url, cover_img
+        nonlocal last_time_str, last_time_surf, last_sample_text, last_sample_surf
+        nonlocal last_track_type, last_format_icon_surf
         
         mc = cfg.get(meter_name, {}) if meter_name else {}
         mc_vol = meter_config_volumio.get(meter_name, {}) if meter_name else {}
         active_meter_name = meter_name
+        
+        # Reset caches
+        last_time_str = ""
+        last_time_surf = None
+        last_sample_text = ""
+        last_sample_surf = None
+        last_track_type = ""
+        last_format_icon_surf = None
         
         # Fill screen black before drawing anything (prevents white background if assets fail to load)
         screen.fill((0, 0, 0))
@@ -1121,32 +1202,36 @@ def start_display_output(pm, callback, meter_config_volumio):
         
         # Capture backing surfaces
         backing = []
+        backing_dict = {}  # OPTIMIZATION: Dict for quick lookup
         
-        def capture_rect(pos, width, height):
+        def capture_rect(name, pos, width, height):
             if pos and width and height:
                 r = pg.Rect(pos[0], pos[1], int(width), int(height))
                 try:
-                    backing.append((r, screen.subsurface(r).copy()))
+                    surf = screen.subsurface(r).copy()
+                    backing.append((r, surf))
+                    backing_dict[name] = (r, surf)
                 except Exception:
                     # Fallback: create black surface (not undefined .convert() content)
                     s = pg.Surface((r.width, r.height))
                     s.fill((0, 0, 0))
                     backing.append((r, s))
+                    backing_dict[name] = (r, s)
         
         if artist_pos:
-            capture_rect(artist_pos, artist_box, artist_font.get_linesize())
+            capture_rect("artist", artist_pos, artist_box, artist_font.get_linesize())
         if title_pos:
-            capture_rect(title_pos, title_box, title_font.get_linesize())
+            capture_rect("title", title_pos, title_box, title_font.get_linesize())
         if album_pos:
-            capture_rect(album_pos, album_box, album_font.get_linesize())
+            capture_rect("album", album_pos, album_box, album_font.get_linesize())
         if time_pos:
-            capture_rect(time_pos, fontDigi.size('00:00')[0] + 10, fontDigi.get_linesize())
+            capture_rect("time", time_pos, fontDigi.size('00:00')[0] + 10, fontDigi.get_linesize())
         if sample_pos and sample_box:
-            capture_rect(sample_pos, sample_box, sample_font.get_linesize())
+            capture_rect("sample", sample_pos, sample_box, sample_font.get_linesize())
         if type_pos and type_dim:
-            capture_rect(type_pos, type_dim[0], type_dim[1])
+            capture_rect("type", type_pos, type_dim[0], type_dim[1])
         if art_pos and art_dim:
-            capture_rect(art_pos, art_dim[0], art_dim[1])
+            capture_rect("art", art_pos, art_dim[0], art_dim[1])
         
         # Create album art renderer (handles rotation if enabled)
         album_renderer = None
@@ -1197,7 +1282,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             # Capture backing for left reel
             backing_rect = reel_left_renderer.get_backing_rect()
             if backing_rect:
-                capture_rect((backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
+                capture_rect("reel_left", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
         
         if reel_right_file and reel_right_center:
             reel_right_renderer = ReelRenderer(
@@ -1212,7 +1297,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             # Capture backing for right reel
             backing_rect = reel_right_renderer.get_backing_rect()
             if backing_rect:
-                capture_rect((backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
+                capture_rect("reel_right", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
         
         # Create scrollers
         artist_scroller = ScrollingLabel(artist_font, artist_color, artist_pos, artist_box, center=center_flag) if artist_pos else None
@@ -1253,6 +1338,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             "mc_vol": mc_vol,
             "center_flag": center_flag,
             "backing": backing,
+            "backing_dict": backing_dict,
             "fontL": fontL,
             "fontR": fontR,
             "fontB": fontB,
@@ -1280,15 +1366,29 @@ def start_display_output(pm, callback, meter_config_volumio):
         }
     
     # -------------------------------------------------------------------------
-    # Render format icon
+    # Render format icon - OPTIMIZED with caching
     # -------------------------------------------------------------------------
     def render_format_icon(track_type, type_rect, type_color):
+        nonlocal last_track_type, last_format_icon_surf
+        
         if not type_rect:
-            return
+            return None
         
         fmt = (track_type or "").strip().lower().replace(" ", "_")
         if fmt == "dsf":
             fmt = "dsd"
+        
+        # OPTIMIZATION: Return cached surface if format unchanged
+        if fmt == last_track_type and last_format_icon_surf is not None:
+            return None  # No redraw needed
+        
+        last_track_type = fmt
+        
+        # Restore backing for type area
+        bd = overlay_state.get("backing_dict", {})
+        if "type" in bd:
+            r, b = bd["type"]
+            screen.blit(b, r.topleft)
         
         # Check local icons first
         local_icons = {'tidal', 'cd', 'qobuz'}
@@ -1302,7 +1402,8 @@ def start_display_output(pm, callback, meter_config_volumio):
             if overlay_state.get("sample_font"):
                 txt_surf = overlay_state["sample_font"].render(fmt[:4], True, type_color)
                 screen.blit(txt_surf, (type_rect.x, type_rect.y))
-            return
+                last_format_icon_surf = txt_surf
+            return type_rect.copy()
         
         try:
             if pg.version.ver.startswith("2"):
@@ -1321,6 +1422,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 dx = type_rect.x + (type_rect.width - img.get_width()) // 2
                 dy = type_rect.y + (type_rect.height - img.get_height()) // 2
                 screen.blit(img, (dx, dy))
+                last_format_icon_surf = img
             elif CAIROSVG_AVAILABLE and PIL_AVAILABLE:
                 # Pygame 1.x with cairosvg
                 png_bytes = cairosvg.svg2png(url=icon_path, 
@@ -1333,11 +1435,14 @@ def start_display_output(pm, callback, meter_config_volumio):
                 dx = type_rect.x + (type_rect.width - img.get_width()) // 2
                 dy = type_rect.y + (type_rect.height - img.get_height()) // 2
                 screen.blit(img, (dx, dy))
+                last_format_icon_surf = img
+            return type_rect.copy()
         except Exception as e:
             print(f"[FormatIcon] error: {e}")
+            return None
     
     # -------------------------------------------------------------------------
-    # Main loop
+    # Main loop - OPTIMIZED with dirty rectangle updates
     # -------------------------------------------------------------------------
     clock = Clock()
     pm.meter.start()
@@ -1350,8 +1455,38 @@ def start_display_output(pm, callback, meter_config_volumio):
     if pg.version.ver.startswith("2"):
         exit_events.append(pg.FINGERUP)
     
+    # OPTIMIZATION: Frame counter for spectrum throttling
+    frame_counter = 0
+    SPECTRUM_UPDATE_INTERVAL = 4  # Update spectrum every N frames (reduces CPU)
+    
+    # OPTIMIZATION: Idle detection - skip work when playback stopped
+    last_status = ""
+    idle_frame_skip = 0
+    
     while running:
         current_time = time.time()
+        dirty_rects = []  # OPTIMIZATION: Collect dirty rectangles
+        frame_counter += 1
+        
+        # OPTIMIZATION: Idle detection - reduce frame rate when stopped/paused
+        current_status = last_metadata.get("status", "")
+        if current_status != last_status:
+            last_status = current_status
+            idle_frame_skip = 0
+        
+        if current_status in ("stop", "pause", ""):
+            # When idle, skip every other frame to reduce CPU
+            idle_frame_skip += 1
+            if idle_frame_skip % 2 == 0:
+                # Still handle events even when skipping
+                for event in pg.event.get():
+                    if event.type == pg.QUIT:
+                        running = False
+                    elif event.type in exit_events:
+                        if cfg.get(EXIT_ON_TOUCH, False) or cfg.get(STOP_DISPLAY_ON_TOUCH, False):
+                            running = False
+                clock.tick(cfg[FRAME_RATE])
+                continue
         
         # Check for random meter change
         nm = resolve_active_meter_name()
@@ -1374,17 +1509,36 @@ def start_display_output(pm, callback, meter_config_volumio):
         ov = overlay_state
         
         if not ov.get("enabled", False):
-            # No extended config - just run meter
-            pm.meter.run()
+            # No extended config - just run meter with dirty rect updates
+            meter_rects = pm.meter.run()
             callback.peppy_meter_update()
-            pg.display.flip()
+            # OPTIMIZATION: Use dirty rectangle update
+            if meter_rects:
+                pg.display.update(meter_rects)
+            else:
+                pg.display.update()
         else:
-            # Restore backing surfaces
-            for r, b in ov["backing"]:
-                screen.blit(b, r.topleft)
-            
-            # Run meter animation
-            pm.meter.run()
+            # Run meter animation - collect dirty rects
+            meter_rects = pm.meter.run()
+            if meter_rects:
+                # meter.run() returns list of tuples: [(index, rect), (index, rect)]
+                # Extract just the rects for display update
+                if isinstance(meter_rects, list):
+                    for item in meter_rects:
+                        if item:
+                            # Handle tuple (index, rect) from circular/linear animator
+                            if isinstance(item, tuple) and len(item) >= 2:
+                                rect = item[1]  # Second element is the rect
+                                if rect:
+                                    dirty_rects.append(rect)
+                            elif hasattr(item, 'x'):  # It's a Rect object
+                                dirty_rects.append(item)
+                elif isinstance(meter_rects, tuple) and len(meter_rects) >= 2:
+                    rect = meter_rects[1]
+                    if rect:
+                        dirty_rects.append(rect)
+                elif hasattr(meter_rects, 'x'):  # It's a Rect object
+                    dirty_rects.append(meter_rects)
             
             # Read metadata from socket.io watcher (no polling needed)
             meta = last_metadata
@@ -1398,24 +1552,30 @@ def start_display_output(pm, callback, meter_config_volumio):
             bitrate = meta.get("bitrate", "")
             status = meta.get("status", "")
             
-            # Text scrollers
+            # Text scrollers - OPTIMIZED: only redraws if changed
             if ov["artist_scroller"]:
                 # Combine artist + album if no album position
                 display_artist = artist
                 if not ov["album_pos"] and album:
                     display_artist = f"{artist} - {album}" if artist else album
                 ov["artist_scroller"].update_text(display_artist)
-                ov["artist_scroller"].draw(screen)
+                rect = ov["artist_scroller"].draw(screen)
+                if rect:
+                    dirty_rects.append(rect)
             
             if ov["title_scroller"]:
                 ov["title_scroller"].update_text(title)
-                ov["title_scroller"].draw(screen)
+                rect = ov["title_scroller"].draw(screen)
+                if rect:
+                    dirty_rects.append(rect)
             
             if ov["album_scroller"]:
                 ov["album_scroller"].update_text(album)
-                ov["album_scroller"].draw(screen)
+                rect = ov["album_scroller"].draw(screen)
+                if rect:
+                    dirty_rects.append(rect)
             
-            # Time remaining
+            # Time remaining - OPTIMIZED with caching
             if ov["time_pos"]:
                 # Read time from socket.io metadata watcher
                 time_remain_sec = meta.get("_time_remain", -1)
@@ -1434,58 +1594,124 @@ def start_display_output(pm, callback, meter_config_volumio):
                     secs = time_remain_sec % 60
                     time_str = f"{mins:02d}:{secs:02d}"
                     
-                    # Color - red for last 10 seconds
-                    t_color = (242, 0, 0) if 0 < time_remain_sec <= 10 else ov["time_color"]
-                    
-                    time_surf = ov["fontDigi"].render(time_str, True, t_color)
-                    screen.blit(time_surf, ov["time_pos"])
+                    # OPTIMIZATION: Only redraw if time string changed
+                    if time_str != last_time_str:
+                        last_time_str = time_str
+                        
+                        # Restore backing for time area
+                        bd = ov.get("backing_dict", {})
+                        if "time" in bd:
+                            r, b = bd["time"]
+                            screen.blit(b, r.topleft)
+                            dirty_rects.append(r.copy())
+                        
+                        # Color - red for last 10 seconds
+                        t_color = (242, 0, 0) if 0 < time_remain_sec <= 10 else ov["time_color"]
+                        
+                        last_time_surf = ov["fontDigi"].render(time_str, True, t_color)
+                        screen.blit(last_time_surf, ov["time_pos"])
             
-            # Sample rate / bitdepth
+            # Sample rate / bitdepth - OPTIMIZED with caching
             if ov["sample_pos"] and ov["sample_box"]:
                 # Match original: concatenate sample + depth, fallback to bitrate
                 sample_text = f"{samplerate} {bitdepth}".strip()
                 if not sample_text:
                     sample_text = bitrate.strip() if bitrate else ""
                 
-                if sample_text:
-                    sample_surf = ov["sample_font"].render(sample_text, True, ov["type_color"])
+                # OPTIMIZATION: Only redraw if sample text changed
+                if sample_text and sample_text != last_sample_text:
+                    last_sample_text = sample_text
+                    
+                    # Restore backing for sample area
+                    bd = ov.get("backing_dict", {})
+                    if "sample" in bd:
+                        r, b = bd["sample"]
+                        screen.blit(b, r.topleft)
+                        dirty_rects.append(r.copy())
+                    
+                    last_sample_surf = ov["sample_font"].render(sample_text, True, ov["type_color"])
                     
                     # Center if configured
                     if ov["center_flag"] and ov["sample_box"]:
-                        sx = ov["sample_pos"][0] + (ov["sample_box"] - sample_surf.get_width()) // 2
+                        sx = ov["sample_pos"][0] + (ov["sample_box"] - last_sample_surf.get_width()) // 2
                     else:
                         sx = ov["sample_pos"][0]
-                    screen.blit(sample_surf, (sx, ov["sample_pos"][1]))
+                    screen.blit(last_sample_surf, (sx, ov["sample_pos"][1]))
             
-            # Format icon
-            render_format_icon(track_type, ov["type_rect"], ov["type_color"])
+            # Format icon - OPTIMIZED with caching
+            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"])
+            if icon_rect:
+                dirty_rects.append(icon_rect)
             
-            # Render cassette reels (before album art)
+            # Render cassette reels (before album art) - returns dirty rect or None
             reel_left = ov.get("reel_left_renderer")
             reel_right = ov.get("reel_right_renderer")
             
+            # OPTIMIZATION: Only restore backing and render reels during playback
+            is_playing = status == "play"
+            
             if reel_left:
-                reel_left.render(screen, status, current_time)
+                if is_playing:
+                    # Restore backing for left reel only during playback
+                    bd = ov.get("backing_dict", {})
+                    if "reel_left" in bd:
+                        r, b = bd["reel_left"]
+                        screen.blit(b, r.topleft)
+                rect = reel_left.render(screen, status, current_time)
+                if rect:
+                    dirty_rects.append(rect)
+            
             if reel_right:
-                reel_right.render(screen, status, current_time)
+                if is_playing:
+                    # Restore backing for right reel only during playback
+                    bd = ov.get("backing_dict", {})
+                    if "reel_right" in bd:
+                        r, b = bd["reel_right"]
+                        screen.blit(b, r.topleft)
+                rect = reel_right.render(screen, status, current_time)
+                if rect:
+                    dirty_rects.append(rect)
             
             # Album art (round + optional rotating) - draw LAST to sit on top
             album_renderer = ov.get("album_renderer")
             if album_renderer:
-                if albumart != getattr(album_renderer, "_current_url", None):
+                url_changed = albumart != getattr(album_renderer, "_current_url", None)
+                if url_changed:
+                    # Restore backing for album art area only when URL changes
+                    bd = ov.get("backing_dict", {})
+                    if "art" in bd:
+                        r, b = bd["art"]
+                        screen.blit(b, r.topleft)
                     album_renderer.load_from_url(albumart)
-                album_renderer.render(screen, status, current_time)
+                elif is_playing and album_renderer.rotate_enabled:
+                    # Restore backing during playback for rotating album art
+                    bd = ov.get("backing_dict", {})
+                    if "art" in bd:
+                        r, b = bd["art"]
+                        screen.blit(b, r.topleft)
+                rect = album_renderer.render(screen, status, current_time)
+                if rect:
+                    dirty_rects.append(rect)
 
             # Draw the meter foreground above everything (needles + rotating cover)
             fgr_surf = ov.get("fgr_surf")
-            if fgr_surf:
+            if fgr_surf and dirty_rects:
+                # Only draw foreground if something changed
                 screen.blit(fgr_surf, ov["fgr_pos"])
             
-            # Spectrum and callbacks
-            callback.peppy_meter_update()
+            # Spectrum and callbacks - OPTIMIZED: throttle spectrum updates
+            if callback.spectrum_output is not None:
+                # Only update spectrum every N frames to reduce CPU load
+                if frame_counter % SPECTRUM_UPDATE_INTERVAL == 0:
+                    callback.peppy_meter_update()
+            else:
+                callback.peppy_meter_update()
             
-            # Update display
-            pg.display.flip()
+            # OPTIMIZATION: Update only dirty rectangles
+            if dirty_rects:
+                # Merge overlapping rectangles for efficiency
+                pg.display.update(dirty_rects)
+            # If nothing changed, skip display update entirely
         
         # Handle events
         for event in pg.event.get():
