@@ -42,7 +42,7 @@ from configfileparser import (
 from volumio_configfileparser import (
     Volumio_ConfigFileParser, EXTENDED_CONF, METER_VISIBLE, SPECTRUM_VISIBLE,
     COLOR_DEPTH, POSITION_TYPE, POS_X, POS_Y, START_ANIMATION, UPDATE_INTERVAL,
-    TRANSITION_TYPE, TRANSITION_DURATION,
+    TRANSITION_TYPE, TRANSITION_DURATION, TRANSITION_COLOR,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
     ALBUMART_ROT, ALBUMART_ROT_SPEED,
@@ -92,15 +92,17 @@ except Exception:
 
 # Debug logging - set to True for troubleshooting, False for production
 # When enabled, writes to /tmp/peppy_debug.log (warning: can fill disk on volatile /tmp)
-DEBUG_LOG = False
+DEBUG_LOG = True
 DEBUG_LOG_FILE = '/tmp/peppy_debug.log'
 
 def log_debug(msg):
     """Write debug message to log file if DEBUG_LOG is enabled."""
     if DEBUG_LOG:
         try:
+            import datetime
+            ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
             with open(DEBUG_LOG_FILE, 'a') as f:
-                f.write(f"{msg}\n")
+                f.write(f"[{ts}] {msg}\n")
         except Exception:
             pass
 
@@ -698,6 +700,7 @@ class CallBack:
         self.meter = meter
         self.pending_restart = False
         self.spectrum_output = None
+        self.last_fade_time = 0  # Cooldown to prevent multiple fade-ins
         
     def vol_FadeIn_thread(self, meter):
         """Volume fade-in thread."""
@@ -707,17 +710,27 @@ class CallBack:
         meter.set_volume(100)
 
     def screen_fade_in(self, screen, duration=0.5):
-        """Fade in the screen from black/previous state.
+        """Fade in the screen from configured background color.
         
         :param screen: pygame screen surface
         :param duration: fade duration in seconds
         """
+        log_debug(f"screen_fade_in called, duration={duration}")
+        
         transition_type = self.meter_config_volumio.get(TRANSITION_TYPE, "fade")
         if transition_type == "none":
+            log_debug("-> skipped (transition_type=none)")
             return
             
         clock = Clock()
         frame_rate = self.meter_config.get(FRAME_RATE, 30)
+        
+        # Get configured fade color
+        fade_color = self.meter_config_volumio.get(TRANSITION_COLOR, "black")
+        if fade_color == "white":
+            bg_color = (255, 255, 255)
+        else:
+            bg_color = (0, 0, 0)
         
         # Capture current screen content
         screen_copy = screen.copy()
@@ -731,7 +744,7 @@ class CallBack:
             if alpha > 255:
                 alpha = 255
             screen_copy.set_alpha(alpha)
-            screen.fill((0, 0, 0))
+            screen.fill(bg_color)
             screen.blit(screen_copy, (0, 0))
             pg.display.update()
             clock.tick(frame_rate)
@@ -742,21 +755,31 @@ class CallBack:
         pg.display.update()
 
     def screen_fade_out(self, screen, duration=0.5):
-        """Fade out the screen to black.
+        """Fade out the screen to configured color.
         
         :param screen: pygame screen surface
         :param duration: fade duration in seconds
         """
+        log_debug(f"screen_fade_out called, duration={duration}")
+        
         transition_type = self.meter_config_volumio.get(TRANSITION_TYPE, "fade")
         if transition_type == "none":
+            log_debug("-> skipped (transition_type=none)")
             return
             
         clock = Clock()
         frame_rate = self.meter_config.get(FRAME_RATE, 30)
         
-        # Create black overlay
+        # Get configured fade color
+        fade_color = self.meter_config_volumio.get(TRANSITION_COLOR, "black")
+        if fade_color == "white":
+            overlay_color = (255, 255, 255)
+        else:
+            overlay_color = (0, 0, 0)
+        
+        # Create overlay
         overlay = pg.Surface(screen.get_size())
-        overlay.fill((0, 0, 0))
+        overlay.fill(overlay_color)
         
         # Calculate steps based on duration and frame rate
         total_frames = max(int(duration * frame_rate), 1)
@@ -781,10 +804,51 @@ class CallBack:
         meter_section_volumio = self.meter_config_volumio[self.meter_config[METER]]
         
         # Screen fade-in transition (before restoring screen)
+        # Use cooldown to prevent multiple fade-ins on rapid meter changes
+        current_time = time.time()
         duration = self.meter_config_volumio.get(TRANSITION_DURATION, 0.5)
-        if not self.first_run:
-            # Fade in on meter change (not first run)
-            self.screen_fade_in(meter.util.PYGAME_SCREEN, duration)
+        animation = self.meter_config_volumio.get(START_ANIMATION, False)
+        cooldown = duration + 1.0  # cooldown is fade duration + 1 second
+        
+        # Debug: track calls
+        time_since_last = current_time - self.last_fade_time
+        log_debug(f"peppy_meter_start: first_run={self.first_run}, animation={animation}, duration={duration}s, cooldown={cooldown}s")
+        
+        # Use file-based cooldown that persists across process restarts
+        # This prevents double fade when skin change triggers multiple restarts
+        fade_lockfile = '/tmp/peppy_fade_lock'
+        should_fade = False
+        
+        try:
+            if os.path.exists(fade_lockfile):
+                lock_mtime = os.path.getmtime(fade_lockfile)
+                lock_age = current_time - lock_mtime
+                log_debug(f"-> fade lock exists, age={lock_age:.2f}s")
+                if lock_age > cooldown:
+                    # Lock expired, allow fade
+                    should_fade = True
+                else:
+                    log_debug(f"-> skipped (lock active: {lock_age:.2f}s < {cooldown}s)")
+            else:
+                # No lock, allow fade
+                should_fade = True
+        except Exception as e:
+            log_debug(f"-> lock check error: {e}")
+            should_fade = True
+        
+        # Only fade on first run with animation, or meter change
+        if should_fade:
+            if self.first_run and animation:
+                log_debug("-> will fade (first_run + animation)")
+                # Touch lock file
+                Path(fade_lockfile).touch()
+                self.screen_fade_in(meter.util.PYGAME_SCREEN, duration)
+            elif not self.first_run:
+                log_debug("-> will fade (meter change)")
+                Path(fade_lockfile).touch()
+                self.screen_fade_in(meter.util.PYGAME_SCREEN, duration)
+            else:
+                log_debug("-> no fade (first_run but no animation)")
         
         # Restore screen reference
         meter.util.PYGAME_SCREEN = meter.util.screen_copy
@@ -899,28 +963,40 @@ def as_float(val, default=0.0):
 
 def set_color(surface, color):
     """Colorize a surface with given color (preserving alpha). Modifies surface in place."""
+    # Check if numpy is available (required for surfarray)
+    numpy_available = False
     try:
-        r, g, b = color.r, color.g, color.b
-        # Get pixel array for direct manipulation (requires numpy)
-        arr = pg.surfarray.pixels3d(surface)
-        alpha = pg.surfarray.pixels_alpha(surface)
-        # Replace all non-transparent pixel colors with target color
-        mask = alpha > 0
-        arr[mask] = [r, g, b]
-        del arr
-        del alpha
-    except Exception:
-        # Fallback: pixel-by-pixel (slow but works without numpy)
+        import numpy
+        numpy_available = True
+    except ImportError:
+        pass
+    
+    if numpy_available:
         try:
             r, g, b = color.r, color.g, color.b
-            w, h = surface.get_size()
-            for x in range(w):
-                for y in range(h):
-                    px = surface.get_at((x, y))
-                    if px.a > 0:
-                        surface.set_at((x, y), (r, g, b, px.a))
+            # Get pixel array for direct manipulation (requires numpy)
+            arr = pg.surfarray.pixels3d(surface)
+            alpha = pg.surfarray.pixels_alpha(surface)
+            # Replace all non-transparent pixel colors with target color
+            mask = alpha > 0
+            arr[mask] = [r, g, b]
+            del arr
+            del alpha
+            return
         except Exception:
             pass
+    
+    # Fallback: pixel-by-pixel (slow but works without numpy)
+    try:
+        r, g, b = color.r, color.g, color.b
+        w, h = surface.get_size()
+        for x in range(w):
+            for y in range(h):
+                px = surface.get_at((x, y))
+                if px.a > 0:
+                    surface.set_at((x, y), (r, g, b, px.a))
+    except Exception:
+        pass
 
 
 def get_memory():
@@ -1819,6 +1895,15 @@ def start_display_output(pm, callback, meter_config_volumio):
 # =============================================================================
 if __name__ == "__main__":
     """Called by Volumio to start PeppyMeter."""
+    
+    # Clear debug log on fresh start
+    if DEBUG_LOG:
+        try:
+            with open(DEBUG_LOG_FILE, 'w') as f:
+                f.write("")
+        except Exception:
+            pass
+    log_debug("=== PeppyMeter starting ===")
     
     # Enable X11 threading
     ctypes.CDLL('libX11.so.6').XInitThreads()

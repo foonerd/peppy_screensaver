@@ -78,6 +78,10 @@
     "TRANSITION_NONE":"None",
     "TRANSITION_FADE":"Fade",
     "TRANSITION_DURATION":"Transition duration",
-    "TRANSITION_DURATION_DOC":"Duration of fade transition in seconds.<br /><br /><b>Default: 0.5</b><br /><br />Range: 0.1 to 2.0 seconds"
+    "TRANSITION_DURATION_DOC":"Duration of fade transition in seconds.<br /><br /><b>Default: 0.5</b><br /><br />Range: 0.1 to 5.0 seconds",
+    "TRANSITION_COLOR":"Transition color",
+    "TRANSITION_COLOR_DOC":"Background color for fade transition.<br /><br /><b>White:</b> Fade from/to white (default)<br /><b>Black:</b> Fade from/to black",
+    "TRANSITION_WHITE":"White",
+    "TRANSITION_BLACK":"Black"
   }
 }

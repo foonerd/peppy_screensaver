@@ -78,6 +78,10 @@
     "TRANSITION_NONE":"Keine",
     "TRANSITION_FADE":"Einblenden",
     "TRANSITION_DURATION":"Übergangsdauer",
-    "TRANSITION_DURATION_DOC":"Dauer des Übergangseffekts in Sekunden.<br /><br /><b>Standard: 0,5</b><br /><br />Bereich: 0,1 bis 2,0 Sekunden"
+    "TRANSITION_DURATION_DOC":"Dauer des Übergangseffekts in Sekunden.<br /><br /><b>Standard: 0,5</b><br /><br />Bereich: 0,1 bis 5,0 Sekunden",
+    "TRANSITION_COLOR":"Übergangsfarbe",
+    "TRANSITION_COLOR_DOC":"Hintergrundfarbe für den Übergangseffekt.<br /><br /><b>Weiß:</b> Ein-/Ausblenden von/zu Weiß (Standard)<br /><b>Schwarz:</b> Ein-/Ausblenden von/zu Schwarz",
+    "TRANSITION_WHITE":"Weiß",
+    "TRANSITION_BLACK":"Schwarz"
   }
 }

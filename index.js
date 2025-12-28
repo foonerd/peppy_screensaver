@@ -591,6 +591,16 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 uiconf.sections[2].content[3].attributes[3].max,
                 uiconf.sections[2].content[3].attributes[0].placeholder];
             
+            // transition color
+            var transitionColor = peppy_config.current['transition.color'] || 'black';
+            var colorOptions = uiconf.sections[2].content[4].options;
+            for (var i = 0; i < colorOptions.length; i++) {
+                if (colorOptions[i].value === transitionColor) {
+                    uiconf.sections[2].content[4].value = colorOptions[i];
+                    break;
+                }
+            }
+            
         } else {
             self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));            
         }
@@ -970,6 +980,13 @@ peppyScreensaver.prototype.savePerformanceConf = function (confData) {
             peppy_config.current['transition.duration'] = confData.transitionDuration;
             noChanges = false;
         }
+    }
+    
+    // write transition color
+    var transitionColor = confData.transitionColor.value || 'black';
+    if (peppy_config.current['transition.color'] != transitionColor) {
+        peppy_config.current['transition.color'] = transitionColor;
+        noChanges = false;
     }
     
     if (!noChanges) {
