@@ -112,13 +112,13 @@ def log_debug(msg, level="basic"):
     if DEBUG_LEVEL_CURRENT == "basic" and level == "verbose":
         return
     # verbose level logs everything
-        try:
-            import datetime
-            ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
-            with open(DEBUG_LOG_FILE, 'a') as f:
-                f.write(f"[{ts}] {msg}\n")
-        except Exception:
-            pass
+    try:
+        import datetime
+        ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        with open(DEBUG_LOG_FILE, 'a') as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
 
 # Runtime paths
 PeppyRunning = '/tmp/peppyrunning'
@@ -705,28 +705,55 @@ class ReelRenderer:
         self._load_image()
     
     def _load_image(self):
-        """Load the reel PNG file and pre-compute rotation frames."""
+        """Load the reel PNG file, apply circular mask, and pre-compute rotation frames."""
         if not self.filename:
             return
         
         try:
             img_path = os.path.join(self.base_path, self.meter_folder, self.filename)
-            if os.path.exists(img_path):
+            if not os.path.exists(img_path):
+                print(f"[ReelRenderer] File not found: {img_path}")
+                return
+            
+            # Use PIL for circular masking if available
+            if PIL_AVAILABLE:
+                try:
+                    pil_img = Image.open(img_path).convert('RGBA')
+                    
+                    # Apply circular mask to ensure proper transparency
+                    mask = Image.new('L', pil_img.size, 0)
+                    draw = ImageDraw.Draw(mask)
+                    draw.ellipse((0, 0, pil_img.size[0], pil_img.size[1]), fill=255)
+                    pil_img.putalpha(mask)
+                    
+                    # Convert PIL image to pygame surface
+                    mode = pil_img.mode
+                    size = pil_img.size
+                    data = pil_img.tobytes()
+                    self._original_surf = pg.image.fromstring(data, size, mode).convert_alpha()
+                    self._loaded = True
+                    self._need_first_blit = True
+                except Exception as e:
+                    print(f"[ReelRenderer] PIL processing failed, falling back: {e}")
+                    self._original_surf = pg.image.load(img_path).convert_alpha()
+                    self._loaded = True
+                    self._need_first_blit = True
+            else:
+                # Fallback: load directly without circular mask
                 self._original_surf = pg.image.load(img_path).convert_alpha()
                 self._loaded = True
                 self._need_first_blit = True
-                
-                # OPTIMIZATION: Pre-compute all rotation frames
-                if USE_PRECOMPUTED_FRAMES and self.center and self.rotate_rpm > 0.0:
-                    try:
-                        self._rot_frames = [
-                            pg.transform.rotate(self._original_surf, -a)
-                            for a in range(0, 360, self.rotation_step)
-                        ]
-                    except Exception:
-                        self._rot_frames = None
-            else:
-                print(f"[ReelRenderer] File not found: {img_path}")
+            
+            # OPTIMIZATION: Pre-compute all rotation frames (CCW direction)
+            if USE_PRECOMPUTED_FRAMES and self.center and self.rotate_rpm > 0.0:
+                try:
+                    self._rot_frames = [
+                        pg.transform.rotate(self._original_surf, a)
+                        for a in range(0, 360, self.rotation_step)
+                    ]
+                except Exception:
+                    self._rot_frames = None
+                    
         except Exception as e:
             print(f"[ReelRenderer] Failed to load '{self.filename}': {e}")
     
@@ -798,11 +825,11 @@ class ReelRenderer:
             idx = int(self._current_angle // self.rotation_step) % len(self._rot_frames)
             rot = self._rot_frames[idx]
         else:
-            # Fallback: real-time rotation
+            # Fallback: real-time rotation (CCW direction)
             try:
-                rot = pg.transform.rotate(self._original_surf, -self._current_angle)
+                rot = pg.transform.rotate(self._original_surf, self._current_angle)
             except Exception:
-                rot = pg.transform.rotate(self._original_surf, int(-self._current_angle))
+                rot = pg.transform.rotate(self._original_surf, int(self._current_angle))
         
         # Get rect centered on rotation center
         rot_rect = rot.get_rect(center=self.center)
