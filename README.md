@@ -62,6 +62,7 @@ After installation, enable and configure the plugin:
 - Multiple VU meter skins
 - Spectrum analyzer mode
 - Album art display with optional LP rotation effect
+- Animated tonearm for turntable skins (tracks playback progress)
 - Cassette deck skins with rotating reel animation
 - Track info overlay with scrolling text
 - Random meter rotation
@@ -274,6 +275,61 @@ albumart.dimension = 200,200
 albumart.rotation = True
 albumart.rotation.speed = 8
 ```
+
+### Tonearm Animation
+
+Turntable-style skins can display an animated tonearm that follows track progress.
+The arm drops onto the record when playback starts, tracks across the record
+surface following the seek position, and lifts off when playback stops.
+
+```ini
+[MyTurntableSkin]
+meter.type = circular
+config.extend = True
+screen.bgr = turntable_background.png
+
+# Album art as rotating vinyl
+albumart.pos = 100,80
+albumart.dimension = 300,300
+albumart.rotation = True
+albumart.rotation.speed = 33.3
+
+# Tonearm configuration
+tonearm.filename = tonearm.png
+tonearm.pivot.screen = 450,120
+tonearm.pivot.image = 45,36
+tonearm.angle.rest = -70
+tonearm.angle.start = -45
+tonearm.angle.end = -15
+tonearm.drop.duration = 1.5
+tonearm.lift.duration = 1.0
+```
+
+| Option | Description |
+|--------|-------------|
+| `tonearm.filename` | PNG file for tonearm graphic (transparent background) |
+| `tonearm.pivot.screen` | Screen coordinates (x,y) where pivot point is drawn |
+| `tonearm.pivot.image` | Coordinates (x,y) within PNG where pivot/rotation center is located |
+| `tonearm.angle.rest` | Angle in degrees when arm is parked off the record |
+| `tonearm.angle.start` | Angle at outer groove (0% track progress) |
+| `tonearm.angle.end` | Angle at inner groove (100% track progress) |
+| `tonearm.drop.duration` | Duration in seconds for drop animation (default: 1.5) |
+| `tonearm.lift.duration` | Duration in seconds for lift animation (default: 1.0) |
+
+**Angle convention:** 0 degrees points RIGHT, negative angles rotate clockwise
+(so -45 points down-right, -90 points straight down).
+
+**State machine:**
+- **REST**: Arm parked at rest angle, waiting for playback
+- **DROP**: Animated descent onto record (ease-out curve)
+- **TRACKING**: Following track progress across the record surface
+- **LIFT**: Animated lift off record back to rest position
+
+**Tonearm graphic tips:**
+- Use PNG with transparent background
+- Pivot point can be anywhere in the image (for counterweight designs)
+- For S-curved arms, set pivot.image to the bearing housing location
+- Arm length from pivot determines sweep radius
 
 ## Troubleshooting
 

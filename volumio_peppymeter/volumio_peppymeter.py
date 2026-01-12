@@ -88,6 +88,24 @@ except ImportError:
     REEL_RIGHT_CENTER = "reel.right.center"
     REEL_ROTATION_SPEED = "reel.rotation.speed"
 
+# Tonearm configuration constants - import with fallback for backward compatibility
+try:
+    from volumio_configfileparser import (
+        TONEARM_FILE, TONEARM_PIVOT_SCREEN, TONEARM_PIVOT_IMAGE,
+        TONEARM_ANGLE_REST, TONEARM_ANGLE_START, TONEARM_ANGLE_END,
+        TONEARM_DROP_DURATION, TONEARM_LIFT_DURATION
+    )
+except ImportError:
+    # Fallback if volumio_configfileparser not updated yet
+    TONEARM_FILE = "tonearm.filename"
+    TONEARM_PIVOT_SCREEN = "tonearm.pivot.screen"
+    TONEARM_PIVOT_IMAGE = "tonearm.pivot.image"
+    TONEARM_ANGLE_REST = "tonearm.angle.rest"
+    TONEARM_ANGLE_START = "tonearm.angle.start"
+    TONEARM_ANGLE_END = "tonearm.angle.end"
+    TONEARM_DROP_DURATION = "tonearm.drop.duration"
+    TONEARM_LIFT_DURATION = "tonearm.lift.duration"
+
 from volumio_spectrum import SpectrumOutput
 
 # Optional SVG support for pygame < 2
@@ -188,6 +206,11 @@ class MetadataWatcher:
             duration = data.get("duration", 0) or 0
             seek = data.get("seek", 0) or 0
             service = data.get("service", "")
+            
+            # Store duration and seek for progress calculation (tonearm, etc)
+            self.metadata["duration"] = duration
+            self.metadata["seek"] = seek
+            self.metadata["_seek_update"] = time.time()  # Track when seek was received
             
             if service != self.time_service or abs(seek / 1000 - (duration - self.time_remain_sec)) > 3:
                 # Reset time on track change or significant seek
@@ -820,6 +843,344 @@ class ReelRenderer:
         self._needs_redraw = False
         self._need_first_blit = False
         return self.get_backing_rect()
+
+
+# =============================================================================
+# TonearmRenderer - Turntable tonearm animation based on track progress
+# =============================================================================
+
+# Tonearm state constants
+TONEARM_STATE_REST = "rest"
+TONEARM_STATE_DROP = "drop"
+TONEARM_STATE_TRACKING = "tracking"
+TONEARM_STATE_LIFT = "lift"
+
+
+class TonearmRenderer:
+    """
+    Renders a tonearm that tracks playback progress.
+    
+    The tonearm pivots around a fixed point and sweeps from an outer groove
+    position (start) to an inner groove position (end) based on track progress.
+    
+    Drop and lift animations provide realistic arm movement when playback
+    starts and stops.
+    """
+    
+    def __init__(self, base_path, meter_folder, filename,
+                 pivot_screen, pivot_image,
+                 angle_rest, angle_start, angle_end,
+                 drop_duration=1.5, lift_duration=1.0,
+                 rotation_fps=30):
+        """
+        Initialize tonearm renderer.
+        
+        :param base_path: Base path for meter assets
+        :param meter_folder: Meter folder name
+        :param filename: PNG filename for the tonearm graphic
+        :param pivot_screen: Screen coordinates (x, y) where pivot point is drawn
+        :param pivot_image: Coordinates (x, y) within the PNG where pivot is located
+        :param angle_rest: Angle in degrees when arm is parked (off record)
+        :param angle_start: Angle at outer groove (0% progress)
+        :param angle_end: Angle at inner groove (100% progress)
+        :param drop_duration: Seconds for drop animation (rest -> start)
+        :param lift_duration: Seconds for lift animation (current -> rest)
+        :param rotation_fps: Target FPS for animation updates
+        """
+        self.base_path = base_path
+        self.meter_folder = meter_folder
+        self.filename = filename
+        self.pivot_screen = pivot_screen
+        self.pivot_image = pivot_image
+        self.angle_rest = float(angle_rest)
+        self.angle_start = float(angle_start)
+        self.angle_end = float(angle_end)
+        self.drop_duration = float(drop_duration)
+        self.lift_duration = float(lift_duration)
+        self.rotation_fps = int(rotation_fps)
+        
+        # Runtime state
+        self._original_surf = None
+        self._loaded = False
+        self._state = TONEARM_STATE_REST
+        self._current_angle = self.angle_rest
+        self._animation_start_time = 0
+        self._animation_start_angle = 0
+        self._animation_end_angle = 0
+        self._animation_duration = 0
+        self._last_status = ""
+        self._last_blit_tick = 0
+        self._blit_interval_ms = int(1000 / max(1, self.rotation_fps))
+        self._needs_redraw = True
+        self._last_drawn_angle = None
+        
+        # Arm geometry for backing rect calculation
+        self._arm_length = 0
+        
+        # Load the tonearm image
+        self._load_image()
+    
+    def _load_image(self):
+        """Load the tonearm PNG file."""
+        if not self.filename:
+            return
+        
+        try:
+            img_path = os.path.join(self.base_path, self.meter_folder, self.filename)
+            if os.path.exists(img_path):
+                self._original_surf = pg.image.load(img_path).convert_alpha()
+                self._loaded = True
+                self._needs_redraw = True
+                
+                # Calculate arm length as distance from pivot to furthest corner
+                w = self._original_surf.get_width()
+                h = self._original_surf.get_height()
+                px, py = self.pivot_image
+                
+                # Check all four corners, find max distance from pivot
+                corners = [(0, 0), (w, 0), (0, h), (w, h)]
+                self._arm_length = max(
+                    math.sqrt((cx - px)**2 + (cy - py)**2)
+                    for cx, cy in corners
+                )
+                
+                log_debug(f"[TonearmRenderer] Loaded '{self.filename}', arm_length={self._arm_length:.1f}")
+            else:
+                print(f"[TonearmRenderer] File not found: {img_path}")
+        except Exception as e:
+            print(f"[TonearmRenderer] Failed to load '{self.filename}': {e}")
+    
+    def _start_animation(self, target_angle, duration):
+        """Start an animation from current angle to target angle."""
+        self._animation_start_time = time.time()
+        self._animation_start_angle = self._current_angle
+        self._animation_end_angle = target_angle
+        self._animation_duration = duration
+    
+    def _update_animation(self):
+        """Update animation progress, return True if animation complete."""
+        if self._animation_duration <= 0:
+            self._current_angle = self._animation_end_angle
+            return True
+        
+        elapsed = time.time() - self._animation_start_time
+        progress = min(1.0, elapsed / self._animation_duration)
+        
+        # Ease-out for natural arm movement (decelerate at end)
+        eased = 1 - (1 - progress) ** 2
+        
+        self._current_angle = (
+            self._animation_start_angle + 
+            (self._animation_end_angle - self._animation_start_angle) * eased
+        )
+        
+        return progress >= 1.0
+    
+    def update(self, status, progress_pct):
+        """
+        Update tonearm state based on playback status and progress.
+        
+        :param status: Playback status ("play", "pause", "stop")
+        :param progress_pct: Track progress as percentage (0.0 to 100.0)
+        :return: True if redraw needed
+        """
+        if not self._loaded:
+            return False
+        
+        status = (status or "").lower()
+        self._last_status = status
+        
+        # State machine
+        if self._state == TONEARM_STATE_REST:
+            if status == "play":
+                # Start drop animation
+                self._state = TONEARM_STATE_DROP
+                self._start_animation(self.angle_start, self.drop_duration)
+                self._needs_redraw = True
+        
+        elif self._state == TONEARM_STATE_DROP:
+            if status != "play":
+                # Playback stopped during drop - lift back
+                self._state = TONEARM_STATE_LIFT
+                self._start_animation(self.angle_rest, self.lift_duration)
+            else:
+                # Continue drop animation
+                if self._update_animation():
+                    # Drop complete - start tracking
+                    self._state = TONEARM_STATE_TRACKING
+                self._needs_redraw = True
+        
+        elif self._state == TONEARM_STATE_TRACKING:
+            if status != "play":
+                # Playback stopped - start lift
+                self._state = TONEARM_STATE_LIFT
+                self._start_animation(self.angle_rest, self.lift_duration)
+                self._needs_redraw = True
+            else:
+                # Calculate angle from progress
+                # Clamp progress to 0-100
+                progress_pct = max(0.0, min(100.0, progress_pct or 0.0))
+                target_angle = (
+                    self.angle_start + 
+                    (self.angle_end - self.angle_start) * (progress_pct / 100.0)
+                )
+                
+                # Only update if angle changed significantly (0.5 degree threshold)
+                if abs(target_angle - self._current_angle) > 0.5:
+                    self._current_angle = target_angle
+                    self._needs_redraw = True
+        
+        elif self._state == TONEARM_STATE_LIFT:
+            if status == "play":
+                # Playback resumed during lift - drop back
+                self._state = TONEARM_STATE_DROP
+                self._start_animation(self.angle_start, self.drop_duration)
+            else:
+                # Continue lift animation
+                if self._update_animation():
+                    # Lift complete - back to rest
+                    self._state = TONEARM_STATE_REST
+                self._needs_redraw = True
+        
+        return self._needs_redraw
+    
+    def will_blit(self, now_ticks):
+        """Check if blit is needed (FPS gating + state check)."""
+        if not self._loaded or not self._original_surf:
+            return False
+        
+        # Always blit if angle changed
+        if self._needs_redraw:
+            return True
+        
+        # During animations, check FPS gating
+        if self._state in (TONEARM_STATE_DROP, TONEARM_STATE_LIFT):
+            return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        
+        return False
+    
+    def get_backing_rect(self):
+        """
+        Get bounding rectangle for backing surface.
+        
+        Must cover the full sweep area from rest angle to end angle.
+        """
+        if not self._original_surf or not self.pivot_screen:
+            return None
+        
+        # Calculate the sweep area
+        # The arm tip traces an arc - we need a rect that covers the full arc
+        px, py = self.pivot_screen
+        arm_len = self._arm_length + 4  # Small padding
+        
+        # Find min/max angles for full sweep range
+        min_angle = min(self.angle_rest, self.angle_start, self.angle_end)
+        max_angle = max(self.angle_rest, self.angle_start, self.angle_end)
+        
+        # Calculate bounding box of arc sweep
+        # Sample points along the arc to find extents
+        points = []
+        for angle in range(int(min_angle), int(max_angle) + 1, 5):
+            rad = math.radians(angle)
+            x = px + arm_len * math.cos(rad)
+            y = py - arm_len * math.sin(rad)  # Pygame Y is inverted
+            points.append((x, y))
+        
+        # Also add the pivot point itself
+        points.append((px, py))
+        
+        if not points:
+            return None
+        
+        min_x = min(p[0] for p in points)
+        max_x = max(p[0] for p in points)
+        min_y = min(p[1] for p in points)
+        max_y = max(p[1] for p in points)
+        
+        # Add padding for the arm width
+        padding = max(self._original_surf.get_width(), self._original_surf.get_height()) // 2
+        
+        return pg.Rect(
+            int(min_x - padding),
+            int(min_y - padding),
+            int(max_x - min_x + 2 * padding),
+            int(max_y - min_y + 2 * padding)
+        )
+    
+    def render(self, screen, now_ticks, force=False):
+        """
+        Render the tonearm at current angle.
+        
+        :param screen: Pygame screen surface
+        :param now_ticks: Current tick count (for FPS gating)
+        :param force: If True, bypass FPS gating (used when album art redraws)
+        :return: Dirty rect if drawn, None if skipped
+        """
+        if not self._loaded or not self._original_surf:
+            return None
+        
+        # FPS gating (bypass if force)
+        if not force and not self.will_blit(now_ticks):
+            return None
+        
+        self._last_blit_tick = now_ticks
+        
+        # Skip if angle hasn't changed (optimization for TRACKING state only)
+        # During DROP/LIFT animations, always render for smooth movement
+        if not force and self._state == TONEARM_STATE_TRACKING:
+            if self._last_drawn_angle is not None:
+                if abs(self._current_angle - self._last_drawn_angle) < 0.1:
+                    self._needs_redraw = False
+                    return None
+        
+        # Rotate the image around the pivot point
+        # pygame.transform.rotate rotates around center, so we need to compensate
+        
+        # 1. Rotate the surface
+        rotated = pg.transform.rotate(self._original_surf, self._current_angle)
+        
+        # 2. Calculate where the pivot point ended up after rotation
+        # Original pivot in image coordinates
+        px, py = self.pivot_image
+        img_w = self._original_surf.get_width()
+        img_h = self._original_surf.get_height()
+        
+        # Pivot relative to image center
+        cx, cy = img_w / 2, img_h / 2
+        dx, dy = px - cx, py - cy
+        
+        # Rotate pivot point
+        rad = math.radians(-self._current_angle)  # Negative because pygame rotates CCW
+        new_dx = dx * math.cos(rad) - dy * math.sin(rad)
+        new_dy = dx * math.sin(rad) + dy * math.cos(rad)
+        
+        # New pivot position in rotated image
+        rot_w = rotated.get_width()
+        rot_h = rotated.get_height()
+        rot_cx, rot_cy = rot_w / 2, rot_h / 2
+        rot_px = rot_cx + new_dx
+        rot_py = rot_cy + new_dy
+        
+        # 3. Position the rotated image so pivot aligns with screen position
+        scr_px, scr_py = self.pivot_screen
+        blit_x = scr_px - rot_px
+        blit_y = scr_py - rot_py
+        
+        # 4. Blit to screen
+        screen.blit(rotated, (int(blit_x), int(blit_y)))
+        
+        self._needs_redraw = False
+        self._last_drawn_angle = self._current_angle
+        
+        return self.get_backing_rect()
+    
+    def get_state(self):
+        """Return current state for debugging."""
+        return self._state
+    
+    def get_angle(self):
+        """Return current angle for debugging."""
+        return self._current_angle
 
 
 # =============================================================================
@@ -1663,6 +2024,33 @@ def start_display_output(pm, callback, meter_config_volumio):
             if backing_rect:
                 capture_rect("reel_right", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
         
+        # Create tonearm renderer (for turntable skins)
+        tonearm_renderer = None
+        
+        tonearm_file = mc_vol.get(TONEARM_FILE)
+        tonearm_pivot_screen = mc_vol.get(TONEARM_PIVOT_SCREEN)
+        tonearm_pivot_image = mc_vol.get(TONEARM_PIVOT_IMAGE)
+        
+        if tonearm_file and tonearm_pivot_screen and tonearm_pivot_image:
+            tonearm_renderer = TonearmRenderer(
+                base_path=cfg.get(BASE_PATH),
+                meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
+                filename=tonearm_file,
+                pivot_screen=tonearm_pivot_screen,
+                pivot_image=tonearm_pivot_image,
+                angle_rest=mc_vol.get(TONEARM_ANGLE_REST, -30.0),
+                angle_start=mc_vol.get(TONEARM_ANGLE_START, 0.0),
+                angle_end=mc_vol.get(TONEARM_ANGLE_END, 25.0),
+                drop_duration=mc_vol.get(TONEARM_DROP_DURATION, 1.5),
+                lift_duration=mc_vol.get(TONEARM_LIFT_DURATION, 1.0),
+                rotation_fps=rot_fps
+            )
+            # Capture backing for tonearm sweep area
+            backing_rect = tonearm_renderer.get_backing_rect()
+            if backing_rect:
+                capture_rect("tonearm", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
+            log_debug(f"[overlay_init] TonearmRenderer created: {tonearm_file}")
+        
         # Create scrollers with per-field speeds
         artist_scroller = ScrollingLabel(artist_font, artist_color, artist_pos, artist_box, center=center_flag, speed_px_per_sec=scroll_speed_artist) if artist_pos else None
         title_scroller = ScrollingLabel(title_font, title_color, title_pos, title_box, center=center_flag, speed_px_per_sec=scroll_speed_title) if title_pos else None
@@ -1725,6 +2113,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             "album_renderer": album_renderer,
             "reel_left_renderer": reel_left_renderer,
             "reel_right_renderer": reel_right_renderer,
+            "tonearm_renderer": tonearm_renderer,
             "fgr_surf": fgr_surf,
             "fgr_pos": (meter_x, meter_y),
         }
@@ -1917,8 +2306,139 @@ def start_display_output(pm, callback, meter_config_volumio):
             track_type = meta.get("trackType", "")
             bitrate = meta.get("bitrate", "")
             status = meta.get("status", "")
+            is_playing = status == "play"
+            bd = ov.get("backing_dict", {})
             
-            # Text scrollers - OPTIMIZED: only redraws if changed
+            # Render cassette reels first
+            reel_left = ov.get("reel_left_renderer")
+            reel_right = ov.get("reel_right_renderer")
+            
+            # Restore BOTH backings first to avoid overlap clobbering
+            left_will_blit = reel_left and is_playing and reel_left.will_blit(now_ticks)
+            right_will_blit = reel_right and is_playing and reel_right.will_blit(now_ticks)
+            
+            if left_will_blit and "reel_left" in bd:
+                r, b = bd["reel_left"]
+                screen.blit(b, r.topleft)
+            if right_will_blit and "reel_right" in bd:
+                r, b = bd["reel_right"]
+                screen.blit(b, r.topleft)
+            
+            # Now render both reels
+            if left_will_blit:
+                rect = reel_left.render(screen, status, now_ticks)
+                if rect:
+                    dirty_rects.append(rect)
+            if right_will_blit:
+                rect = reel_right.render(screen, status, now_ticks)
+                if rect:
+                    dirty_rects.append(rect)
+            
+            # Album art and tonearm - coordinate backing restoration order
+            album_renderer = ov.get("album_renderer")
+            tonearm = ov.get("tonearm_renderer")
+            
+            # Pre-calculate tonearm state
+            tonearm_will_render = False
+            if tonearm:
+                duration = meta.get("duration", 0) or 0
+                seek = meta.get("seek", 0) or 0
+                
+                # Interpolate seek based on elapsed time when playing
+                # Volumio only sends seek on events, not continuously
+                if is_playing and duration > 0:
+                    seek_update_time = meta.get("_seek_update", 0)
+                    if seek_update_time > 0:
+                        elapsed_ms = (current_time - seek_update_time) * 1000
+                        seek = min(duration * 1000, seek + elapsed_ms)
+                
+                if duration > 0:
+                    progress_pct = min(100.0, (seek / 1000.0 / duration) * 100.0)
+                else:
+                    progress_pct = 0.0
+                tonearm.update(status, progress_pct)
+                tonearm_will_render = tonearm.will_blit(now_ticks)
+            
+            # STEP 1: If tonearm will render OR album art will render with tonearm active,
+            # restore tonearm backing FIRST to clear old arm position
+            tonearm_active = tonearm and tonearm.get_state() != "rest"
+            album_will_render = False
+            if album_renderer:
+                url_changed = albumart != getattr(album_renderer, "_current_url", None)
+                if url_changed:
+                    album_will_render = True
+                elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
+                    album_will_render = is_playing and album_renderer.will_blit(now_ticks)
+            
+            # Restore tonearm backing if either tonearm or album art (with active arm) will render
+            tonearm_backing_restored = False
+            if (tonearm_will_render or (album_will_render and tonearm_active)) and "tonearm" in bd:
+                r, b = bd["tonearm"]
+                screen.blit(b, r.topleft)
+                tonearm_backing_restored = True
+            
+            # STEP 2: Album art (restore backing + draw)
+            # This covers any overlap area that tonearm backing cleared
+            album_rendered = False
+            if album_renderer:
+                url_changed = albumart != getattr(album_renderer, "_current_url", None)
+                if url_changed:
+                    if "art" in bd:
+                        r, b = bd["art"]
+                        screen.blit(b, r.topleft)
+                    album_renderer.load_from_url(albumart)
+                    rect = album_renderer.render(screen, status, now_ticks)
+                    if rect:
+                        dirty_rects.append(rect)
+                        album_rendered = True
+                elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
+                    # Render when playing normally OR when tonearm needs render
+                    if album_will_render or tonearm_will_render:
+                        if "art" in bd:
+                            r, b = bd["art"]
+                            screen.blit(b, r.topleft)
+                        # Force render to bypass FPS gating if tonearm needs it
+                        if tonearm_will_render and not album_will_render:
+                            album_renderer._need_first_blit = True
+                        rect = album_renderer.render(screen, status, now_ticks)
+                        if rect:
+                            dirty_rects.append(rect)
+                            album_rendered = True
+                else:
+                    # Static artwork - force redraw when tonearm renders
+                    if tonearm_will_render:
+                        if "art" in bd:
+                            r, b = bd["art"]
+                            screen.blit(b, r.topleft)
+                        album_renderer._need_first_blit = True
+                    rect = album_renderer.render(screen, status, now_ticks)
+                    if rect:
+                        dirty_rects.append(rect)
+                        album_rendered = True
+            
+            # STEP 3: Tonearm draws on top of album art
+            # Must render if: tonearm needs update OR album art just rendered (to stay on top)
+            if tonearm and (tonearm_will_render or (album_rendered and tonearm.get_state() != "rest")):
+                # Force render if album art just rendered (to stay on top)
+                force = album_rendered and not tonearm_will_render
+                rect = tonearm.render(screen, now_ticks, force=force)
+                if rect:
+                    dirty_rects.append(rect)
+            
+            # Text scrollers - render AFTER tonearm so labels aren't wiped by backing restore
+            # Force redraw if tonearm backing was restored (it may have wiped text areas)
+            if tonearm_backing_restored:
+                if ov["artist_scroller"]:
+                    ov["artist_scroller"]._needs_redraw = True
+                if ov["title_scroller"]:
+                    ov["title_scroller"]._needs_redraw = True
+                if ov["album_scroller"]:
+                    ov["album_scroller"]._needs_redraw = True
+                # Also force time/sample/icon redraw
+                last_time_str = ""
+                last_sample_text = ""
+                last_track_type = ""
+            
             if ov["artist_scroller"]:
                 # Combine artist + album if no album position
                 display_artist = artist
@@ -1965,7 +2485,6 @@ def start_display_output(pm, callback, meter_config_volumio):
                         last_time_str = time_str
                         
                         # Restore backing for time area
-                        bd = ov.get("backing_dict", {})
                         if "time" in bd:
                             r, b = bd["time"]
                             screen.blit(b, r.topleft)
@@ -1989,7 +2508,6 @@ def start_display_output(pm, callback, meter_config_volumio):
                     last_sample_text = sample_text
                     
                     # Restore backing for sample area
-                    bd = ov.get("backing_dict", {})
                     if "sample" in bd:
                         r, b = bd["sample"]
                         screen.blit(b, r.topleft)
@@ -2008,65 +2526,6 @@ def start_display_output(pm, callback, meter_config_volumio):
             icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"])
             if icon_rect:
                 dirty_rects.append(icon_rect)
-            
-            # Render cassette reels (before album art) - returns dirty rect or None
-            reel_left = ov.get("reel_left_renderer")
-            reel_right = ov.get("reel_right_renderer")
-            is_playing = status == "play"
-            bd = ov.get("backing_dict", {})
-            
-            # Restore BOTH backings first to avoid overlap clobbering
-            left_will_blit = reel_left and is_playing and reel_left.will_blit(now_ticks)
-            right_will_blit = reel_right and is_playing and reel_right.will_blit(now_ticks)
-            
-            if left_will_blit and "reel_left" in bd:
-                r, b = bd["reel_left"]
-                screen.blit(b, r.topleft)
-            if right_will_blit and "reel_right" in bd:
-                r, b = bd["reel_right"]
-                screen.blit(b, r.topleft)
-            
-            # Now render both reels
-            if left_will_blit:
-                rect = reel_left.render(screen, status, now_ticks)
-                if rect:
-                    dirty_rects.append(rect)
-            if right_will_blit:
-                rect = reel_right.render(screen, status, now_ticks)
-                if rect:
-                    dirty_rects.append(rect)
-            
-            # Album art (round + optional rotating) - draw LAST to sit on top
-            album_renderer = ov.get("album_renderer")
-            if album_renderer:
-                url_changed = albumart != getattr(album_renderer, "_current_url", None)
-                if url_changed:
-                    # Restore backing for album art area only when URL changes
-                    bd = ov.get("backing_dict", {})
-                    if "art" in bd:
-                        r, b = bd["art"]
-                        screen.blit(b, r.topleft)
-                    album_renderer.load_from_url(albumart)
-                    # Force blit after load
-                    rect = album_renderer.render(screen, status, now_ticks)
-                    if rect:
-                        dirty_rects.append(rect)
-                elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
-                    # Check if rotation update is needed (FPS gating + playback)
-                    if is_playing and album_renderer.will_blit(now_ticks):
-                        # Restore backing ONLY when we're about to blit
-                        bd = ov.get("backing_dict", {})
-                        if "art" in bd:
-                            r, b = bd["art"]
-                            screen.blit(b, r.topleft)
-                        rect = album_renderer.render(screen, status, now_ticks)
-                        if rect:
-                            dirty_rects.append(rect)
-                else:
-                    # Static artwork - render once
-                    rect = album_renderer.render(screen, status, now_ticks)
-                    if rect:
-                        dirty_rects.append(rect)
 
             # Draw the meter foreground above everything (needles + rotating cover)
             fgr_surf = ov.get("fgr_surf")
@@ -2084,7 +2543,6 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             # OPTIMIZATION: Update only dirty rectangles
             if dirty_rects:
-                # Merge overlapping rectangles for efficiency
                 pg.display.update(dirty_rects)
             # If nothing changed, skip display update entirely
         

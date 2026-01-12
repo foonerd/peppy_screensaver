@@ -60,6 +60,16 @@ REEL_RIGHT_POS = "reel.right.pos"
 REEL_RIGHT_CENTER = "reel.right.center"
 REEL_ROTATION_SPEED = "reel.rotation.speed"
 
+# Tonearm configuration constants (for turntable skins)
+TONEARM_FILE = "tonearm.filename"
+TONEARM_PIVOT_SCREEN = "tonearm.pivot.screen"
+TONEARM_PIVOT_IMAGE = "tonearm.pivot.image"
+TONEARM_ANGLE_REST = "tonearm.angle.rest"
+TONEARM_ANGLE_START = "tonearm.angle.start"
+TONEARM_ANGLE_END = "tonearm.angle.end"
+TONEARM_DROP_DURATION = "tonearm.drop.duration"
+TONEARM_LIFT_DURATION = "tonearm.lift.duration"
+
 PLAY_TXT_CENTER = "playinfo.text.center"
 PLAY_TITLE_POS = "playinfo.title.pos"
 PLAY_TITLE_COLOR = "playinfo.title.color"
@@ -319,6 +329,42 @@ class Volumio_ConfigFileParser(object):
             d[REEL_ROTATION_SPEED] = config_file.getfloat(section, REEL_ROTATION_SPEED)
         except:
             d[REEL_ROTATION_SPEED] = 0.0
+
+        # --- Tonearm configuration (for turntable skins) ---
+        try:
+            d[TONEARM_FILE] = config_file.get(section, TONEARM_FILE)
+        except:
+            d[TONEARM_FILE] = None
+        try:
+            spl = config_file.get(section, TONEARM_PIVOT_SCREEN).split(',')
+            d[TONEARM_PIVOT_SCREEN] = (int(spl[0]), int(spl[1]))
+        except:
+            d[TONEARM_PIVOT_SCREEN] = None
+        try:
+            spl = config_file.get(section, TONEARM_PIVOT_IMAGE).split(',')
+            d[TONEARM_PIVOT_IMAGE] = (int(spl[0]), int(spl[1]))
+        except:
+            d[TONEARM_PIVOT_IMAGE] = None
+        try:
+            d[TONEARM_ANGLE_REST] = config_file.getfloat(section, TONEARM_ANGLE_REST)
+        except:
+            d[TONEARM_ANGLE_REST] = -30.0  # default: parked at -30 degrees
+        try:
+            d[TONEARM_ANGLE_START] = config_file.getfloat(section, TONEARM_ANGLE_START)
+        except:
+            d[TONEARM_ANGLE_START] = 0.0  # default: outer groove at 0 degrees
+        try:
+            d[TONEARM_ANGLE_END] = config_file.getfloat(section, TONEARM_ANGLE_END)
+        except:
+            d[TONEARM_ANGLE_END] = 25.0  # default: inner groove at 25 degrees
+        try:
+            d[TONEARM_DROP_DURATION] = config_file.getfloat(section, TONEARM_DROP_DURATION)
+        except:
+            d[TONEARM_DROP_DURATION] = 1.5  # default: 1.5 second drop animation
+        try:
+            d[TONEARM_LIFT_DURATION] = config_file.getfloat(section, TONEARM_LIFT_DURATION)
+        except:
+            d[TONEARM_LIFT_DURATION] = 1.0  # default: 1.0 second lift animation
 
         try:
             d[PLAY_TXT_CENTER] = config_file.getboolean(section, PLAY_TXT_CENTER)
