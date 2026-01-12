@@ -913,6 +913,7 @@ class TonearmRenderer:
         self._blit_interval_ms = int(1000 / max(1, self.rotation_fps))
         self._needs_redraw = True
         self._last_drawn_angle = None
+        self._pending_drop_target = None  # For track change lift->drop sequence
         
         # Arm geometry for backing rect calculation
         self._arm_length = 0
@@ -993,9 +994,14 @@ class TonearmRenderer:
         # State machine
         if self._state == TONEARM_STATE_REST:
             if status == "play":
-                # Start drop animation
+                # Start drop animation - target current progress position, not fixed angle_start
+                progress_pct = max(0.0, min(100.0, progress_pct or 0.0))
+                target_angle = (
+                    self.angle_start + 
+                    (self.angle_end - self.angle_start) * (progress_pct / 100.0)
+                )
                 self._state = TONEARM_STATE_DROP
-                self._start_animation(self.angle_start, self.drop_duration)
+                self._start_animation(target_angle, self.drop_duration)
                 self._needs_redraw = True
         
         elif self._state == TONEARM_STATE_DROP:
@@ -1014,6 +1020,7 @@ class TonearmRenderer:
             if status != "play":
                 # Playback stopped - start lift
                 self._state = TONEARM_STATE_LIFT
+                self._pending_drop_target = None
                 self._start_animation(self.angle_rest, self.lift_duration)
                 self._needs_redraw = True
             else:
@@ -1025,22 +1032,41 @@ class TonearmRenderer:
                     (self.angle_end - self.angle_start) * (progress_pct / 100.0)
                 )
                 
+                # Detect large jump (track change, seek forward, or seek backward)
+                # Any sudden movement > 5 degrees triggers lift/drop animation
+                if abs(target_angle - self._current_angle) > 5.0:
+                    # Large jump - lift and drop to new position
+                    log_debug(f"[Tonearm] Large jump detected: {self._current_angle:.1f} -> {target_angle:.1f}, lifting")
+                    self._state = TONEARM_STATE_LIFT
+                    self._pending_drop_target = target_angle
+                    self._start_animation(self.angle_rest, self.lift_duration)
+                    self._needs_redraw = True
                 # Only update if angle changed significantly (0.5 degree threshold)
-                if abs(target_angle - self._current_angle) > 0.5:
+                elif abs(target_angle - self._current_angle) > 0.5:
                     self._current_angle = target_angle
                     self._needs_redraw = True
         
         elif self._state == TONEARM_STATE_LIFT:
-            if status == "play":
-                # Playback resumed during lift - drop back
-                self._state = TONEARM_STATE_DROP
-                self._start_animation(self.angle_start, self.drop_duration)
-            else:
-                # Continue lift animation
-                if self._update_animation():
-                    # Lift complete - back to rest
+            if self._update_animation():
+                # Lift animation complete
+                if status == "play" and self._pending_drop_target is not None:
+                    # Track change case - drop to pending target
+                    self._state = TONEARM_STATE_DROP
+                    self._start_animation(self._pending_drop_target, self.drop_duration)
+                    self._pending_drop_target = None
+                elif status == "play":
+                    # Playback resumed during lift - drop to current progress
+                    progress_pct = max(0.0, min(100.0, progress_pct or 0.0))
+                    target_angle = (
+                        self.angle_start + 
+                        (self.angle_end - self.angle_start) * (progress_pct / 100.0)
+                    )
+                    self._state = TONEARM_STATE_DROP
+                    self._start_animation(target_angle, self.drop_duration)
+                else:
+                    # Lift complete, not playing - back to rest
                     self._state = TONEARM_STATE_REST
-                self._needs_redraw = True
+            self._needs_redraw = True
         
         return self._needs_redraw
     
