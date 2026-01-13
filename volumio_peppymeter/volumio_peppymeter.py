@@ -611,7 +611,7 @@ class AlbumArtRenderer:
         else:
             return pg.Rect(self.art_pos[0], self.art_pos[1], self.art_dim[0], self.art_dim[1])
 
-    def render(self, screen, status, now_ticks):
+    def render(self, screen, status, now_ticks, advance_angle=True):
         """Render album art (rotated if enabled) plus border and LP center markers.
         
         OPTIMIZATION: FPS gating limits rotation updates to reduce CPU.
@@ -620,20 +620,24 @@ class AlbumArtRenderer:
         :param screen: pygame screen surface
         :param status: playback status ("play", "pause", "stop")
         :param now_ticks: pygame.time.get_ticks() value
+        :param advance_angle: if False, render at current angle without advancing rotation
         """
         if not self.art_pos or not self.art_dim or not self._scaled_surf:
             return None
 
-        # FPS gating: skip if not time to blit yet
-        if not self.will_blit(now_ticks):
+        # FPS gating: skip if not time to blit yet (unless advance_angle=False which forces render)
+        if advance_angle and not self.will_blit(now_ticks):
             return None
 
         dirty_rect = None
-        self._last_blit_tick = now_ticks
+        # Only update timing when advancing (so tonearm redraws don't reset album art's FPS schedule)
+        if advance_angle:
+            self._last_blit_tick = now_ticks
 
         if self.rotate_enabled and self.art_center and self.rotate_rpm > 0.0:
-            # Update angle based on playback status
-            self._update_angle(status, now_ticks)
+            # Update angle based on playback status (only if advancing)
+            if advance_angle:
+                self._update_angle(status, now_ticks)
             
             # OPTIMIZATION: Use pre-computed frame lookup if available
             if self._rot_frames:
@@ -2426,24 +2430,27 @@ def start_display_output(pm, callback, meter_config_volumio):
                         if "art" in bd:
                             r, b = bd["art"]
                             screen.blit(b, r.topleft)
-                        # Force render to bypass FPS gating if tonearm needs it
-                        if tonearm_will_render and not album_will_render:
-                            album_renderer._need_first_blit = True
-                        rect = album_renderer.render(screen, status, now_ticks)
+                        # Only advance rotation on album art's own schedule
+                        advance = album_will_render
+                        rect = album_renderer.render(screen, status, now_ticks, advance_angle=advance)
                         if rect:
                             dirty_rects.append(rect)
                             album_rendered = True
                 else:
-                    # Static artwork - force redraw when tonearm renders
+                    # Static artwork - redraw when tonearm renders
                     if tonearm_will_render:
                         if "art" in bd:
                             r, b = bd["art"]
                             screen.blit(b, r.topleft)
-                        album_renderer._need_first_blit = True
-                    rect = album_renderer.render(screen, status, now_ticks)
-                    if rect:
-                        dirty_rects.append(rect)
-                        album_rendered = True
+                        rect = album_renderer.render(screen, status, now_ticks, advance_angle=False)
+                        if rect:
+                            dirty_rects.append(rect)
+                            album_rendered = True
+                    else:
+                        rect = album_renderer.render(screen, status, now_ticks)
+                        if rect:
+                            dirty_rects.append(rect)
+                            album_rendered = True
             
             # STEP 3: Tonearm draws on top of album art
             # Must render if: tonearm needs update OR album art just rendered (to stay on top)
