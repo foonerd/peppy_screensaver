@@ -329,6 +329,10 @@ class Volumio_ConfigFileParser(object):
             d[REEL_ROTATION_SPEED] = config_file.getfloat(section, REEL_ROTATION_SPEED)
         except:
             d[REEL_ROTATION_SPEED] = 0.0
+        try:
+            d[REEL_DIRECTION] = config_file.get(section, REEL_DIRECTION)
+        except:
+            d[REEL_DIRECTION] = None  # None = use global config
 
         # --- Tonearm configuration (for turntable skins) ---
         try:

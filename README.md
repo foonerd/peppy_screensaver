@@ -248,6 +248,9 @@ reel.right.center = 355,187
 
 # Rotation speed in RPM (revolutions per minute)
 reel.rotation.speed = 1.5
+
+# Rotation direction (optional - overrides global setting)
+reel.direction = ccw
 ```
 
 | Option | Description |
@@ -259,11 +262,14 @@ reel.rotation.speed = 1.5
 | `reel.right.pos` | Top-left position (x,y) for drawing |
 | `reel.right.center` | Center point (x,y) for rotation pivot |
 | `reel.rotation.speed` | Rotation speed in RPM (default: 0) |
+| `reel.direction` | Rotation direction: `cw` or `ccw` (optional, overrides global setting) |
 
 The reel graphics should be PNG files with transparency. The center point
 defines the rotation axis and should be the visual center of the reel hub.
 
-Reel rotation direction is controlled via plugin settings (Rotation Settings > Reel Rotation Direction).
+Reel rotation direction can be set per-meter in meters.txt (`reel.direction = cw` or `ccw`),
+or globally via plugin settings (Rotation Settings > Reel Rotation Direction).
+Per-meter setting takes priority over global setting.
 
 ### Album Art Rotation
 

@@ -2017,7 +2017,8 @@ def start_display_output(pm, callback, meter_config_volumio):
         rot_fps, rot_step = get_rotation_params(rot_quality, rot_custom_fps)
         spool_left_mult = meter_config_volumio.get(SPOOL_LEFT_SPEED, 1.0)
         spool_right_mult = meter_config_volumio.get(SPOOL_RIGHT_SPEED, 1.0)
-        reel_direction = meter_config_volumio.get(REEL_DIRECTION, "ccw")
+        # Per-meter reel direction (meters.txt) takes priority over global config
+        reel_direction = mc_vol.get(REEL_DIRECTION) or meter_config_volumio.get(REEL_DIRECTION, "ccw")
         
         if reel_left_file and reel_left_center:
             reel_left_renderer = ReelRenderer(
