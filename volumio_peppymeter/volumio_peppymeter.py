@@ -567,6 +567,10 @@ class AlbumArtRenderer:
 
         except Exception:
             pass  # Silent fail
+    
+    def check_pending_load(self):
+        """Compatibility stub - sync loading has no pending loads."""
+        return False
 
     def _update_angle(self, status, now_ticks):
         """Update rotation angle based on RPM and playback status.
@@ -918,6 +922,8 @@ class TonearmRenderer:
         self._needs_redraw = True
         self._last_drawn_angle = None
         self._pending_drop_target = None  # For track change lift->drop sequence
+        self._last_update_time = 0  # For freeze detection
+        self._early_lift = False  # Flag for end-of-track early lift
         
         # Arm geometry for backing rect calculation
         self._arm_length = 0
@@ -981,16 +987,40 @@ class TonearmRenderer:
         
         return progress >= 1.0
     
-    def update(self, status, progress_pct):
+    def update(self, status, progress_pct, time_remaining_sec=None):
         """
         Update tonearm state based on playback status and progress.
         
         :param status: Playback status ("play", "pause", "stop")
         :param progress_pct: Track progress as percentage (0.0 to 100.0)
+        :param time_remaining_sec: Seconds remaining in track (for early lift)
         :return: True if redraw needed
         """
         if not self._loaded:
             return False
+        
+        now = time.time()
+        
+        # Freeze detection: if we're in animation and haven't been updated for >300ms,
+        # the animation timing has drifted due to blocking operations (e.g., album art download).
+        # Reset animation to continue smoothly from current angle.
+        if self._state in (TONEARM_STATE_DROP, TONEARM_STATE_LIFT):
+            if self._last_update_time > 0:
+                gap_sec = now - self._last_update_time
+                if gap_sec > 0.3:  # 300ms freeze
+                    # Restart animation from current position
+                    remaining_angle = abs(self._animation_end_angle - self._current_angle)
+                    total_angle = abs(self._animation_end_angle - self._animation_start_angle)
+                    if total_angle > 0.1:
+                        remaining_pct = remaining_angle / total_angle
+                        remaining_duration = self._animation_duration * remaining_pct
+                        if remaining_duration > 0.05:  # At least 50ms remaining
+                            self._animation_start_time = now
+                            self._animation_start_angle = self._current_angle
+                            self._animation_duration = remaining_duration
+                            log_debug(f"[Tonearm] Update freeze ({gap_sec*1000:.0f}ms), restart animation")
+        
+        self._last_update_time = now
         
         status = (status or "").lower()
         self._last_status = status
@@ -998,8 +1028,14 @@ class TonearmRenderer:
         # State machine
         if self._state == TONEARM_STATE_REST:
             if status == "play":
-                # Start drop animation - target current progress position, not fixed angle_start
+                # If early_lift flag is set, wait for new track (progress near start)
                 progress_pct = max(0.0, min(100.0, progress_pct or 0.0))
+                if self._early_lift and progress_pct > 10.0:
+                    # Still on old track ending - stay at REST
+                    return self._needs_redraw
+                
+                # New track started or normal playback - clear flag and DROP
+                self._early_lift = False
                 target_angle = (
                     self.angle_start + 
                     (self.angle_end - self.angle_start) * (progress_pct / 100.0)
@@ -1012,6 +1048,7 @@ class TonearmRenderer:
             if status != "play":
                 # Playback stopped during drop - lift back
                 self._state = TONEARM_STATE_LIFT
+                self._early_lift = False  # Clear flag - this is a normal stop
                 self._start_animation(self.angle_rest, self.lift_duration)
             else:
                 # Continue drop animation
@@ -1027,12 +1064,24 @@ class TonearmRenderer:
                 self._needs_redraw = True
         
         elif self._state == TONEARM_STATE_TRACKING:
-            if status != "play":
-                # Playback stopped - start lift
+            # Early lift: when track is about to end, lift tonearm preemptively
+            # This hides the freeze during track change - looks like natural LP change
+            if time_remaining_sec is not None and time_remaining_sec < 1.5 and time_remaining_sec > 0:
+                log_debug(f"[Tonearm] Early lift - track ending in {time_remaining_sec:.1f}s")
                 self._state = TONEARM_STATE_LIFT
-                self._pending_drop_target = None
+                self._pending_drop_target = None  # Will get new position from next track
+                self._early_lift = True  # Flag to stay at REST after lift completes
                 self._start_animation(self.angle_rest, self.lift_duration)
                 self._needs_redraw = True
+                self._last_blit_tick = 0
+            elif status != "play":
+                # Playback stopped - start lift (not early lift)
+                self._state = TONEARM_STATE_LIFT
+                self._pending_drop_target = None
+                self._early_lift = False  # Clear flag - this is a normal stop
+                self._start_animation(self.angle_rest, self.lift_duration)
+                self._needs_redraw = True
+                self._last_blit_tick = 0  # Reset to allow immediate render
             else:
                 # Calculate angle from progress
                 # Clamp progress to 0-100
@@ -1049,8 +1098,10 @@ class TonearmRenderer:
                     log_debug(f"[Tonearm] Large jump detected: {self._current_angle:.1f} -> {target_angle:.1f}, lifting")
                     self._state = TONEARM_STATE_LIFT
                     self._pending_drop_target = target_angle
+                    self._early_lift = False  # Clear flag - this is a seek/jump
                     self._start_animation(self.angle_rest, self.lift_duration)
                     self._needs_redraw = True
+                    self._last_blit_tick = 0  # Reset to allow immediate render
                 # Only update if angle changed significantly (0.2 degree threshold)
                 elif abs(target_angle - self._current_angle) > 0.2:
                     self._current_angle = target_angle
@@ -1059,7 +1110,18 @@ class TonearmRenderer:
         elif self._state == TONEARM_STATE_LIFT:
             if self._update_animation():
                 # Lift animation complete
-                if status == "play":
+                if self._early_lift:
+                    # Early lift for track change - stay at REST until new track
+                    log_debug("[Tonearm] Early lift complete - staying at REST")
+                    self._state = TONEARM_STATE_REST
+                    self._pending_drop_target = None
+                    # Keep _early_lift=True - will be cleared when DROP starts
+                elif self._pending_drop_target is not None:
+                    # Seek/jump - drop to pending target
+                    self._state = TONEARM_STATE_DROP
+                    self._start_animation(self._pending_drop_target, self.drop_duration)
+                    self._pending_drop_target = None
+                elif status == "play":
                     # Drop to current progress position (most up-to-date)
                     progress_pct = max(0.0, min(100.0, progress_pct or 0.0))
                     target_angle = (
@@ -1068,7 +1130,6 @@ class TonearmRenderer:
                     )
                     self._state = TONEARM_STATE_DROP
                     self._start_animation(target_angle, self.drop_duration)
-                    self._pending_drop_target = None
                 else:
                     # Lift complete, not playing - back to rest
                     self._state = TONEARM_STATE_REST
@@ -1082,13 +1143,25 @@ class TonearmRenderer:
         if not self._loaded or not self._original_surf:
             return False
         
-        # Always blit if angle changed
+        # During animations (DROP/LIFT), always render if needed for smooth motion
+        if self._state in (TONEARM_STATE_DROP, TONEARM_STATE_LIFT):
+            if self._needs_redraw:
+                return True
+            return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        
+        # TRACKING state - arm moves very slowly, use slower updates
+        # But always allow immediate render when _needs_redraw is True
+        # (e.g., when jump detection triggers state change)
+        if self._state == TONEARM_STATE_TRACKING:
+            if self._needs_redraw:
+                return True  # Allow immediate render for state changes
+            # Throttle routine position updates
+            tracking_interval = 500  # ms
+            return (now_ticks - self._last_blit_tick) >= tracking_interval
+        
+        # REST state - always blit if needed
         if self._needs_redraw:
             return True
-        
-        # During animations, check FPS gating
-        if self._state in (TONEARM_STATE_DROP, TONEARM_STATE_LIFT):
-            return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
         
         return False
     
@@ -1130,8 +1203,14 @@ class TonearmRenderer:
         min_y = min(p[1] for p in points)
         max_y = max(p[1] for p in points)
         
-        # Add padding for the arm width
-        padding = max(self._original_surf.get_width(), self._original_surf.get_height()) // 2
+        # Add padding for arm parts not covered by arc sampling:
+        # - Counterweight side (distance from pivot to left edge of image)
+        # - Arm thickness (distance from pivot to top/bottom of image)
+        px, py = self.pivot_image
+        img_h = self._original_surf.get_height()
+        counterweight_len = px  # pivot distance from left edge
+        arm_thickness = max(py, img_h - py)  # max perpendicular extent
+        padding = max(counterweight_len, arm_thickness) + 5
         
         return pg.Rect(
             int(min_x - padding),
@@ -1156,7 +1235,26 @@ class TonearmRenderer:
         if not force and not self.will_blit(now_ticks):
             return None
         
-        self._last_blit_tick = now_ticks
+        # Detect render freeze (e.g., during album art download)
+        # Use fresh timestamp since now_ticks may have been captured before blocking ops
+        actual_now = pg.time.get_ticks()
+        if self._state in (TONEARM_STATE_DROP, TONEARM_STATE_LIFT):
+            if self._last_blit_tick > 0:
+                gap_ms = actual_now - self._last_blit_tick
+                if gap_ms > 300:  # More than 300ms since last render = freeze
+                    # Restart animation from current angle position
+                    remaining_angle = abs(self._animation_end_angle - self._current_angle)
+                    total_angle = abs(self._animation_end_angle - self._animation_start_angle)
+                    if total_angle > 0.1:  # Avoid division issues
+                        remaining_pct = remaining_angle / total_angle
+                        remaining_duration = self._animation_duration * remaining_pct
+                        if remaining_duration > 0.1:  # Only reset if significant animation remains
+                            self._animation_start_time = time.time()
+                            self._animation_start_angle = self._current_angle
+                            self._animation_duration = remaining_duration
+                            log_debug(f"[Tonearm] Freeze detected ({gap_ms}ms), restarting animation")
+        
+        self._last_blit_tick = actual_now  # Use fresh timestamp
         
         # Skip if angle hasn't changed (optimization for TRACKING state only)
         # During DROP/LIFT animations, always render for smooth movement
@@ -2307,7 +2405,66 @@ def start_display_output(pm, callback, meter_config_volumio):
             else:
                 pg.display.update()
         else:
+            # Read metadata FIRST (needed for tonearm backing restore before meter.run)
+            meta = last_metadata
+            artist = meta.get("artist", "")
+            title = meta.get("title", "")
+            album = meta.get("album", "")
+            albumart = meta.get("albumart", "")
+            samplerate = meta.get("samplerate", "")
+            bitdepth = meta.get("bitdepth", "")
+            track_type = meta.get("trackType", "")
+            bitrate = meta.get("bitrate", "")
+            status = meta.get("status", "")
+            is_playing = status == "play"
+            bd = ov.get("backing_dict", {})
+            
+            # Pre-calculate tonearm state BEFORE meter.run()
+            # This allows backing restore before meters draw
+            tonearm = ov.get("tonearm_renderer")
+            tonearm_will_render = False
+            if tonearm:
+                duration = meta.get("duration", 0) or 0
+                seek = meta.get("seek", 0) or 0
+                
+                # Interpolate seek based on elapsed time when playing
+                if is_playing and duration > 0:
+                    seek_update_time = meta.get("_seek_update", 0)
+                    if seek_update_time > 0:
+                        elapsed_ms = (current_time - seek_update_time) * 1000
+                        seek = min(duration * 1000, seek + elapsed_ms)
+                
+                if duration > 0:
+                    progress_pct = min(100.0, (seek / 1000.0 / duration) * 100.0)
+                    # Calculate time remaining for early lift feature
+                    time_remaining_sec = duration - (seek / 1000.0)
+                else:
+                    progress_pct = 0.0
+                    time_remaining_sec = None  # Unknown duration (webradio etc)
+                
+                tonearm.update(status, progress_pct, time_remaining_sec)
+                tonearm_will_render = tonearm.will_blit(now_ticks)
+            
+            # Pre-calculate album art state
+            album_renderer = ov.get("album_renderer")
+            tonearm_active = tonearm and tonearm.get_state() != "rest"
+            album_will_render = False
+            if album_renderer:
+                url_changed = albumart != getattr(album_renderer, "_current_url", None)
+                if url_changed:
+                    album_will_render = True
+                elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
+                    album_will_render = is_playing and album_renderer.will_blit(now_ticks)
+            
+            # RESTORE TONEARM BACKING BEFORE meter.run() so meters draw on top
+            tonearm_backing_restored = False
+            if (tonearm_will_render or (album_will_render and tonearm_active)) and "tonearm" in bd:
+                r, b = bd["tonearm"]
+                screen.blit(b, r.topleft)
+                tonearm_backing_restored = True
+            
             # Run meter animation - collect dirty rects
+            # Meters now draw on top of restored backing
             meter_rects = pm.meter.run()
             if meter_rects:
                 # meter.run() returns list of tuples: [(index, rect), (index, rect)]
@@ -2329,21 +2486,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 elif hasattr(meter_rects, 'x'):  # It's a Rect object
                     dirty_rects.append(meter_rects)
             
-            # Read metadata from socket.io watcher (no polling needed)
-            meta = last_metadata
-            artist = meta.get("artist", "")
-            title = meta.get("title", "")
-            album = meta.get("album", "")
-            albumart = meta.get("albumart", "")
-            samplerate = meta.get("samplerate", "")
-            bitdepth = meta.get("bitdepth", "")
-            track_type = meta.get("trackType", "")
-            bitrate = meta.get("bitrate", "")
-            status = meta.get("status", "")
-            is_playing = status == "play"
-            bd = ov.get("backing_dict", {})
-            
-            # Render cassette reels first
+            # Render cassette reels
             reel_left = ov.get("reel_left_renderer")
             reel_right = ov.get("reel_right_renderer")
             
@@ -2368,49 +2511,6 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if rect:
                     dirty_rects.append(rect)
             
-            # Album art and tonearm - coordinate backing restoration order
-            album_renderer = ov.get("album_renderer")
-            tonearm = ov.get("tonearm_renderer")
-            
-            # Pre-calculate tonearm state
-            tonearm_will_render = False
-            if tonearm:
-                duration = meta.get("duration", 0) or 0
-                seek = meta.get("seek", 0) or 0
-                
-                # Interpolate seek based on elapsed time when playing
-                # Volumio only sends seek on events, not continuously
-                if is_playing and duration > 0:
-                    seek_update_time = meta.get("_seek_update", 0)
-                    if seek_update_time > 0:
-                        elapsed_ms = (current_time - seek_update_time) * 1000
-                        seek = min(duration * 1000, seek + elapsed_ms)
-                
-                if duration > 0:
-                    progress_pct = min(100.0, (seek / 1000.0 / duration) * 100.0)
-                else:
-                    progress_pct = 0.0
-                tonearm.update(status, progress_pct)
-                tonearm_will_render = tonearm.will_blit(now_ticks)
-            
-            # STEP 1: If tonearm will render OR album art will render with tonearm active,
-            # restore tonearm backing FIRST to clear old arm position
-            tonearm_active = tonearm and tonearm.get_state() != "rest"
-            album_will_render = False
-            if album_renderer:
-                url_changed = albumart != getattr(album_renderer, "_current_url", None)
-                if url_changed:
-                    album_will_render = True
-                elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
-                    album_will_render = is_playing and album_renderer.will_blit(now_ticks)
-            
-            # Restore tonearm backing if either tonearm or album art (with active arm) will render
-            tonearm_backing_restored = False
-            if (tonearm_will_render or (album_will_render and tonearm_active)) and "tonearm" in bd:
-                r, b = bd["tonearm"]
-                screen.blit(b, r.topleft)
-                tonearm_backing_restored = True
-            
             # STEP 2: Album art (restore backing + draw)
             # This covers any overlap area that tonearm backing cleared
             album_rendered = False
@@ -2426,12 +2526,11 @@ def start_display_output(pm, callback, meter_config_volumio):
                         dirty_rects.append(rect)
                         album_rendered = True
                 elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
-                    # Render when playing normally OR when tonearm needs render
+                    # Normal rotation rendering
                     if album_will_render or tonearm_will_render:
                         if "art" in bd:
                             r, b = bd["art"]
                             screen.blit(b, r.topleft)
-                        # Only advance rotation on album art's own schedule
                         advance = album_will_render
                         rect = album_renderer.render(screen, status, now_ticks, advance_angle=advance)
                         if rect:
