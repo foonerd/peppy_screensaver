@@ -199,7 +199,8 @@ peppyScreensaver.prototype.onStart = function() {
     var lastUri = '';
     
     socket.on('pushState', function (state) {
-        self.logger.info('peppy_screensaver: pushState - status=' + state.status + ' service=' + state.service + ' volatile=' + state.volatile);
+        // Reduced verbosity - only log at verbose level
+        // self.logger.info('peppy_screensaver: pushState - status=' + state.status + ' service=' + state.service + ' volatile=' + state.volatile);
         // screensaver only for enabled Spotify/Airplay support, enabled DSP and all other
         var DSP_ON = fs.existsSync(dsp_config) && self.config.get('useDSP');
         var Spotify_ON = fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED' && self.config.get('useSpotify') && state.service === 'spop';
@@ -560,26 +561,36 @@ peppyScreensaver.prototype.getUIConfig = function() {
             }
             
             // section 2 - Performance settings -----------------------------
+            // GPU acceleration
+            var gpuAcceleration = peppy_config.current['gpu.acceleration'] || 'auto';
+            var gpuOptions = uiconf.sections[2].content[0].options;
+            for (var i = 0; i < gpuOptions.length; i++) {
+                if (gpuOptions[i].value === gpuAcceleration) {
+                    uiconf.sections[2].content[0].value = gpuOptions[i];
+                    break;
+                }
+            }
+            
             // frame rate
             var frameRate = parseInt(peppy_config.current['frame.rate'], 10) || 30;
-            uiconf.sections[2].content[0].value = frameRate;
-            minmax[6] = [uiconf.sections[2].content[0].attributes[2].min,
-                uiconf.sections[2].content[0].attributes[3].max,
-                uiconf.sections[2].content[0].attributes[0].placeholder];
-            
-            // update interval (from peppy config.txt)
-            var updateInterval = parseInt(peppy_config.current['update.interval'], 10) || 2;
-            uiconf.sections[2].content[1].value = updateInterval;
-            minmax[7] = [uiconf.sections[2].content[1].attributes[2].min,
+            uiconf.sections[2].content[1].value = frameRate;
+            minmax[6] = [uiconf.sections[2].content[1].attributes[2].min,
                 uiconf.sections[2].content[1].attributes[3].max,
                 uiconf.sections[2].content[1].attributes[0].placeholder];
             
+            // update interval (from peppy config.txt)
+            var updateInterval = parseInt(peppy_config.current['update.interval'], 10) || 2;
+            uiconf.sections[2].content[2].value = updateInterval;
+            minmax[7] = [uiconf.sections[2].content[2].attributes[2].min,
+                uiconf.sections[2].content[2].attributes[3].max,
+                uiconf.sections[2].content[2].attributes[0].placeholder];
+            
             // debug level
             var debugLevel = peppy_config.current['debug.level'] || 'off';
-            var debugOptions = uiconf.sections[2].content[2].options;
+            var debugOptions = uiconf.sections[2].content[3].options;
             for (var i = 0; i < debugOptions.length; i++) {
                 if (debugOptions[i].value === debugLevel) {
-                    uiconf.sections[2].content[2].value = debugOptions[i];
+                    uiconf.sections[2].content[3].value = debugOptions[i];
                     break;
                 }
             }
@@ -1023,6 +1034,13 @@ peppyScreensaver.prototype.savePerformanceConf = function (confData) {
   uiNeedsUpdate = false;
   
   if (fs.existsSync(PeppyConf)){
+    
+    // write GPU acceleration setting
+    var gpuAcceleration = confData.gpuAcceleration.value || 'auto';
+    if (peppy_config.current['gpu.acceleration'] != gpuAcceleration) {
+        peppy_config.current['gpu.acceleration'] = gpuAcceleration;
+        noChanges = false;
+    }
     
     // write frame rate
     if (Number.isNaN(parseInt(confData.frameRate, 10)) || !isFinite(confData.frameRate)) {

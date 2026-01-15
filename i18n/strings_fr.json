@@ -124,6 +124,11 @@
     "SCROLLING_SPEED_TITLE":"Vitesse défilement titre",
     "SCROLLING_SPEED_TITLE_DOC":"Vitesse de défilement du texte titre en pixels par seconde.<br /><br /><b>Défaut: 40</b><br /><br />Valeurs basses = défilement plus lent. Plage: 5-200",
     "SCROLLING_SPEED_ALBUM":"Vitesse défilement album",
-    "SCROLLING_SPEED_ALBUM_DOC":"Vitesse de défilement du texte album en pixels par seconde.<br /><br /><b>Défaut: 40</b><br /><br />Valeurs basses = défilement plus lent. Plage: 5-200"
+    "SCROLLING_SPEED_ALBUM_DOC":"Vitesse de défilement du texte album en pixels par seconde.<br /><br /><b>Défaut: 40</b><br /><br />Valeurs basses = défilement plus lent. Plage: 5-200",
+    "GPU_ACCELERATION":"Accélération GPU",
+    "GPU_ACCELERATION_DOC":"Accélération matérielle pour les éléments rotatifs (pochette album, bobines).<br /><br /><b>Auto:</b> Activer si GPU disponible (par défaut)<br /><b>Activé:</b> Forcer le rendu GPU<br /><b>Désactivé:</b> Forcer le rendu CPU (pour tests/compatibilité)",
+    "GPU_AUTO":"Auto",
+    "GPU_ON":"Activé",
+    "GPU_OFF":"Désactivé"
   }
 }

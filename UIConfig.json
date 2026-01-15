@@ -327,12 +327,25 @@
                 "saveButton": {
                               "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
                               "data": [
+                                      "gpuAcceleration",
                                       "frameRate",
                                       "updateInterval",
                                       "debugLevel"
                                       ]
                               },
                 "content": [
+                            {
+                             "id": "gpuAcceleration",
+                             "element": "select",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.GPU_ACCELERATION_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.GPU_ACCELERATION",
+                             "value": {"value": "auto", "label": "TRANSLATE.PEPPY_SCREENSAVER.GPU_AUTO"},
+                             "options": [
+                                          {"value": "auto", "label": "TRANSLATE.PEPPY_SCREENSAVER.GPU_AUTO"},
+                                          {"value": "on", "label": "TRANSLATE.PEPPY_SCREENSAVER.GPU_ON"},
+                                          {"value": "off", "label": "TRANSLATE.PEPPY_SCREENSAVER.GPU_OFF"}
+                                        ]
+                            },
                             {
                              "id": "frameRate",
                              "element": "input",

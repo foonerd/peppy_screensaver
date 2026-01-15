@@ -29,6 +29,9 @@ UPDATE_INTERVAL = "update.interval"
 # Debug settings
 DEBUG_LEVEL = "debug.level"
 
+# GPU settings
+GPU_ACCELERATION = "gpu.acceleration"
+
 TRANSITION_TYPE = "transition.type"
 TRANSITION_DURATION = "transition.duration"
 TRANSITION_COLOR = "transition.color"
@@ -178,6 +181,12 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[DEBUG_LEVEL] = c.get(CURRENT, DEBUG_LEVEL)
         except:
             self.meter_config_volumio[DEBUG_LEVEL] = "off"
+
+        # GPU settings
+        try:
+            self.meter_config_volumio[GPU_ACCELERATION] = c.get(CURRENT, GPU_ACCELERATION)
+        except:
+            self.meter_config_volumio[GPU_ACCELERATION] = "auto"
 
         # Rotation settings (global)
         try:

@@ -124,6 +124,11 @@
     "SCROLLING_SPEED_TITLE":"Title scrolling speed",
     "SCROLLING_SPEED_TITLE_DOC":"Scrolling speed for title text in pixels per second.<br /><br /><b>Default: 40</b><br /><br />Lower values = slower scrolling. Range: 5-200",
     "SCROLLING_SPEED_ALBUM":"Album scrolling speed",
-    "SCROLLING_SPEED_ALBUM_DOC":"Scrolling speed for album text in pixels per second.<br /><br /><b>Default: 40</b><br /><br />Lower values = slower scrolling. Range: 5-200"
+    "SCROLLING_SPEED_ALBUM_DOC":"Scrolling speed for album text in pixels per second.<br /><br /><b>Default: 40</b><br /><br />Lower values = slower scrolling. Range: 5-200",
+    "GPU_ACCELERATION":"GPU acceleration",
+    "GPU_ACCELERATION_DOC":"Hardware acceleration for rotating elements (album art, reels).<br /><br /><b>Auto:</b> Enable if GPU available (default)<br /><b>On:</b> Force GPU rendering<br /><b>Off:</b> Force CPU rendering (for testing/compatibility)",
+    "GPU_AUTO":"Auto",
+    "GPU_ON":"On",
+    "GPU_OFF":"Off"
   }
 }

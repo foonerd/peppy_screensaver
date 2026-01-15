@@ -124,6 +124,11 @@
     "SCROLLING_SPEED_TITLE":"Titel-Scrollgeschwindigkeit",
     "SCROLLING_SPEED_TITLE_DOC":"Scrollgeschwindigkeit für Titeltext in Pixel pro Sekunde.<br /><br /><b>Standard: 40</b><br /><br />Niedrigere Werte = langsameres Scrollen. Bereich: 5-200",
     "SCROLLING_SPEED_ALBUM":"Album-Scrollgeschwindigkeit",
-    "SCROLLING_SPEED_ALBUM_DOC":"Scrollgeschwindigkeit für Albumtext in Pixel pro Sekunde.<br /><br /><b>Standard: 40</b><br /><br />Niedrigere Werte = langsameres Scrollen. Bereich: 5-200"
+    "SCROLLING_SPEED_ALBUM_DOC":"Scrollgeschwindigkeit für Albumtext in Pixel pro Sekunde.<br /><br /><b>Standard: 40</b><br /><br />Niedrigere Werte = langsameres Scrollen. Bereich: 5-200",
+    "GPU_ACCELERATION":"GPU-Beschleunigung",
+    "GPU_ACCELERATION_DOC":"Hardwarebeschleunigung für rotierende Elemente (Albumcover, Spulen).<br /><br /><b>Auto:</b> Aktivieren wenn GPU verfügbar (Standard)<br /><b>An:</b> GPU-Rendering erzwingen<br /><b>Aus:</b> CPU-Rendering erzwingen (für Tests/Kompatibilität)",
+    "GPU_AUTO":"Auto",
+    "GPU_ON":"An",
+    "GPU_OFF":"Aus"
   }
 }
