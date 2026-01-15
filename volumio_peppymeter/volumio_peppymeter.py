@@ -2637,16 +2637,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                             dirty_rects.append(rect)
                             album_rendered = True
             
-            # STEP 3: Tonearm draws on top of album art
-            # Must render if: tonearm needs update OR album art just rendered (to stay on top)
-            if tonearm and (tonearm_will_render or (album_rendered and tonearm.get_state() != "rest")):
-                # Force render if album art just rendered (to stay on top)
-                force = album_rendered and not tonearm_will_render
-                rect = tonearm.render(screen, now_ticks, force=force)
-                if rect:
-                    dirty_rects.append(rect)
-            
-            # Text scrollers - render AFTER tonearm so labels aren't wiped by backing restore
+            # Text scrollers
             # Force redraw if tonearm backing was restored (it may have wiped text areas)
             if tonearm_backing_restored:
                 if ov["artist_scroller"]:
@@ -2717,7 +2708,12 @@ def start_display_output(pm, callback, meter_config_volumio):
                         last_time_surf = ov["fontDigi"].render(time_str, True, t_color)
                         screen.blit(last_time_surf, ov["time_pos"])
             
-            # Sample rate / bitdepth - OPTIMIZED with caching
+            # Format icon - OPTIMIZED with caching (swapped with sample per Gelo5)
+            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"])
+            if icon_rect:
+                dirty_rects.append(icon_rect)
+            
+            # Sample rate / bitdepth - OPTIMIZED with caching (swapped with icon per Gelo5)
             if ov["sample_pos"] and ov["sample_box"]:
                 # Match original: concatenate sample + depth, fallback to bitrate
                 sample_text = f"{samplerate} {bitdepth}".strip()
@@ -2743,10 +2739,14 @@ def start_display_output(pm, callback, meter_config_volumio):
                         sx = ov["sample_pos"][0]
                     screen.blit(last_sample_surf, (sx, ov["sample_pos"][1]))
             
-            # Format icon - OPTIMIZED with caching
-            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"])
-            if icon_rect:
-                dirty_rects.append(icon_rect)
+            # STEP 3: Tonearm draws on top of everything (except foreground)
+            # Must render if: tonearm needs update OR album art just rendered (to stay on top)
+            if tonearm and (tonearm_will_render or (album_rendered and tonearm.get_state() != "rest")):
+                # Force render if album art just rendered (to stay on top)
+                force = album_rendered and not tonearm_will_render
+                rect = tonearm.render(screen, now_ticks, force=force)
+                if rect:
+                    dirty_rects.append(rect)
 
             # Draw the meter foreground above everything (needles + rotating cover)
             # OPTIMIZATION: Only blit foreground regions that overlap dirty areas
