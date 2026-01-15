@@ -2578,13 +2578,16 @@ def start_display_output(pm, callback, meter_config_volumio):
             # Restore BOTH backings first to avoid overlap clobbering
             left_will_blit = reel_left and is_playing and reel_left.will_blit(now_ticks)
             right_will_blit = reel_right and is_playing and reel_right.will_blit(now_ticks)
+            reel_backing_restored = False
             
             if left_will_blit and "reel_left" in bd:
                 r, b = bd["reel_left"]
                 screen.blit(b, r.topleft)
+                reel_backing_restored = True
             if right_will_blit and "reel_right" in bd:
                 r, b = bd["reel_right"]
                 screen.blit(b, r.topleft)
+                reel_backing_restored = True
             
             # Now render both reels
             if left_will_blit:
@@ -2597,8 +2600,10 @@ def start_display_output(pm, callback, meter_config_volumio):
                     dirty_rects.append(rect)
             
             # STEP 2: Album art (restore backing + draw)
-            # This covers any overlap area that tonearm backing cleared
+            # This covers any overlap area that reel or tonearm backing cleared
             album_rendered = False
+            # Force redraw if reel backing was restored (may have wiped album art area)
+            force_album_redraw = reel_backing_restored
             if album_renderer:
                 url_changed = albumart != getattr(album_renderer, "_current_url", None)
                 if url_changed:
@@ -2611,8 +2616,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                         dirty_rects.append(rect)
                         album_rendered = True
                 elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
-                    # Normal rotation rendering
-                    if album_will_render or tonearm_will_render:
+                    # Normal rotation rendering - also redraw when reel backing restored
+                    if album_will_render or tonearm_will_render or force_album_redraw:
                         if "art" in bd:
                             r, b = bd["art"]
                             screen.blit(b, r.topleft)
@@ -2622,8 +2627,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                             dirty_rects.append(rect)
                             album_rendered = True
                 else:
-                    # Static artwork - redraw when tonearm renders
-                    if tonearm_will_render:
+                    # Static artwork - redraw when tonearm or reel backing restored
+                    if tonearm_will_render or force_album_redraw:
                         if "art" in bd:
                             r, b = bd["art"]
                             screen.blit(b, r.topleft)
