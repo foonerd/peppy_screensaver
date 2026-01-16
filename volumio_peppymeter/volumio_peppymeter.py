@@ -2019,12 +2019,11 @@ def start_display_output(pm, callback, meter_config_volumio):
         # Load fonts
         fontL, fontR, fontB, fontDigi = load_fonts(mc_vol)
         
-        # Draw static assets
+        # Draw static assets (background only, no needles yet)
         draw_static_assets(mc)
         
-        # Run meter once to show needles before capture
-        pm.meter.run()
-        pg.display.update()
+        # NOTE: Do NOT run meter.run() here - backings must be captured without needles
+        # to prevent ghosting. Meter will be drawn after all backing captures.
         
         # Positions and colors
         center_flag = bool(mc_vol.get(PLAY_CENTER, mc_vol.get(PLAY_TXT_CENTER, False)))
@@ -2335,6 +2334,10 @@ def start_display_output(pm, callback, meter_config_volumio):
         if album_scroller:
             album_scroller.capture_backing(screen)
         
+        # Now run meter to show initial needle positions (after backings captured clean)
+        pm.meter.run()
+        pg.display.update()
+        
         # Type rect
         type_rect = pg.Rect(type_pos[0], type_pos[1], type_dim[0], type_dim[1]) if (type_pos and type_dim) else None
         
@@ -2611,15 +2614,35 @@ def start_display_output(pm, callback, meter_config_volumio):
                 elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
                     album_will_render = is_playing and album_renderer.will_blit(now_ticks)
             
-            # RESTORE TONEARM BACKING BEFORE meter.run() so meters draw on top
+            # Pre-calculate reel state (needed for backing restore before meter.run)
+            reel_left = ov.get("reel_left_renderer")
+            reel_right = ov.get("reel_right_renderer")
+            left_will_blit = reel_left and is_playing and reel_left.will_blit(now_ticks)
+            right_will_blit = reel_right and is_playing and reel_right.will_blit(now_ticks)
+            
+            # RESTORE ALL BACKINGS BEFORE meter.run() so meters draw on clean surface
+            # This prevents needle ghosting from old positions baked into backings
             tonearm_backing_restored = False
+            reel_backing_restored = False
+            
+            # Restore tonearm backing
             if (tonearm_will_render or (album_will_render and tonearm_active)) and "tonearm" in bd:
                 r, b = bd["tonearm"]
                 screen.blit(b, r.topleft)
                 tonearm_backing_restored = True
             
+            # Restore reel backings (MUST be before meter.run to avoid ghosting)
+            if left_will_blit and "reel_left" in bd:
+                r, b = bd["reel_left"]
+                screen.blit(b, r.topleft)
+                reel_backing_restored = True
+            if right_will_blit and "reel_right" in bd:
+                r, b = bd["reel_right"]
+                screen.blit(b, r.topleft)
+                reel_backing_restored = True
+            
             # Run meter animation - collect dirty rects
-            # Meters now draw on top of restored backing
+            # Meters now draw on top of restored backing (no ghosting)
             meter_rects = pm.meter.run()
             if meter_rects:
                 # meter.run() returns list of tuples: [(index, rect), (index, rect)]
@@ -2641,25 +2664,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 elif hasattr(meter_rects, 'x'):  # It's a Rect object
                     dirty_rects.append(meter_rects)
             
-            # Render cassette reels
-            reel_left = ov.get("reel_left_renderer")
-            reel_right = ov.get("reel_right_renderer")
-            
-            # Restore BOTH backings first to avoid overlap clobbering
-            left_will_blit = reel_left and is_playing and reel_left.will_blit(now_ticks)
-            right_will_blit = reel_right and is_playing and reel_right.will_blit(now_ticks)
-            reel_backing_restored = False
-            
-            if left_will_blit and "reel_left" in bd:
-                r, b = bd["reel_left"]
-                screen.blit(b, r.topleft)
-                reel_backing_restored = True
-            if right_will_blit and "reel_right" in bd:
-                r, b = bd["reel_right"]
-                screen.blit(b, r.topleft)
-                reel_backing_restored = True
-            
-            # Now render both reels
+            # Render cassette reels (backing already restored above)
             if left_will_blit:
                 rect = reel_left.render(screen, status, now_ticks)
                 if rect:
