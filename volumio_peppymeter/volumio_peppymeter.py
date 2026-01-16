@@ -397,6 +397,11 @@ class ScrollingLabel:
         self._last_draw_offset = -1
         return True  # Changed
 
+    def force_redraw(self):
+        """Force redraw on next draw() call."""
+        self._needs_redraw = True
+        self._last_draw_offset = -1
+
     def draw(self, surface):
         """Draw label, handling scroll animation with self-backing.
         Returns dirty rect if drawn, None if skipped."""
@@ -1001,6 +1006,10 @@ class TonearmRenderer:
         self._last_update_time = 0  # For freeze detection
         self._early_lift = False  # Flag for end-of-track early lift
         
+        # Per-frame backing for clean restore (only covers actual tonearm draw area)
+        self._last_blit_rect = None
+        self._last_backing = None
+        
         # Arm geometry for backing rect calculation
         self._arm_length = 0
         
@@ -1295,9 +1304,24 @@ class TonearmRenderer:
             int(max_y - min_y + 2 * padding)
         )
     
+    def restore_backing(self, screen):
+        """
+        Restore backing from previous frame's tonearm position.
+        Call this BEFORE meter.run() to avoid wiping meters.
+        
+        :param screen: Pygame screen surface
+        :return: Dirty rect if restored, None if nothing to restore
+        """
+        if self._last_backing is not None and self._last_blit_rect is not None:
+            screen.blit(self._last_backing, self._last_blit_rect.topleft)
+            return self._last_blit_rect.copy()
+        return None
+    
     def render(self, screen, now_ticks, force=False):
         """
         Render the tonearm at current angle.
+        NOTE: Call restore_backing() separately BEFORE this and BEFORE meter.run()
+        to properly handle overlapping elements.
         
         :param screen: Pygame screen surface
         :param now_ticks: Current tick count (for FPS gating)
@@ -1370,16 +1394,29 @@ class TonearmRenderer:
         
         # 3. Position the rotated image so pivot aligns with screen position
         scr_px, scr_py = self.pivot_screen
-        blit_x = scr_px - rot_px
-        blit_y = scr_py - rot_py
+        blit_x = int(scr_px - rot_px)
+        blit_y = int(scr_py - rot_py)
+        blit_rect = pg.Rect(blit_x, blit_y, rot_w, rot_h)
         
-        # 4. Blit to screen
-        screen.blit(rotated, (int(blit_x), int(blit_y)))
+        # Capture backing for THIS frame's position AFTER other elements are drawn
+        # (backing is captured just before we draw the tonearm, so it includes meters etc.)
+        screen_rect = screen.get_rect()
+        clipped_rect = blit_rect.clip(screen_rect)
+        if clipped_rect.width > 0 and clipped_rect.height > 0:
+            try:
+                self._last_backing = screen.subsurface(clipped_rect).copy()
+                self._last_blit_rect = clipped_rect
+            except Exception:
+                self._last_backing = None
+                self._last_blit_rect = None
+        
+        # Blit tonearm to screen
+        screen.blit(rotated, (blit_x, blit_y))
         
         self._needs_redraw = False
         self._last_drawn_angle = self._current_angle
         
-        return self.get_backing_rect()
+        return blit_rect
     
     def get_state(self):
         """Return current state for debugging."""
@@ -1942,7 +1979,7 @@ def start_display_output(pm, callback, meter_config_volumio):
         return fontL
     
     # -------------------------------------------------------------------------
-    # Draw static assets (background, meter graphics)
+    # Draw static assets (background only - fgr drawn at render loop end)
     # -------------------------------------------------------------------------
     def draw_static_assets(mc):
         base_path = cfg.get(BASE_PATH)
@@ -1951,7 +1988,6 @@ def start_display_output(pm, callback, meter_config_volumio):
         
         screen_bgr_name = mc.get('screen.bgr')
         bgr_name = mc.get(BGR_FILENAME)
-        fgr_name = mc.get(FGR_FILENAME)
         meter_x = mc.get('meter.x', 0)
         meter_y = mc.get('meter.y', 0)
         
@@ -1973,14 +2009,8 @@ def start_display_output(pm, callback, meter_config_volumio):
             except Exception as e:
                 print(f"[draw_static_assets] Failed to load bgr '{bgr_name}': {e}")
         
-        # Draw meter foreground at meter position
-        if fgr_name:
-            try:
-                img_path = os.path.join(meter_path, fgr_name)
-                img = pg.image.load(img_path).convert_alpha()
-                screen.blit(img, (meter_x, meter_y))
-            except Exception as e:
-                print(f"[draw_static_assets] Failed to load fgr '{fgr_name}': {e}")
+        # NOTE: fgr (foreground mask) is NOT drawn here
+        # It is drawn ONCE at the end of each render frame as the top layer
     
     # -------------------------------------------------------------------------
     # Initialize overlay for a meter
@@ -2409,7 +2439,7 @@ def start_display_output(pm, callback, meter_config_volumio):
     # -------------------------------------------------------------------------
     # Render format icon - OPTIMIZED with caching
     # -------------------------------------------------------------------------
-    def render_format_icon(track_type, type_rect, type_color):
+    def render_format_icon(track_type, type_rect, type_color, force_redraw=False):
         nonlocal last_track_type, last_format_icon_surf
         
         if not type_rect:
@@ -2419,8 +2449,8 @@ def start_display_output(pm, callback, meter_config_volumio):
         if fmt == "dsf":
             fmt = "dsd"
         
-        # OPTIMIZATION: Return cached surface if format unchanged
-        if fmt == last_track_type and last_format_icon_surf is not None:
+        # OPTIMIZATION: Return cached surface if format unchanged (unless forced)
+        if not force_redraw and fmt == last_track_type and last_format_icon_surf is not None:
             return None  # No redraw needed
         
         last_track_type = fmt
@@ -2577,8 +2607,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             is_playing = status == "play"
             bd = ov.get("backing_dict", {})
             
-            # Pre-calculate tonearm state BEFORE meter.run()
-            # This allows backing restore before meters draw
+            # Pre-calculate tonearm state
             tonearm = ov.get("tonearm_renderer")
             tonearm_will_render = False
             if tonearm:
@@ -2605,7 +2634,6 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             # Pre-calculate album art state
             album_renderer = ov.get("album_renderer")
-            tonearm_active = tonearm and tonearm.get_state() != "rest"
             album_will_render = False
             if album_renderer:
                 url_changed = albumart != getattr(album_renderer, "_current_url", None)
@@ -2614,122 +2642,109 @@ def start_display_output(pm, callback, meter_config_volumio):
                 elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
                     album_will_render = is_playing and album_renderer.will_blit(now_ticks)
             
-            # Pre-calculate reel state (needed for backing restore before meter.run)
+            # Pre-calculate reel state
             reel_left = ov.get("reel_left_renderer")
             reel_right = ov.get("reel_right_renderer")
             left_will_blit = reel_left and is_playing and reel_left.will_blit(now_ticks)
             right_will_blit = reel_right and is_playing and reel_right.will_blit(now_ticks)
             
-            # RESTORE ALL BACKINGS BEFORE meter.run() so meters draw on clean surface
-            # This prevents needle ghosting from old positions baked into backings
-            tonearm_backing_restored = False
-            reel_backing_restored = False
+            # Determine if ANY moving element needs render (triggers full z-order redraw)
+            any_moving_render = tonearm_will_render or album_will_render or left_will_blit or right_will_blit
             
-            # Restore tonearm backing
-            if (tonearm_will_render or (album_will_render and tonearm_active)) and "tonearm" in bd:
-                r, b = bd["tonearm"]
-                screen.blit(b, r.topleft)
-                tonearm_backing_restored = True
+            # =================================================================
+            # RENDER Z-ORDER (bottom to top):
+            # 1. bgr (via backing restore)
+            # 2. meters/spectrum (meter.run)
+            # 3. reels/platter
+            # 4. album art
+            # 5. tonearm
+            # 6. metadata/text
+            # 7. fgr mask (always last)
+            # =================================================================
             
-            # Restore reel backings (MUST be before meter.run to avoid ghosting)
+            # STEP 1: Restore backings ONLY for areas that will actually be redrawn
+            # Tonearm backing restore is separated from tonearm draw to avoid wiping meters
             if left_will_blit and "reel_left" in bd:
                 r, b = bd["reel_left"]
                 screen.blit(b, r.topleft)
-                reel_backing_restored = True
             if right_will_blit and "reel_right" in bd:
                 r, b = bd["reel_right"]
                 screen.blit(b, r.topleft)
-                reel_backing_restored = True
+            if (album_will_render or tonearm_will_render or left_will_blit or right_will_blit) and "art" in bd:
+                r, b = bd["art"]
+                screen.blit(b, r.topleft)
+            # Tonearm uses per-frame backing - restore when tonearm will be drawn
+            # (either naturally via will_render, or forced due to overlapping element changes)
+            tonearm_will_draw = tonearm_will_render or left_will_blit or right_will_blit or album_will_render
+            if tonearm and tonearm_will_draw:
+                rect = tonearm.restore_backing(screen)
+                if rect:
+                    dirty_rects.append(rect)
             
-            # Run meter animation - collect dirty rects
-            # Meters now draw on top of restored backing (no ghosting)
+            # STEP 2: meter.run() - draws meters/spectrum
             meter_rects = pm.meter.run()
             if meter_rects:
-                # meter.run() returns list of tuples: [(index, rect), (index, rect)]
-                # Extract just the rects for display update
                 if isinstance(meter_rects, list):
                     for item in meter_rects:
                         if item:
-                            # Handle tuple (index, rect) from circular/linear animator
                             if isinstance(item, tuple) and len(item) >= 2:
-                                rect = item[1]  # Second element is the rect
+                                rect = item[1]
                                 if rect:
                                     dirty_rects.append(rect)
-                            elif hasattr(item, 'x'):  # It's a Rect object
+                            elif hasattr(item, 'x'):
                                 dirty_rects.append(item)
                 elif isinstance(meter_rects, tuple) and len(meter_rects) >= 2:
                     rect = meter_rects[1]
                     if rect:
                         dirty_rects.append(rect)
-                elif hasattr(meter_rects, 'x'):  # It's a Rect object
+                elif hasattr(meter_rects, 'x'):
                     dirty_rects.append(meter_rects)
             
-            # Render cassette reels (backing already restored above)
-            if left_will_blit:
+            # STEP 3: Render reels/platter (above meters, below album art)
+            # Only render when playing and reel needs frame update
+            reel_rendered = False
+            if reel_left and is_playing and left_will_blit:
                 rect = reel_left.render(screen, status, now_ticks)
                 if rect:
                     dirty_rects.append(rect)
-            if right_will_blit:
+                    reel_rendered = True
+            if reel_right and is_playing and right_will_blit:
                 rect = reel_right.render(screen, status, now_ticks)
                 if rect:
                     dirty_rects.append(rect)
+                    reel_rendered = True
             
-            # STEP 2: Album art (restore backing + draw)
-            # This covers any overlap area that reel or tonearm backing cleared
+            # STEP 4: Render album art (above reels, below tonearm)
+            # Must redraw if reel rendered (reel backing may overlap art area)
             album_rendered = False
-            # Force redraw if reel backing was restored (may have wiped album art area)
-            force_album_redraw = reel_backing_restored
+            album_will_draw = album_will_render or left_will_blit or right_will_blit or tonearm_will_render
             if album_renderer:
                 url_changed = albumart != getattr(album_renderer, "_current_url", None)
                 if url_changed:
-                    if "art" in bd:
-                        r, b = bd["art"]
-                        screen.blit(b, r.topleft)
                     album_renderer.load_from_url(albumart)
                     rect = album_renderer.render(screen, status, now_ticks)
                     if rect:
                         dirty_rects.append(rect)
                         album_rendered = True
-                elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
-                    # Normal rotation rendering - also redraw when reel backing restored
-                    if album_will_render or tonearm_will_render or force_album_redraw:
-                        if "art" in bd:
-                            r, b = bd["art"]
-                            screen.blit(b, r.topleft)
-                        advance = album_will_render
-                        rect = album_renderer.render(screen, status, now_ticks, advance_angle=advance)
-                        if rect:
-                            dirty_rects.append(rect)
-                            album_rendered = True
-                else:
-                    # Static artwork - redraw when tonearm or reel backing restored
-                    if tonearm_will_render or force_album_redraw:
-                        if "art" in bd:
-                            r, b = bd["art"]
-                            screen.blit(b, r.topleft)
-                        rect = album_renderer.render(screen, status, now_ticks, advance_angle=False)
-                        if rect:
-                            dirty_rects.append(rect)
-                            album_rendered = True
-                    else:
-                        rect = album_renderer.render(screen, status, now_ticks)
-                        if rect:
-                            dirty_rects.append(rect)
-                            album_rendered = True
+                elif album_will_draw:
+                    # Redraw due to own rotation OR overlapping element change
+                    advance = album_will_render  # Only advance angle if album itself needs update
+                    rect = album_renderer.render(screen, status, now_ticks, advance_angle=advance)
+                    if rect:
+                        dirty_rects.append(rect)
+                        album_rendered = True
             
-            # Text scrollers
-            # Force redraw if tonearm backing was restored (it may have wiped text areas)
-            if tonearm_backing_restored:
-                if ov["artist_scroller"]:
-                    ov["artist_scroller"]._needs_redraw = True
-                if ov["title_scroller"]:
-                    ov["title_scroller"]._needs_redraw = True
-                if ov["album_scroller"]:
-                    ov["album_scroller"]._needs_redraw = True
-                # Also force time/sample/icon redraw
-                last_time_str = ""
-                last_sample_text = ""
-                last_track_type = ""
+            # STEP 5: Render tonearm (above album art, below metadata)
+            # Must redraw if any lower element rendered (may have wiped tonearm area)
+            if tonearm and tonearm_will_draw:
+                force = not tonearm_will_render  # Force if not naturally rendering
+                rect = tonearm.render(screen, now_ticks, force=force)
+                if rect:
+                    dirty_rects.append(rect)
+            
+            # STEP 6: Metadata/text (above tonearm, below fgr)
+            # When tonearm renders, its large backing restore may wipe metadata areas
+            # Force scrollers to redraw in that case
             
             if ov["artist_scroller"]:
                 # Combine artist + album if no album position
@@ -2737,18 +2752,24 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if not ov["album_pos"] and album:
                     display_artist = f"{artist} - {album}" if artist else album
                 ov["artist_scroller"].update_text(display_artist)
+                if tonearm_will_render:
+                    ov["artist_scroller"].force_redraw()
                 rect = ov["artist_scroller"].draw(screen)
                 if rect:
                     dirty_rects.append(rect)
             
             if ov["title_scroller"]:
                 ov["title_scroller"].update_text(title)
+                if tonearm_will_render:
+                    ov["title_scroller"].force_redraw()
                 rect = ov["title_scroller"].draw(screen)
                 if rect:
                     dirty_rects.append(rect)
             
             if ov["album_scroller"]:
                 ov["album_scroller"].update_text(album)
+                if tonearm_will_render:
+                    ov["album_scroller"].force_redraw()
                 rect = ov["album_scroller"].draw(screen)
                 if rect:
                     dirty_rects.append(rect)
@@ -2772,8 +2793,9 @@ def start_display_output(pm, callback, meter_config_volumio):
                     secs = time_remain_sec % 60
                     time_str = f"{mins:02d}:{secs:02d}"
                     
-                    # OPTIMIZATION: Only redraw if time string changed
-                    if time_str != last_time_str:
+                    # Force redraw if tonearm rendered (backing restore may have wiped time area)
+                    # or if time string changed
+                    if time_str != last_time_str or tonearm_will_render:
                         last_time_str = time_str
                         
                         # Restore backing for time area
@@ -2789,7 +2811,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                         screen.blit(last_time_surf, ov["time_pos"])
             
             # Format icon - OPTIMIZED with caching (swapped with sample per Gelo5)
-            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"])
+            # Force redraw if tonearm rendered (backing restore may have wiped icon area)
+            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"], force_redraw=tonearm_will_render)
             if icon_rect:
                 dirty_rects.append(icon_rect)
             
@@ -2800,8 +2823,9 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if not sample_text:
                     sample_text = bitrate.strip() if bitrate else ""
                 
-                # OPTIMIZATION: Only redraw if sample text changed
-                if sample_text and sample_text != last_sample_text:
+                # Force redraw if tonearm rendered (backing restore may have wiped sample area)
+                # or if sample text changed
+                if sample_text and (sample_text != last_sample_text or tonearm_will_render):
                     last_sample_text = sample_text
                     
                     # Restore backing for sample area
@@ -2819,16 +2843,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                         sx = ov["sample_pos"][0]
                     screen.blit(last_sample_surf, (sx, ov["sample_pos"][1]))
             
-            # STEP 3: Tonearm draws on top of everything (except foreground)
-            # Must render if: tonearm needs update OR album art just rendered (to stay on top)
-            if tonearm and (tonearm_will_render or (album_rendered and tonearm.get_state() != "rest")):
-                # Force render if album art just rendered (to stay on top)
-                force = album_rendered and not tonearm_will_render
-                rect = tonearm.render(screen, now_ticks, force=force)
-                if rect:
-                    dirty_rects.append(rect)
-
-            # Draw the meter foreground above everything (needles + rotating cover)
+            # STEP 7: fgr mask (always last - drawn ONCE per frame)
             # OPTIMIZATION: Only blit foreground regions that overlap dirty areas
             # This typically reduces foreground blit area by 80-90%
             fgr_surf = ov.get("fgr_surf")
