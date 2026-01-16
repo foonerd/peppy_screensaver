@@ -883,17 +883,19 @@ class ReelRenderer:
         
         return pg.Rect(ext_x, ext_y, diag, diag)
     
-    def render(self, screen, status, now_ticks):
+    def render(self, screen, status, now_ticks, force=False):
         """Render the reel (rotated if playing).
         
         OPTIMIZATION: Uses pre-computed frames and FPS gating.
         Returns dirty rect if drawn, None if skipped.
+        
+        :param force: If True, bypass FPS gating (for double-buffer sync)
         """
         if not self._loaded or not self._original_surf:
             return None
         
-        # FPS gating
-        if not self.will_blit(now_ticks):
+        # FPS gating (bypass if force)
+        if not force and not self.will_blit(now_ticks):
             return None
         
         self._last_blit_tick = now_ticks
@@ -2543,10 +2545,12 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             # RESTORE TONEARM BACKING BEFORE meter.run() so meters draw on top
             tonearm_backing_restored = False
+            tonearm_backing_rect = None
             if (tonearm_will_render or (album_will_render and tonearm_active)) and "tonearm" in bd:
                 r, b = bd["tonearm"]
                 screen.blit(b, r.topleft)
                 tonearm_backing_restored = True
+                tonearm_backing_rect = r
             
             # Run meter animation - collect dirty rects
             # Meters now draw on top of restored backing
@@ -2575,27 +2579,52 @@ def start_display_output(pm, callback, meter_config_volumio):
             reel_left = ov.get("reel_left_renderer")
             reel_right = ov.get("reel_right_renderer")
             
+            # Check if tonearm backing overlaps reel areas - force reel redraw if so
+            force_reel_redraw = False
+            if tonearm_backing_restored and tonearm_backing_rect:
+                if reel_left and "reel_left" in bd:
+                    reel_rect = bd["reel_left"][0]
+                    if tonearm_backing_rect.colliderect(reel_rect):
+                        force_reel_redraw = True
+                if reel_right and "reel_right" in bd:
+                    reel_rect = bd["reel_right"][0]
+                    if tonearm_backing_rect.colliderect(reel_rect):
+                        force_reel_redraw = True
+            
             # Restore BOTH backings first to avoid overlap clobbering
-            left_will_blit = reel_left and is_playing and reel_left.will_blit(now_ticks)
-            right_will_blit = reel_right and is_playing and reel_right.will_blit(now_ticks)
+            # Include force_reel_redraw from tonearm backing overlap check
+            left_will_blit = reel_left and is_playing and (force_reel_redraw or reel_left.will_blit(now_ticks))
+            right_will_blit = reel_right and is_playing and (force_reel_redraw or reel_right.will_blit(now_ticks))
             reel_backing_restored = False
+            reel_backing_rects = []  # Track for tonearm overlap check
             
             if left_will_blit and "reel_left" in bd:
                 r, b = bd["reel_left"]
                 screen.blit(b, r.topleft)
                 reel_backing_restored = True
+                reel_backing_rects.append(r)
             if right_will_blit and "reel_right" in bd:
                 r, b = bd["reel_right"]
                 screen.blit(b, r.topleft)
                 reel_backing_restored = True
+                reel_backing_rects.append(r)
             
-            # Now render both reels
+            # Check if reel backing overlaps tonearm area - force tonearm redraw if so
+            force_tonearm_redraw = False
+            if reel_backing_restored and tonearm and "tonearm" in bd:
+                tonearm_rect = bd["tonearm"][0]
+                for reel_rect in reel_backing_rects:
+                    if reel_rect.colliderect(tonearm_rect):
+                        force_tonearm_redraw = True
+                        break
+            
+            # Now render both reels (force=True if forced redraw to bypass internal will_blit)
             if left_will_blit:
-                rect = reel_left.render(screen, status, now_ticks)
+                rect = reel_left.render(screen, status, now_ticks, force=force_reel_redraw)
                 if rect:
                     dirty_rects.append(rect)
             if right_will_blit:
-                rect = reel_right.render(screen, status, now_ticks)
+                rect = reel_right.render(screen, status, now_ticks, force=force_reel_redraw)
                 if rect:
                     dirty_rects.append(rect)
             
@@ -2746,9 +2775,10 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             # STEP 3: Tonearm draws on top of everything (except foreground)
             # Must render if: tonearm needs update OR album art just rendered (to stay on top)
-            if tonearm and (tonearm_will_render or (album_rendered and tonearm.get_state() != "rest")):
-                # Force render if album art just rendered (to stay on top)
-                force = album_rendered and not tonearm_will_render
+            # OR reel backing was restored and overlaps tonearm area (even at rest)
+            if tonearm and (tonearm_will_render or force_tonearm_redraw or (album_rendered and tonearm.get_state() != "rest")):
+                # Force render if album art just rendered or reel backing wiped tonearm area
+                force = (album_rendered and not tonearm_will_render) or force_tonearm_redraw
                 rect = tonearm.render(screen, now_ticks, force=force)
                 if rect:
                     dirty_rects.append(rect)
