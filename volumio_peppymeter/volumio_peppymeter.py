@@ -1885,6 +1885,13 @@ def start_display_output(pm, callback, meter_config_volumio):
         size_bold = mc_vol.get(FONTSIZE_BOLD, 40)
         size_digi = mc_vol.get(FONTSIZE_DIGI, 40)
         
+        log_debug("--- Font Config ---", "verbose")
+        log_debug(f"  font.path = {font_path}", "verbose")
+        log_debug(f"  font.size.light = {size_light}", "verbose")
+        log_debug(f"  font.size.regular = {size_regular}", "verbose")
+        log_debug(f"  font.size.bold = {size_bold}", "verbose")
+        log_debug(f"  font.size.digi = {size_digi}", "verbose")
+        
         fontL = None
         fontR = None
         fontB = None
@@ -1894,6 +1901,7 @@ def start_display_output(pm, callback, meter_config_volumio):
         light_file = meter_config_volumio.get(FONT_LIGHT)
         if light_file and os.path.exists(font_path + light_file):
             fontL = pg.font.Font(font_path + light_file, size_light)
+            log_debug(f"  Font light: loaded {font_path + light_file}", "verbose")
         else:
             fontL = pg.font.SysFont("DejaVuSans", size_light)
         
@@ -1901,6 +1909,7 @@ def start_display_output(pm, callback, meter_config_volumio):
         regular_file = meter_config_volumio.get(FONT_REGULAR)
         if regular_file and os.path.exists(font_path + regular_file):
             fontR = pg.font.Font(font_path + regular_file, size_regular)
+            log_debug(f"  Font regular: loaded {font_path + regular_file}", "verbose")
         else:
             fontR = pg.font.SysFont("DejaVuSans", size_regular)
         
@@ -1908,6 +1917,7 @@ def start_display_output(pm, callback, meter_config_volumio):
         bold_file = meter_config_volumio.get(FONT_BOLD)
         if bold_file and os.path.exists(font_path + bold_file):
             fontB = pg.font.Font(font_path + bold_file, size_bold)
+            log_debug(f"  Font bold: loaded {font_path + bold_file}", "verbose")
         else:
             fontB = pg.font.SysFont("DejaVuSans", size_bold, bold=True)
         
@@ -1915,6 +1925,7 @@ def start_display_output(pm, callback, meter_config_volumio):
         digi_path = os.path.join(file_path, 'fonts', 'DSEG7Classic-Italic.ttf')
         if os.path.exists(digi_path):
             fontDigi = pg.font.Font(digi_path, size_digi)
+            log_debug(f"  Font digi: loaded {digi_path}", "verbose")
         else:
             fontDigi = pg.font.SysFont("DejaVuSans", size_digi)
         
@@ -1983,6 +1994,9 @@ def start_display_output(pm, callback, meter_config_volumio):
         mc_vol = meter_config_volumio.get(meter_name, {}) if meter_name else {}
         active_meter_name = meter_name
         
+        log_debug(f"=== Initializing meter: {meter_name} ===", "basic")
+        log_debug(f"  config.extend = {mc_vol.get(EXTENDED_CONF, False)}", "verbose")
+        
         # Reset caches
         last_time_str = ""
         last_time_surf = None
@@ -2045,6 +2059,17 @@ def start_display_output(pm, callback, meter_config_volumio):
         type_dim = mc_vol.get(PLAY_TYPE_DIM)
         art_pos = mc_vol.get(ALBUMART_POS)
         art_dim = mc_vol.get(ALBUMART_DIM)
+        
+        log_debug("--- Playinfo Config ---", "verbose")
+        log_debug(f"  playinfo.artist.pos = {artist_pos}", "verbose")
+        log_debug(f"  playinfo.title.pos = {title_pos}", "verbose")
+        log_debug(f"  playinfo.album.pos = {album_pos}", "verbose")
+        log_debug(f"  time.remaining.pos = {time_pos}", "verbose")
+        log_debug(f"  playinfo.samplerate.pos = {sample_pos}", "verbose")
+        log_debug(f"  playinfo.type.pos = {type_pos}", "verbose")
+        log_debug(f"  playinfo.type.dimension = {type_dim}", "verbose")
+        log_debug(f"  albumart.pos = {art_pos}", "verbose")
+        log_debug(f"  albumart.dimension = {art_dim}", "verbose")
         
         # Styles
         artist_style = mc_vol.get(PLAY_ARTIST_STYLE, FONT_STYLE_L)
@@ -2118,13 +2143,16 @@ def start_display_output(pm, callback, meter_config_volumio):
                         surf = screen.subsurface(clipped).copy()
                         backing.append((clipped, surf))
                         backing_dict[name] = (clipped, surf)
+                        log_debug(f"  Backing captured: {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
                     except Exception:
                         # Fallback: create black surface
                         s = pg.Surface((clipped.width, clipped.height))
                         s.fill((0, 0, 0))
                         backing.append((clipped, s))
                         backing_dict[name] = (clipped, s)
+                        log_debug(f"  Backing captured (fallback): {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
         
+        log_debug("--- Backing Captures ---", "verbose")
         if artist_pos:
             capture_rect("artist", artist_pos, artist_box, artist_font.get_linesize())
         if title_pos:
@@ -2153,6 +2181,16 @@ def start_display_output(pm, callback, meter_config_volumio):
             rot_fps, rot_step = get_rotation_params(rot_quality, rot_custom_fps)
             rot_speed_mult = meter_config_volumio.get(ROTATION_SPEED, 1.0)
             
+            log_debug("--- Album Art Config ---", "verbose")
+            log_debug(f"  albumart.pos = {art_pos}", "verbose")
+            log_debug(f"  albumart.dimension = {art_dim}", "verbose")
+            log_debug(f"  albumart.rotation = {rotate_enabled}", "verbose")
+            log_debug(f"  albumart.rotation.speed = {rotate_rpm}", "verbose")
+            log_debug(f"  albumart.mask = {mc_vol.get(ALBUMART_MSK)}", "verbose")
+            log_debug(f"  albumart.border = {mc_vol.get(ALBUMBORDER)}", "verbose")
+            log_debug(f"  Computed: rot_quality={rot_quality}, rot_custom_fps={rot_custom_fps} -> rot_fps={rot_fps}, rot_step={rot_step}", "verbose")
+            log_debug(f"  Computed: rot_speed_mult={rot_speed_mult}", "verbose")
+            
             album_renderer = AlbumArtRenderer(
                 base_path=cfg.get(BASE_PATH),
                 meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
@@ -2172,6 +2210,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 rotation_step=rot_step,
                 speed_multiplier=rot_speed_mult
             )
+            log_debug("  AlbumArtRenderer created", "verbose")
         
         # Create reel renderers (for cassette skins)
         reel_left_renderer = None
@@ -2194,6 +2233,18 @@ def start_display_output(pm, callback, meter_config_volumio):
         # Per-meter reel direction (meters.txt) takes priority over global config
         reel_direction = mc_vol.get(REEL_DIRECTION) or meter_config_volumio.get(REEL_DIRECTION, "ccw")
         
+        log_debug("--- Reel Config ---", "verbose")
+        log_debug(f"  reel.left.filename = {reel_left_file}", "verbose")
+        log_debug(f"  reel.left.pos = {reel_left_pos}", "verbose")
+        log_debug(f"  reel.left.center = {reel_left_center}", "verbose")
+        log_debug(f"  reel.right.filename = {reel_right_file}", "verbose")
+        log_debug(f"  reel.right.pos = {reel_right_pos}", "verbose")
+        log_debug(f"  reel.right.center = {reel_right_center}", "verbose")
+        log_debug(f"  reel.rotation.speed = {reel_rpm}", "verbose")
+        log_debug(f"  reel.direction = {reel_direction} (per-meter: {mc_vol.get(REEL_DIRECTION)}, global: {meter_config_volumio.get(REEL_DIRECTION, 'ccw')})", "verbose")
+        log_debug(f"  Computed: rot_quality={rot_quality}, rot_custom_fps={rot_custom_fps} -> rot_fps={rot_fps}, rot_step={rot_step}", "verbose")
+        log_debug(f"  Computed: spool_left_mult={spool_left_mult}, spool_right_mult={spool_right_mult}", "verbose")
+        
         if reel_left_file and reel_left_center:
             reel_left_renderer = ReelRenderer(
                 base_path=cfg.get(BASE_PATH),
@@ -2212,6 +2263,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             backing_rect = reel_left_renderer.get_backing_rect()
             if backing_rect:
                 capture_rect("reel_left", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
+                log_debug(f"  ReelRenderer LEFT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}", "verbose")
         
         if reel_right_file and reel_right_center:
             reel_right_renderer = ReelRenderer(
@@ -2231,6 +2283,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             backing_rect = reel_right_renderer.get_backing_rect()
             if backing_rect:
                 capture_rect("reel_right", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
+                log_debug(f"  ReelRenderer RIGHT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}", "verbose")
         
         # Create tonearm renderer (for turntable skins)
         tonearm_renderer = None
@@ -2238,6 +2291,16 @@ def start_display_output(pm, callback, meter_config_volumio):
         tonearm_file = mc_vol.get(TONEARM_FILE)
         tonearm_pivot_screen = mc_vol.get(TONEARM_PIVOT_SCREEN)
         tonearm_pivot_image = mc_vol.get(TONEARM_PIVOT_IMAGE)
+        
+        log_debug("--- Tonearm Config ---", "verbose")
+        log_debug(f"  tonearm.filename = {tonearm_file}", "verbose")
+        log_debug(f"  tonearm.pivot.screen = {tonearm_pivot_screen}", "verbose")
+        log_debug(f"  tonearm.pivot.image = {tonearm_pivot_image}", "verbose")
+        log_debug(f"  tonearm.angle.rest = {mc_vol.get(TONEARM_ANGLE_REST, -30.0)}", "verbose")
+        log_debug(f"  tonearm.angle.start = {mc_vol.get(TONEARM_ANGLE_START, 0.0)}", "verbose")
+        log_debug(f"  tonearm.angle.end = {mc_vol.get(TONEARM_ANGLE_END, 25.0)}", "verbose")
+        log_debug(f"  tonearm.drop.duration = {mc_vol.get(TONEARM_DROP_DURATION, 1.5)}", "verbose")
+        log_debug(f"  tonearm.lift.duration = {mc_vol.get(TONEARM_LIFT_DURATION, 1.0)}", "verbose")
         
         if tonearm_file and tonearm_pivot_screen and tonearm_pivot_image:
             tonearm_renderer = TonearmRenderer(
@@ -2334,6 +2397,11 @@ def start_display_output(pm, callback, meter_config_volumio):
             "fgr_pos": (meter_x, meter_y),
             "fgr_regions": fgr_regions,  # OPTIMIZATION: Opaque regions for selective blitting
         }
+        
+        log_debug("--- Initialization Complete ---", "verbose")
+        log_debug(f"  Renderers: album_art={'YES' if album_renderer else 'NO'}, reel_left={'YES' if reel_left_renderer else 'NO'}, reel_right={'YES' if reel_right_renderer else 'NO'}, tonearm={'YES' if tonearm_renderer else 'NO'}", "verbose")
+        log_debug(f"  Backings captured: {len(backing_dict)} ({', '.join(backing_dict.keys())})", "verbose")
+        log_debug(f"  Foreground: {'YES' if fgr_surf else 'NO'} ({len(fgr_regions) if fgr_regions else 0} regions)", "verbose")
     
     # -------------------------------------------------------------------------
     # Render format icon - OPTIMIZED with caching
@@ -2416,6 +2484,8 @@ def start_display_output(pm, callback, meter_config_volumio):
     # -------------------------------------------------------------------------
     clock = Clock()
     pm.meter.start()
+    
+    log_debug(f"Main loop frame.rate = {cfg[FRAME_RATE]} (from config.txt [screen] section)", "basic")
     
     # Initialize overlay for first meter
     overlay_init_for_meter(resolve_active_meter_name())
@@ -2854,6 +2924,31 @@ if __name__ == "__main__":
             pass
     log_debug(f"Debug level set to: {DEBUG_LEVEL_CURRENT}", "basic")
     log_debug("=== PeppyMeter starting ===", "basic")
+    log_debug(f"Config file: {os.path.join(os.getcwd(), 'config.txt')}", "basic")
+    log_debug(f"Meters file: {parser.meter_config_path}", "basic")
+    log_debug("--- Global Config (config.txt) ---", "verbose")
+    log_debug(f"  rotation.quality = {meter_config_volumio.get(ROTATION_QUALITY, 'medium')}", "verbose")
+    log_debug(f"  rotation.fps = {meter_config_volumio.get(ROTATION_FPS, 8)}", "verbose")
+    log_debug(f"  rotation.speed = {meter_config_volumio.get(ROTATION_SPEED, 1.0)}", "verbose")
+    log_debug(f"  spool.left.speed = {meter_config_volumio.get(SPOOL_LEFT_SPEED, 1.0)}", "verbose")
+    log_debug(f"  spool.right.speed = {meter_config_volumio.get(SPOOL_RIGHT_SPEED, 1.0)}", "verbose")
+    log_debug(f"  reel.direction = {meter_config_volumio.get(REEL_DIRECTION, 'ccw')}", "verbose")
+    log_debug(f"  scrolling.mode = {meter_config_volumio.get('scrolling.mode', 'skin')}", "verbose")
+    log_debug(f"  scrolling.speed.artist = {meter_config_volumio.get('scrolling.speed.artist', 40)}", "verbose")
+    log_debug(f"  scrolling.speed.title = {meter_config_volumio.get('scrolling.speed.title', 40)}", "verbose")
+    log_debug(f"  scrolling.speed.album = {meter_config_volumio.get('scrolling.speed.album', 40)}", "verbose")
+    log_debug(f"  color.depth = {meter_config_volumio.get(COLOR_DEPTH, 32)}", "verbose")
+    log_debug(f"  position.type = {meter_config_volumio.get(POSITION_TYPE, 'center')}", "verbose")
+    log_debug(f"  position.x = {meter_config_volumio.get(POS_X, 0)}", "verbose")
+    log_debug(f"  position.y = {meter_config_volumio.get(POS_Y, 0)}", "verbose")
+    log_debug(f"  transition.type = {meter_config_volumio.get(TRANSITION_TYPE, 'fade')}", "verbose")
+    log_debug(f"  transition.duration = {meter_config_volumio.get(TRANSITION_DURATION, 0.5)}", "verbose")
+    log_debug(f"  transition.color = {meter_config_volumio.get(TRANSITION_COLOR, 'black')}", "verbose")
+    log_debug(f"  transition.opacity = {meter_config_volumio.get(TRANSITION_OPACITY, 100)}", "verbose")
+    log_debug(f"  start.animation = {meter_config_volumio.get(START_ANIMATION, False)}", "verbose")
+    log_debug(f"  update.interval = {meter_config_volumio.get(UPDATE_INTERVAL, 2)}", "verbose")
+    log_debug(f"  font.path = {meter_config_volumio.get(FONT_PATH, '')}", "verbose")
+    log_debug("--- End Global Config ---", "verbose")
     
     # Create callback handler
     callback = CallBack(pm.util, meter_config_volumio, pm.meter)
