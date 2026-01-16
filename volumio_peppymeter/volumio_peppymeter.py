@@ -2007,12 +2007,12 @@ def start_display_output(pm, callback, meter_config_volumio):
         # Load fonts
         fontL, fontR, fontB, fontDigi = load_fonts(mc_vol)
         
-        # Draw static assets
+        # Draw static assets (background layers only)
         draw_static_assets(mc)
         
-        # Run meter once to show needles before capture
-        pm.meter.run()
-        pg.display.update()
+        # NOTE: Do NOT call pm.meter.run() here - backing must be captured
+        # with clean background (no needles) to avoid ghosting artifacts
+        # when backing is restored during animation.
         
         # Positions and colors
         center_flag = bool(mc_vol.get(PLAY_CENTER, mc_vol.get(PLAY_TXT_CENTER, False)))
@@ -2256,9 +2256,21 @@ def start_display_output(pm, callback, meter_config_volumio):
                 rotation_fps=rot_fps
             )
             # Capture backing for tonearm sweep area
+            # IMPORTANT: Clip backing to avoid meter area (typically bottom 1/3 of screen)
+            # Meters manage their own backing; overlapping causes needle disappearance
             backing_rect = tonearm_renderer.get_backing_rect()
             if backing_rect:
-                capture_rect("tonearm", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
+                # Limit backing to upper portion of screen (avoid meter needle areas)
+                max_backing_y = int(SCREEN_HEIGHT * 0.65)  # Stay above meter sweep area
+                if backing_rect.bottom > max_backing_y:
+                    # Clip height to not extend into meter area
+                    clipped_height = max(1, max_backing_y - backing_rect.y)
+                    if clipped_height > 0 and backing_rect.y < max_backing_y:
+                        capture_rect("tonearm", (backing_rect.x, backing_rect.y), backing_rect.width, clipped_height)
+                        log_debug(f"[overlay_init] Tonearm backing clipped: y={backing_rect.y} h={clipped_height} (was {backing_rect.height})")
+                    # else: backing starts below meter area, skip capture
+                else:
+                    capture_rect("tonearm", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
             log_debug(f"[overlay_init] TonearmRenderer created: {tonearm_file}")
         
         # Create scrollers with per-field speeds
@@ -2336,6 +2348,11 @@ def start_display_output(pm, callback, meter_config_volumio):
             "fgr_pos": (meter_x, meter_y),
             "fgr_regions": fgr_regions,  # OPTIMIZATION: Opaque regions for selective blitting
         }
+        
+        # Now that all backings are captured with clean background,
+        # run meter once and update display to show initial state
+        pm.meter.run()
+        pg.display.update()
     
     # -------------------------------------------------------------------------
     # Render format icon - OPTIMIZED with caching
@@ -2552,30 +2569,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                 tonearm_backing_restored = True
                 tonearm_backing_rect = r
             
-            # Run meter animation - collect dirty rects
-            # Meters now draw on top of restored backing
-            meter_rects = pm.meter.run()
-            if meter_rects:
-                # meter.run() returns list of tuples: [(index, rect), (index, rect)]
-                # Extract just the rects for display update
-                if isinstance(meter_rects, list):
-                    for item in meter_rects:
-                        if item:
-                            # Handle tuple (index, rect) from circular/linear animator
-                            if isinstance(item, tuple) and len(item) >= 2:
-                                rect = item[1]  # Second element is the rect
-                                if rect:
-                                    dirty_rects.append(rect)
-                            elif hasattr(item, 'x'):  # It's a Rect object
-                                dirty_rects.append(item)
-                elif isinstance(meter_rects, tuple) and len(meter_rects) >= 2:
-                    rect = meter_rects[1]
-                    if rect:
-                        dirty_rects.append(rect)
-                elif hasattr(meter_rects, 'x'):  # It's a Rect object
-                    dirty_rects.append(meter_rects)
-            
-            # Render cassette reels
+            # REEL BACKING + RENDER - Must happen BEFORE meter.run()
+            # Otherwise reel backing restore wipes freshly drawn meter needles
             reel_left = ov.get("reel_left_renderer")
             reel_right = ov.get("reel_right_renderer")
             
@@ -2591,8 +2586,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                     if tonearm_backing_rect.colliderect(reel_rect):
                         force_reel_redraw = True
             
-            # Restore BOTH backings first to avoid overlap clobbering
-            # Include force_reel_redraw from tonearm backing overlap check
+            # Restore BOTH reel backings first to avoid overlap clobbering
             left_will_blit = reel_left and is_playing and (force_reel_redraw or reel_left.will_blit(now_ticks))
             right_will_blit = reel_right and is_playing and (force_reel_redraw or reel_right.will_blit(now_ticks))
             reel_backing_restored = False
@@ -2618,7 +2612,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                         force_tonearm_redraw = True
                         break
             
-            # Now render both reels (force=True if forced redraw to bypass internal will_blit)
+            # Render reels (force=True if forced redraw to bypass internal will_blit)
             if left_will_blit:
                 rect = reel_left.render(screen, status, now_ticks, force=force_reel_redraw)
                 if rect:
@@ -2627,6 +2621,29 @@ def start_display_output(pm, callback, meter_config_volumio):
                 rect = reel_right.render(screen, status, now_ticks, force=force_reel_redraw)
                 if rect:
                     dirty_rects.append(rect)
+            
+            # Run meter animation - collect dirty rects
+            # Meters now draw on top of restored backing AND reels
+            meter_rects = pm.meter.run()
+            if meter_rects:
+                # meter.run() returns list of tuples: [(index, rect), (index, rect)]
+                # Extract just the rects for display update
+                if isinstance(meter_rects, list):
+                    for item in meter_rects:
+                        if item:
+                            # Handle tuple (index, rect) from circular/linear animator
+                            if isinstance(item, tuple) and len(item) >= 2:
+                                rect = item[1]  # Second element is the rect
+                                if rect:
+                                    dirty_rects.append(rect)
+                            elif hasattr(item, 'x'):  # It's a Rect object
+                                dirty_rects.append(item)
+                elif isinstance(meter_rects, tuple) and len(meter_rects) >= 2:
+                    rect = meter_rects[1]
+                    if rect:
+                        dirty_rects.append(rect)
+                elif hasattr(meter_rects, 'x'):  # It's a Rect object
+                    dirty_rects.append(meter_rects)
             
             # STEP 2: Album art (restore backing + draw)
             # This covers any overlap area that reel or tonearm backing cleared
