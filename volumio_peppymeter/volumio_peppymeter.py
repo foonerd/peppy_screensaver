@@ -496,9 +496,13 @@ def get_rotation_params(quality, custom_fps=8):
     :return: (fps, step_degrees)
     """
     if quality == "custom":
-        # Calculate step from FPS to maintain smooth rotation
-        # Higher FPS = smaller steps
-        step = max(2, int(180 / custom_fps))
+        # Higher FPS needs smaller step for smooth rotation
+        # Maintain roughly constant fps*step product (~45) like presets:
+        #   low:    4 fps * 12 step = 48
+        #   medium: 8 fps *  6 step = 48
+        #   high:  15 fps *  3 step = 45
+        # So step = 45 / fps, clamped to reasonable range
+        step = max(1, min(12, int(45 / max(1, custom_fps))))
         return (custom_fps, step)
     return ROTATION_PRESETS.get(quality, ROTATION_PRESETS["medium"])
 
