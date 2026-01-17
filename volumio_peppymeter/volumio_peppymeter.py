@@ -88,6 +88,18 @@ except ImportError:
     REEL_RIGHT_CENTER = "reel.right.center"
     REEL_ROTATION_SPEED = "reel.rotation.speed"
 
+# Vinyl configuration constants - import with fallback for backward compatibility
+try:
+    from volumio_configfileparser import (
+        VINYL_FILE, VINYL_POS, VINYL_CENTER, VINYL_DIRECTION
+    )
+except ImportError:
+    # Fallback if volumio_configfileparser not updated yet
+    VINYL_FILE = "vinyl.filename"
+    VINYL_POS = "vinyl.pos"
+    VINYL_CENTER = "vinyl.center"
+    VINYL_DIRECTION = "vinyl.direction"
+
 
 # =============================================================================
 # Foreground Region Detection - OPTIMIZATION for selective blitting
@@ -519,7 +531,8 @@ class AlbumArtRenderer:
                  font_color=(255, 255, 255), border_width=0,
                  mask_filename=None, rotate_enabled=False, rotate_rpm=0.0,
                  angle_step_deg=0.5, spindle_radius=5, ring_radius=None,
-                 circle=True, rotation_fps=8, rotation_step=6, speed_multiplier=1.0):
+                 circle=True, rotation_fps=8, rotation_step=6, speed_multiplier=1.0,
+                 vinyl_renderer=None):
         self.base_path = base_path
         self.meter_folder = meter_folder
         self.art_pos = art_pos
@@ -536,6 +549,9 @@ class AlbumArtRenderer:
         self.circle = bool(circle)
         self.rotation_fps = int(rotation_fps)
         self.rotation_step = int(rotation_step)
+
+        # Vinyl coupling (for turntable skins)
+        self.vinyl_renderer = vinyl_renderer
 
         # Derived center
         self.art_center = (int(art_pos[0] + art_dim[0] // 2),
@@ -726,7 +742,11 @@ class AlbumArtRenderer:
         if self.rotate_enabled and self.art_center and self.rotate_rpm > 0.0:
             # Update angle based on playback status (only if advancing)
             if advance_angle:
-                self._update_angle(status, now_ticks)
+                # If coupled to vinyl, use vinyl's angle
+                if self.vinyl_renderer:
+                    self._current_angle = self.vinyl_renderer.get_current_angle()
+                else:
+                    self._update_angle(status, now_ticks)
             
             # OPTIMIZATION: Use pre-computed frame lookup if available
             if self._rot_frames:
@@ -920,6 +940,169 @@ class ReelRenderer:
         self._update_angle(status, now_ticks)
         
         # OPTIMIZATION: Use pre-computed frame lookup if available
+        if self._rot_frames:
+            idx = int(self._current_angle // self.rotation_step) % len(self._rot_frames)
+            rot = self._rot_frames[idx]
+        else:
+            # Fallback: real-time rotation
+            try:
+                rot = pg.transform.rotate(self._original_surf, -self._current_angle)
+            except Exception:
+                rot = pg.transform.rotate(self._original_surf, int(-self._current_angle))
+        
+        # Get rect centered on rotation center
+        rot_rect = rot.get_rect(center=self.center)
+        screen.blit(rot, rot_rect.topleft)
+        self._needs_redraw = False
+        self._need_first_blit = False
+        return self.get_backing_rect()
+
+
+# =============================================================================
+# Vinyl Renderer (for turntable skins with spinning vinyl under album art)
+# =============================================================================
+class VinylRenderer:
+    """
+    Handles vinyl disc graphics with rotation for turntable-style skins.
+    Renders UNDER album art. When albumart.rotation=true, album art locks
+    to vinyl's rotation angle for unified spinning.
+    
+    Uses albumart.rotation.speed for rotation speed (unified with album art).
+    """
+
+    def __init__(self, base_path, meter_folder, filename, pos, center,
+                 rotate_rpm=0.0, rotation_fps=8, rotation_step=6,
+                 speed_multiplier=1.0, direction="cw"):
+        """
+        Initialize vinyl renderer.
+        
+        :param base_path: Base path for meter assets
+        :param meter_folder: Meter folder name
+        :param filename: PNG filename for the vinyl graphic
+        :param pos: Top-left position tuple (x, y) for drawing
+        :param center: Center point tuple (x, y) for rotation pivot
+        :param rotate_rpm: Rotation speed in RPM (from albumart.rotation.speed)
+        :param rotation_fps: Target FPS for rotation updates
+        :param rotation_step: Degrees per pre-computed frame
+        :param speed_multiplier: Multiplier for rotation speed (from config)
+        :param direction: Rotation direction - "ccw" (counter-clockwise) or "cw" (clockwise)
+        """
+        self.base_path = base_path
+        self.meter_folder = meter_folder
+        self.filename = filename
+        self.pos = pos
+        self.center = center
+        self.rotate_rpm = abs(float(rotate_rpm) * float(speed_multiplier))
+        self.rotation_fps = int(rotation_fps)
+        self.rotation_step = int(rotation_step)
+        self.direction_mult = 1 if direction == "cw" else -1
+        
+        # Runtime state
+        self._original_surf = None
+        self._rot_frames = None
+        self._current_angle = 0.0
+        self._loaded = False
+        self._last_blit_tick = 0
+        self._blit_interval_ms = int(1000 / max(1, self.rotation_fps))
+        self._needs_redraw = True
+        self._need_first_blit = False
+        
+        # Load the vinyl image
+        self._load_image()
+    
+    def _load_image(self):
+        """Load the vinyl PNG file and pre-compute rotation frames."""
+        if not self.filename:
+            return
+        
+        try:
+            img_path = os.path.join(self.base_path, self.meter_folder, self.filename)
+            if os.path.exists(img_path):
+                self._original_surf = pg.image.load(img_path).convert_alpha()
+                self._loaded = True
+                self._need_first_blit = True
+                
+                # Pre-compute all rotation frames
+                if USE_PRECOMPUTED_FRAMES and self.center and self.rotate_rpm > 0.0:
+                    try:
+                        self._rot_frames = [
+                            pg.transform.rotate(self._original_surf, -a)
+                            for a in range(0, 360, self.rotation_step)
+                        ]
+                    except Exception:
+                        self._rot_frames = None
+            else:
+                print(f"[VinylRenderer] File not found: {img_path}")
+        except Exception as e:
+            print(f"[VinylRenderer] Failed to load '{self.filename}': {e}")
+    
+    def _update_angle(self, status, now_ticks):
+        """Update rotation angle based on RPM, direction, and playback status."""
+        if self.rotate_rpm <= 0.0:
+            return
+        
+        status = (status or "").lower()
+        if status == "play":
+            dt = self._blit_interval_ms / 1000.0
+            self._current_angle = (self._current_angle + self.rotate_rpm * 6.0 * dt * self.direction_mult) % 360.0
+    
+    def get_current_angle(self):
+        """Return current rotation angle (for album art coupling)."""
+        return self._current_angle
+    
+    def will_blit(self, now_ticks):
+        """Check if blit is needed (FPS gating)."""
+        if not self._loaded or not self._original_surf:
+            return False
+        if self._need_first_blit:
+            return True
+        if not self.center or self.rotate_rpm <= 0.0:
+            return self._needs_redraw
+        return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+    
+    def get_backing_rect(self):
+        """Get bounding rectangle for backing surface (extended for rotation)."""
+        if not self._original_surf or not self.center:
+            return None
+        
+        w = self._original_surf.get_width()
+        h = self._original_surf.get_height()
+        
+        # Rotated bounding box is larger (diagonal)
+        diag = int(max(w, h) * math.sqrt(2)) + 4
+        
+        ext_x = self.center[0] - diag // 2
+        ext_y = self.center[1] - diag // 2
+        
+        return pg.Rect(ext_x, ext_y, diag, diag)
+    
+    def render(self, screen, status, now_ticks):
+        """Render the vinyl disc (rotated if playing).
+        
+        Returns dirty rect if drawn, None if skipped.
+        """
+        if not self._loaded or not self._original_surf:
+            return None
+        
+        # FPS gating
+        if not self.will_blit(now_ticks):
+            return None
+        
+        self._last_blit_tick = now_ticks
+        
+        if not self.center:
+            # No rotation - just blit at position
+            screen.blit(self._original_surf, self.pos)
+            self._needs_redraw = False
+            self._need_first_blit = False
+            return pg.Rect(self.pos[0], self.pos[1],
+                         self._original_surf.get_width(),
+                         self._original_surf.get_height())
+        
+        # Update angle based on playback status
+        self._update_angle(status, now_ticks)
+        
+        # Use pre-computed frame lookup if available
         if self._rot_frames:
             idx = int(self._current_angle // self.rotation_step) % len(self._rot_frames)
             rot = self._rot_frames[idx]
@@ -2318,6 +2501,54 @@ def start_display_output(pm, callback, meter_config_volumio):
                 capture_rect("reel_right", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
                 log_debug(f"  ReelRenderer RIGHT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}", "verbose")
         
+        # Create vinyl renderer (for turntable skins)
+        vinyl_renderer = None
+        
+        vinyl_file = mc_vol.get(VINYL_FILE)
+        vinyl_pos = mc_vol.get(VINYL_POS)
+        vinyl_center = mc_vol.get(VINYL_CENTER)
+        vinyl_direction = mc_vol.get(VINYL_DIRECTION) or meter_config_volumio.get(REEL_DIRECTION, "cw")
+        
+        # Vinyl uses albumart.rotation.speed for unified speed
+        vinyl_rpm = as_float(mc_vol.get(ALBUMART_ROT_SPEED), 0.0)
+        
+        # Get rotation speed multiplier (may not exist if album art not configured)
+        try:
+            _ = rot_speed_mult
+        except NameError:
+            rot_speed_mult = meter_config_volumio.get(ROTATION_SPEED, 1.0)
+        
+        log_debug("--- Vinyl Config ---", "verbose")
+        log_debug(f"  vinyl.filename = {vinyl_file}", "verbose")
+        log_debug(f"  vinyl.pos = {vinyl_pos}", "verbose")
+        log_debug(f"  vinyl.center = {vinyl_center}", "verbose")
+        log_debug(f"  vinyl.direction = {vinyl_direction}", "verbose")
+        log_debug(f"  vinyl.rotation.speed (from albumart) = {vinyl_rpm}", "verbose")
+        
+        if vinyl_file and vinyl_center:
+            vinyl_renderer = VinylRenderer(
+                base_path=cfg.get(BASE_PATH),
+                meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
+                filename=vinyl_file,
+                pos=vinyl_pos,
+                center=vinyl_center,
+                rotate_rpm=vinyl_rpm,
+                rotation_fps=rot_fps,
+                rotation_step=rot_step,
+                speed_multiplier=rot_speed_mult,
+                direction=vinyl_direction
+            )
+            # Capture backing for vinyl
+            backing_rect = vinyl_renderer.get_backing_rect()
+            if backing_rect:
+                capture_rect("vinyl", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
+                log_debug(f"  VinylRenderer created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}", "verbose")
+            
+            # Couple album art to vinyl if album rotation is enabled
+            if album_renderer and album_renderer.rotate_enabled:
+                album_renderer.vinyl_renderer = vinyl_renderer
+                log_debug("  Album art coupled to vinyl rotation", "verbose")
+        
         # Create tonearm renderer (for turntable skins)
         tonearm_renderer = None
         
@@ -2429,6 +2660,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             "album_renderer": album_renderer,
             "reel_left_renderer": reel_left_renderer,
             "reel_right_renderer": reel_right_renderer,
+            "vinyl_renderer": vinyl_renderer,
             "tonearm_renderer": tonearm_renderer,
             "fgr_surf": fgr_surf,
             "fgr_pos": (meter_x, meter_y),
@@ -2436,7 +2668,7 @@ def start_display_output(pm, callback, meter_config_volumio):
         }
         
         log_debug("--- Initialization Complete ---", "verbose")
-        log_debug(f"  Renderers: album_art={'YES' if album_renderer else 'NO'}, reel_left={'YES' if reel_left_renderer else 'NO'}, reel_right={'YES' if reel_right_renderer else 'NO'}, tonearm={'YES' if tonearm_renderer else 'NO'}", "verbose")
+        log_debug(f"  Renderers: album_art={'YES' if album_renderer else 'NO'}, reel_left={'YES' if reel_left_renderer else 'NO'}, reel_right={'YES' if reel_right_renderer else 'NO'}, vinyl={'YES' if vinyl_renderer else 'NO'}, tonearm={'YES' if tonearm_renderer else 'NO'}", "verbose")
         log_debug(f"  Backings captured: {len(backing_dict)} ({', '.join(backing_dict.keys())})", "verbose")
         log_debug(f"  Foreground: {'YES' if fgr_surf else 'NO'} ({len(fgr_regions) if fgr_regions else 0} regions)", "verbose")
     
@@ -2652,18 +2884,23 @@ def start_display_output(pm, callback, meter_config_volumio):
             left_will_blit = reel_left and is_playing and reel_left.will_blit(now_ticks)
             right_will_blit = reel_right and is_playing and reel_right.will_blit(now_ticks)
             
+            # Pre-calculate vinyl state
+            vinyl = ov.get("vinyl_renderer")
+            vinyl_will_blit = vinyl and is_playing and vinyl.will_blit(now_ticks)
+            
             # Determine if ANY moving element needs render (triggers full z-order redraw)
-            any_moving_render = tonearm_will_render or album_will_render or left_will_blit or right_will_blit
+            any_moving_render = tonearm_will_render or album_will_render or left_will_blit or right_will_blit or vinyl_will_blit
             
             # =================================================================
             # RENDER Z-ORDER (bottom to top):
             # 1. bgr (via backing restore)
             # 2. meters/spectrum (meter.run)
             # 3. reels/platter
-            # 4. album art
-            # 5. tonearm
-            # 6. metadata/text
-            # 7. fgr mask (always last)
+            # 4. vinyl (turntable disc)
+            # 5. album art
+            # 6. tonearm
+            # 7. metadata/text
+            # 8. fgr mask (always last)
             # =================================================================
             
             # STEP 1: Restore backings ONLY for areas that will actually be redrawn
@@ -2674,12 +2911,15 @@ def start_display_output(pm, callback, meter_config_volumio):
             if right_will_blit and "reel_right" in bd:
                 r, b = bd["reel_right"]
                 screen.blit(b, r.topleft)
-            if (album_will_render or tonearm_will_render or left_will_blit or right_will_blit) and "art" in bd:
+            if vinyl_will_blit and "vinyl" in bd:
+                r, b = bd["vinyl"]
+                screen.blit(b, r.topleft)
+            if (album_will_render or tonearm_will_render or left_will_blit or right_will_blit or vinyl_will_blit) and "art" in bd:
                 r, b = bd["art"]
                 screen.blit(b, r.topleft)
             # Tonearm uses per-frame backing - restore when tonearm will be drawn
             # (either naturally via will_render, or forced due to overlapping element changes)
-            tonearm_will_draw = tonearm_will_render or left_will_blit or right_will_blit or album_will_render
+            tonearm_will_draw = tonearm_will_render or left_will_blit or right_will_blit or album_will_render or vinyl_will_blit
             if tonearm and tonearm_will_draw:
                 rect = tonearm.restore_backing(screen)
                 if rect:
@@ -2704,7 +2944,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 elif hasattr(meter_rects, 'x'):
                     dirty_rects.append(meter_rects)
             
-            # STEP 3: Render reels/platter (above meters, below album art)
+            # STEP 3: Render reels/platter (above meters, below vinyl)
             # Only render when playing and reel needs frame update
             reel_rendered = False
             if reel_left and is_playing and left_will_blit:
@@ -2718,10 +2958,18 @@ def start_display_output(pm, callback, meter_config_volumio):
                     dirty_rects.append(rect)
                     reel_rendered = True
             
-            # STEP 4: Render album art (above reels, below tonearm)
-            # Must redraw if reel rendered (reel backing may overlap art area)
+            # STEP 4: Render vinyl (above reels, below album art)
+            vinyl_rendered = False
+            if vinyl and is_playing and vinyl_will_blit:
+                rect = vinyl.render(screen, status, now_ticks)
+                if rect:
+                    dirty_rects.append(rect)
+                    vinyl_rendered = True
+            
+            # STEP 5: Render album art (above vinyl, below tonearm)
+            # Must redraw if vinyl rendered (vinyl backing may overlap art area)
             album_rendered = False
-            album_will_draw = album_will_render or left_will_blit or right_will_blit or tonearm_will_render
+            album_will_draw = album_will_render or left_will_blit or right_will_blit or tonearm_will_render or vinyl_will_blit
             if album_renderer:
                 url_changed = albumart != getattr(album_renderer, "_current_url", None)
                 if url_changed:
@@ -2738,7 +2986,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                         dirty_rects.append(rect)
                         album_rendered = True
             
-            # STEP 5: Render tonearm (above album art, below metadata)
+            # STEP 6: Render tonearm (above album art, below metadata)
             # Must redraw if any lower element rendered (may have wiped tonearm area)
             if tonearm and tonearm_will_draw:
                 force = not tonearm_will_render  # Force if not naturally rendering
@@ -2746,7 +2994,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if rect:
                     dirty_rects.append(rect)
             
-            # STEP 6: Metadata/text (above tonearm, below fgr)
+            # STEP 7: Metadata/text (above tonearm, below fgr)
             # When tonearm renders, its large backing restore may wipe metadata areas
             # Force scrollers to redraw in that case
             
@@ -2847,7 +3095,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                         sx = ov["sample_pos"][0]
                     screen.blit(last_sample_surf, (sx, ov["sample_pos"][1]))
             
-            # STEP 7: fgr mask (always last - drawn ONCE per frame)
+            # STEP 8: fgr mask (always last - drawn ONCE per frame)
             # OPTIMIZATION: Only blit foreground regions that overlap dirty areas
             # This typically reduces foreground blit area by 80-90%
             fgr_surf = ov.get("fgr_surf")

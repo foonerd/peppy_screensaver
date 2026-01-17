@@ -60,6 +60,12 @@ REEL_RIGHT_POS = "reel.right.pos"
 REEL_RIGHT_CENTER = "reel.right.center"
 REEL_ROTATION_SPEED = "reel.rotation.speed"
 
+# Vinyl configuration constants (for turntable skins)
+VINYL_FILE = "vinyl.filename"
+VINYL_POS = "vinyl.pos"
+VINYL_CENTER = "vinyl.center"
+VINYL_DIRECTION = "vinyl.direction"
+
 # Tonearm configuration constants (for turntable skins)
 TONEARM_FILE = "tonearm.filename"
 TONEARM_PIVOT_SCREEN = "tonearm.pivot.screen"
@@ -333,6 +339,26 @@ class Volumio_ConfigFileParser(object):
             d[REEL_DIRECTION] = config_file.get(section, REEL_DIRECTION)
         except:
             d[REEL_DIRECTION] = None  # None = use global config
+
+        # --- Vinyl configuration (for turntable skins) ---
+        try:
+            d[VINYL_FILE] = config_file.get(section, VINYL_FILE)
+        except:
+            d[VINYL_FILE] = None
+        try:
+            spl = config_file.get(section, VINYL_POS).split(',')
+            d[VINYL_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[VINYL_POS] = None
+        try:
+            spl = config_file.get(section, VINYL_CENTER).split(',')
+            d[VINYL_CENTER] = (int(spl[0]), int(spl[1]))
+        except:
+            d[VINYL_CENTER] = None
+        try:
+            d[VINYL_DIRECTION] = config_file.get(section, VINYL_DIRECTION)
+        except:
+            d[VINYL_DIRECTION] = None  # None = use global config (reel.direction)
 
         # --- Tonearm configuration (for turntable skins) ---
         try:

@@ -62,6 +62,7 @@ After installation, enable and configure the plugin:
 - Multiple VU meter skins
 - Spectrum analyzer mode
 - Album art display with optional LP rotation effect
+- Vinyl turntable animation (spinning disc under album art)
 - Animated tonearm for turntable skins (tracks playback progress)
 - Cassette deck skins with rotating reel animation
 - Track info overlay with scrolling text
@@ -281,6 +282,51 @@ albumart.dimension = 200,200
 albumart.rotation = True
 albumart.rotation.speed = 8
 ```
+
+### Vinyl Turntable Animation
+
+Turntable-style skins can display a spinning vinyl disc image beneath the album art.
+This provides a more realistic turntable effect where the vinyl record rotates and
+the album art (as a record label) can either spin with it or remain static.
+
+```ini
+[MyTurntableSkin]
+meter.type = circular
+config.extend = True
+
+# Vinyl disc configuration
+vinyl.filename = vinyl_disc.png
+vinyl.pos = 100,50
+vinyl.center = 300,250
+vinyl.direction = cw
+
+# Album art positioned as record label on the vinyl
+albumart.pos = 200,150
+albumart.dimension = 200,200
+albumart.rotation = True
+albumart.rotation.speed = 1.5
+```
+
+| Option | Description |
+|--------|-------------|
+| `vinyl.filename` | PNG file for vinyl disc graphic (transparent background) |
+| `vinyl.pos` | Top-left position (x,y) for drawing |
+| `vinyl.center` | Center point (x,y) for rotation pivot |
+| `vinyl.direction` | Rotation direction: `cw` or `ccw` (optional, defaults to global reel.direction) |
+
+**Rotation coupling:**
+
+- When `albumart.rotation = True`: Album art rotates WITH the vinyl at the same speed (locked together like a real record label)
+- When `albumart.rotation = False`: Vinyl spins but album art stays static (useful for certain visual effects)
+
+The rotation speed is controlled by `albumart.rotation.speed` which applies to both vinyl and album art when coupled. This unified speed ensures realistic turntable behavior.
+
+**Vinyl vs Reel:**
+
+- Use **vinyl** for turntable skins where a single disc rotates under album art
+- Use **reel** for cassette skins where two independent reels rotate
+
+Both systems can coexist in the same installation but typically a skin uses one or the other.
 
 ### Tonearm Animation
 
