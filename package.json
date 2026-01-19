@@ -1,6 +1,6 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.1.2",
+  "version": "3.1.3",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.1.2 - Tonearm animation for turntable skins"
+    "changelog": "3.1.3 - Display playback control states from Volumio"
   },
   "engines": {
     "node": ">=20",
