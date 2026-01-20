@@ -2914,7 +2914,11 @@ def start_display_output(pm, callback, meter_config_volumio):
             if vinyl_will_blit and "vinyl" in bd:
                 r, b = bd["vinyl"]
                 screen.blit(b, r.topleft)
-            if (album_will_render or tonearm_will_render or left_will_blit or right_will_blit or vinyl_will_blit) and "art" in bd:
+            # Art backing restore: only when rotating elements will actually redraw
+            # NOTE: tonearm_will_render deliberately excluded - tonearm uses per-frame backing
+            # and doesn't need static art backing. Including it caused white flash when only
+            # tonearm updated (art backing restored but vinyl/album not redrawn due to FPS gating)
+            if (album_will_render or left_will_blit or right_will_blit or vinyl_will_blit) and "art" in bd:
                 r, b = bd["art"]
                 screen.blit(b, r.topleft)
             # Tonearm uses per-frame backing - restore when tonearm will be drawn
