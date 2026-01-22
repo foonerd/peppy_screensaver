@@ -92,6 +92,12 @@ VOLUME_KNOB_ANGLE_END = "volume.knob.angle.end"
 VOLUME_ARC_WIDTH = "volume.arc.width"
 VOLUME_ARC_ANGLE_START = "volume.arc.angle.start"
 VOLUME_ARC_ANGLE_END = "volume.arc.angle.end"
+# Volume slider style parameters (image-based)
+VOLUME_SLIDER_TRACK = "volume.slider.track"
+VOLUME_SLIDER_TIP = "volume.slider.tip"
+VOLUME_SLIDER_ORIENTATION = "volume.slider.orientation"
+VOLUME_SLIDER_TRAVEL = "volume.slider.travel"
+VOLUME_SLIDER_TIP_OFFSET = "volume.slider.tip.offset"
 
 # Mute indicator
 MUTE_POS = "mute.pos"
@@ -529,6 +535,29 @@ class Volumio_ConfigFileParser(object):
             d[VOLUME_ARC_ANGLE_END] = config_file.getfloat(section, VOLUME_ARC_ANGLE_END)
         except:
             d[VOLUME_ARC_ANGLE_END] = -45.0
+        # Volume slider parameters (image-based)
+        try:
+            d[VOLUME_SLIDER_TRACK] = config_file.get(section, VOLUME_SLIDER_TRACK)
+        except:
+            d[VOLUME_SLIDER_TRACK] = None
+        try:
+            d[VOLUME_SLIDER_TIP] = config_file.get(section, VOLUME_SLIDER_TIP)
+        except:
+            d[VOLUME_SLIDER_TIP] = None
+        try:
+            d[VOLUME_SLIDER_ORIENTATION] = config_file.get(section, VOLUME_SLIDER_ORIENTATION)
+        except:
+            d[VOLUME_SLIDER_ORIENTATION] = "vertical"
+        try:
+            spl = config_file.get(section, VOLUME_SLIDER_TRAVEL).split(',')
+            d[VOLUME_SLIDER_TRAVEL] = (int(spl[0]), int(spl[1]))
+        except:
+            d[VOLUME_SLIDER_TRAVEL] = None
+        try:
+            spl = config_file.get(section, VOLUME_SLIDER_TIP_OFFSET).split(',')
+            d[VOLUME_SLIDER_TIP_OFFSET] = (int(spl[0]), int(spl[1]))
+        except:
+            d[VOLUME_SLIDER_TIP_OFFSET] = (0, 0)
 
         # Mute indicator
         try:

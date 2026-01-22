@@ -504,7 +504,9 @@ class VolumeIndicator:
     def __init__(self, pos, dim, style, color, bg_color=None,
                  font=None, font_size=24, base_path=None, meter_folder=None,
                  knob_image=None, knob_angle_start=225.0, knob_angle_end=-45.0,
-                 arc_width=6, arc_angle_start=225.0, arc_angle_end=-45.0):
+                 arc_width=6, arc_angle_start=225.0, arc_angle_end=-45.0,
+                 slider_track=None, slider_tip=None, slider_orientation="vertical",
+                 slider_travel=None, slider_tip_offset=None):
         """Initialize volume indicator.
         
         :param pos: (x, y) screen position
@@ -522,6 +524,11 @@ class VolumeIndicator:
         :param arc_width: arc stroke width in pixels (default: 6)
         :param arc_angle_start: arc start angle in degrees (default: 225)
         :param arc_angle_end: arc end angle in degrees (default: -45)
+        :param slider_track: filename for slider track/groove image (optional)
+        :param slider_tip: filename for slider tip/handle image (required for image slider)
+        :param slider_orientation: 'vertical' or 'horizontal' (default: vertical)
+        :param slider_travel: (min, max) pixel range for tip movement
+        :param slider_tip_offset: (x, y) offset for tip anchor point
         """
         self.pos = pos
         self.dim = dim if dim else (100, 20)
@@ -544,6 +551,18 @@ class VolumeIndicator:
         self.arc_angle_end = float(arc_angle_end)
         self.arc_angle_sweep = self.arc_angle_start - self.arc_angle_end
         
+        # Slider parameters (image-based)
+        self.slider_track_filename = slider_track
+        self.slider_tip_filename = slider_tip
+        self.slider_orientation = (slider_orientation or "vertical").lower()
+        self.slider_travel = slider_travel  # (min_px, max_px) for tip position
+        self.slider_tip_offset = slider_tip_offset if slider_tip_offset else (0, 0)
+        
+        # Slider images
+        self._slider_track_image = None
+        self._slider_tip_image = None
+        self._slider_is_image_based = False
+        
         # Font for numeric display
         if font:
             self.font = font
@@ -558,6 +577,10 @@ class VolumeIndicator:
         self._knob_frames = None
         if self.style == self.STYLE_KNOB:
             self._load_knob_image()
+        
+        # Slider images (loaded if style is slider and tip is specified)
+        if self.style == self.STYLE_SLIDER and self.slider_tip_filename:
+            self._load_slider_images()
         
         # State tracking
         self._current_volume = -1
@@ -592,6 +615,50 @@ class VolumeIndicator:
                 print(f"[VolumeIndicator] Knob image not found: {knob_path}")
         except Exception as e:
             print(f"[VolumeIndicator] Failed to load knob image: {e}")
+    
+    def _load_slider_images(self):
+        """Load slider track and tip images for image-based slider style."""
+        if not self.base_path or not self.meter_folder:
+            return
+        
+        # Load tip image (required for image-based slider)
+        if self.slider_tip_filename:
+            tip_path = os.path.join(self.base_path, self.meter_folder, self.slider_tip_filename)
+            try:
+                if os.path.exists(tip_path):
+                    self._slider_tip_image = pg.image.load(tip_path).convert_alpha()
+                    self._slider_is_image_based = True
+                    print(f"[VolumeIndicator] Slider tip loaded: {self.slider_tip_filename} ({self._slider_tip_image.get_width()}x{self._slider_tip_image.get_height()})")
+                else:
+                    print(f"[VolumeIndicator] Slider tip image not found: {tip_path}")
+            except Exception as e:
+                print(f"[VolumeIndicator] Failed to load slider tip: {e}")
+        
+        # Load track image (optional - may be in background)
+        if self.slider_track_filename:
+            track_path = os.path.join(self.base_path, self.meter_folder, self.slider_track_filename)
+            try:
+                if os.path.exists(track_path):
+                    self._slider_track_image = pg.image.load(track_path).convert_alpha()
+                    print(f"[VolumeIndicator] Slider track loaded: {self.slider_track_filename}")
+                else:
+                    print(f"[VolumeIndicator] Slider track image not found: {track_path}")
+            except Exception as e:
+                print(f"[VolumeIndicator] Failed to load slider track: {e}")
+        
+        # Auto-calculate travel if not specified
+        if self._slider_is_image_based and not self.slider_travel:
+            if self.slider_orientation == "vertical":
+                # Default: tip moves from dim top to dim bottom, accounting for tip height
+                tip_h = self._slider_tip_image.get_height() if self._slider_tip_image else 0
+                # travel[0] = top (volume 100%), travel[1] = bottom (volume 0%)
+                self.slider_travel = (0, self.dim[1] - tip_h)
+            else:
+                # Horizontal: tip moves from dim left to dim right
+                tip_w = self._slider_tip_image.get_width() if self._slider_tip_image else 0
+                # travel[0] = left (volume 0%), travel[1] = right (volume 100%)
+                self.slider_travel = (0, self.dim[0] - tip_w)
+            print(f"[VolumeIndicator] Auto-calculated travel: {self.slider_travel}")
     
     def get_rect(self):
         """Get bounding rectangle for this indicator."""
@@ -663,10 +730,50 @@ class VolumeIndicator:
         return pg.Rect(self.pos[0], self.pos[1], surf.get_width(), surf.get_height())
     
     def _render_slider(self, screen, volume):
-        """Render horizontal slider bar."""
+        """Render slider - image-based or procedural.
+        
+        Image-based slider:
+        - Track image rendered at pos (optional, may be in background)
+        - Tip image moves along travel range based on volume
+        - Vertical: volume 0% = bottom (travel[1]), volume 100% = top (travel[0])
+        - Horizontal: volume 0% = left (travel[0]), volume 100% = right (travel[1])
+        
+        Procedural slider:
+        - Horizontal bar with background and fill
+        """
         x, y = self.pos
         w, h = self.dim
         
+        # Image-based slider
+        if self._slider_is_image_based and self._slider_tip_image:
+            # Draw track if present (optional overlay on background)
+            if self._slider_track_image:
+                screen.blit(self._slider_track_image, (x, y))
+            
+            # Calculate tip position based on volume and orientation
+            travel_start, travel_end = self.slider_travel
+            tip_w = self._slider_tip_image.get_width()
+            tip_h = self._slider_tip_image.get_height()
+            
+            if self.slider_orientation == "vertical":
+                # Vertical: volume 0% at travel_end (bottom), 100% at travel_start (top)
+                # travel_start is the pixel offset for volume 100% (top position)
+                # travel_end is the pixel offset for volume 0% (bottom position)
+                travel_range = travel_end - travel_start
+                tip_offset_y = travel_end - int((volume / 100.0) * travel_range)
+                tip_x = x + self.slider_tip_offset[0] + (w - tip_w) // 2  # Center horizontally
+                tip_y = y + tip_offset_y + self.slider_tip_offset[1]
+            else:
+                # Horizontal: volume 0% at travel_start (left), 100% at travel_end (right)
+                travel_range = travel_end - travel_start
+                tip_offset_x = travel_start + int((volume / 100.0) * travel_range)
+                tip_x = x + tip_offset_x + self.slider_tip_offset[0]
+                tip_y = y + self.slider_tip_offset[1] + (h - tip_h) // 2  # Center vertically
+            
+            screen.blit(self._slider_tip_image, (tip_x, tip_y))
+            return pg.Rect(x, y, w, h)
+        
+        # Procedural slider (fallback)
         # Background
         if self.bg_color:
             pg.draw.rect(screen, self.bg_color, (x, y, w, h))
@@ -896,6 +1003,13 @@ class IndicatorRenderer:
         arc_angle_start = self.config.get("volume.arc.angle.start", 225.0)
         arc_angle_end = self.config.get("volume.arc.angle.end", -45.0)
         
+        # Slider parameters (image-based)
+        slider_track = self.config.get("volume.slider.track")
+        slider_tip = self.config.get("volume.slider.tip")
+        slider_orientation = self.config.get("volume.slider.orientation", "vertical")
+        slider_travel = self.config.get("volume.slider.travel")
+        slider_tip_offset = self.config.get("volume.slider.tip.offset", (0, 0))
+        
         # Get font from fonts dict if available
         font = self.fonts.get("regular") if self.fonts else None
         
@@ -914,7 +1028,12 @@ class IndicatorRenderer:
             knob_angle_end=knob_angle_end,
             arc_width=arc_width,
             arc_angle_start=arc_angle_start,
-            arc_angle_end=arc_angle_end
+            arc_angle_end=arc_angle_end,
+            slider_track=slider_track,
+            slider_tip=slider_tip,
+            slider_orientation=slider_orientation,
+            slider_travel=slider_travel,
+            slider_tip_offset=slider_tip_offset
         )
     
     def _init_mute(self):
