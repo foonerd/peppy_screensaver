@@ -76,6 +76,75 @@ TONEARM_ANGLE_END = "tonearm.angle.end"
 TONEARM_DROP_DURATION = "tonearm.drop.duration"
 TONEARM_LIFT_DURATION = "tonearm.lift.duration"
 
+# Indicator configuration constants (state display elements)
+# Volume indicator
+VOLUME_POS = "volume.pos"
+VOLUME_STYLE = "volume.style"
+VOLUME_DIM = "volume.dim"
+VOLUME_COLOR = "volume.color"
+VOLUME_BG_COLOR = "volume.bg.color"
+VOLUME_FONT_SIZE = "volume.font.size"
+
+# Mute indicator
+MUTE_POS = "mute.pos"
+MUTE_ICON = "mute.icon"
+MUTE_LED = "mute.led"
+MUTE_LED_SHAPE = "mute.led.shape"
+MUTE_LED_COLOR = "mute.led.color"
+MUTE_LED_GLOW = "mute.led.glow"
+MUTE_LED_GLOW_INTENSITY = "mute.led.glow.intensity"
+MUTE_LED_GLOW_COLOR = "mute.led.glow.color"
+MUTE_ICON_GLOW = "mute.icon.glow"
+MUTE_ICON_GLOW_INTENSITY = "mute.icon.glow.intensity"
+MUTE_ICON_GLOW_COLOR = "mute.icon.glow.color"
+
+# Shuffle indicator
+SHUFFLE_POS = "shuffle.pos"
+SHUFFLE_ICON = "shuffle.icon"
+SHUFFLE_LED = "shuffle.led"
+SHUFFLE_LED_SHAPE = "shuffle.led.shape"
+SHUFFLE_LED_COLOR = "shuffle.led.color"
+SHUFFLE_LED_GLOW = "shuffle.led.glow"
+SHUFFLE_LED_GLOW_INTENSITY = "shuffle.led.glow.intensity"
+SHUFFLE_LED_GLOW_COLOR = "shuffle.led.glow.color"
+SHUFFLE_ICON_GLOW = "shuffle.icon.glow"
+SHUFFLE_ICON_GLOW_INTENSITY = "shuffle.icon.glow.intensity"
+SHUFFLE_ICON_GLOW_COLOR = "shuffle.icon.glow.color"
+
+# Repeat indicator
+REPEAT_POS = "repeat.pos"
+REPEAT_ICON = "repeat.icon"
+REPEAT_LED = "repeat.led"
+REPEAT_LED_SHAPE = "repeat.led.shape"
+REPEAT_LED_COLOR = "repeat.led.color"
+REPEAT_LED_GLOW = "repeat.led.glow"
+REPEAT_LED_GLOW_INTENSITY = "repeat.led.glow.intensity"
+REPEAT_LED_GLOW_COLOR = "repeat.led.glow.color"
+REPEAT_ICON_GLOW = "repeat.icon.glow"
+REPEAT_ICON_GLOW_INTENSITY = "repeat.icon.glow.intensity"
+REPEAT_ICON_GLOW_COLOR = "repeat.icon.glow.color"
+
+# Play/Pause/Stop indicator
+PLAYSTATE_POS = "playstate.pos"
+PLAYSTATE_ICON = "playstate.icon"
+PLAYSTATE_LED = "playstate.led"
+PLAYSTATE_LED_SHAPE = "playstate.led.shape"
+PLAYSTATE_LED_COLOR = "playstate.led.color"
+PLAYSTATE_LED_GLOW = "playstate.led.glow"
+PLAYSTATE_LED_GLOW_INTENSITY = "playstate.led.glow.intensity"
+PLAYSTATE_LED_GLOW_COLOR = "playstate.led.glow.color"
+PLAYSTATE_ICON_GLOW = "playstate.icon.glow"
+PLAYSTATE_ICON_GLOW_INTENSITY = "playstate.icon.glow.intensity"
+PLAYSTATE_ICON_GLOW_COLOR = "playstate.icon.glow.color"
+
+# Progress bar
+PROGRESS_POS = "progress.pos"
+PROGRESS_DIM = "progress.dim"
+PROGRESS_COLOR = "progress.color"
+PROGRESS_BG_COLOR = "progress.bg.color"
+PROGRESS_BORDER = "progress.border"
+PROGRESS_BORDER_COLOR = "progress.border.color"
+
 PLAY_TXT_CENTER = "playinfo.text.center"
 PLAY_TITLE_POS = "playinfo.title.pos"
 PLAY_TITLE_COLOR = "playinfo.title.color"
@@ -395,6 +464,293 @@ class Volumio_ConfigFileParser(object):
             d[TONEARM_LIFT_DURATION] = config_file.getfloat(section, TONEARM_LIFT_DURATION)
         except:
             d[TONEARM_LIFT_DURATION] = 1.0  # default: 1.0 second lift animation
+
+        # --- Indicator configuration (state display elements) ---
+        # Volume indicator
+        try:
+            spl = config_file.get(section, VOLUME_POS).split(',')
+            d[VOLUME_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[VOLUME_POS] = None
+        try:
+            d[VOLUME_STYLE] = config_file.get(section, VOLUME_STYLE)
+        except:
+            d[VOLUME_STYLE] = "numeric"
+        try:
+            spl = config_file.get(section, VOLUME_DIM).split(',')
+            d[VOLUME_DIM] = (int(spl[0]), int(spl[1]))
+        except:
+            d[VOLUME_DIM] = None
+        try:
+            spl = config_file.get(section, VOLUME_COLOR).split(',')
+            d[VOLUME_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[VOLUME_COLOR] = (255, 255, 255)
+        try:
+            spl = config_file.get(section, VOLUME_BG_COLOR).split(',')
+            d[VOLUME_BG_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[VOLUME_BG_COLOR] = None
+        try:
+            d[VOLUME_FONT_SIZE] = config_file.getint(section, VOLUME_FONT_SIZE)
+        except:
+            d[VOLUME_FONT_SIZE] = 24
+
+        # Mute indicator
+        try:
+            spl = config_file.get(section, MUTE_POS).split(',')
+            d[MUTE_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[MUTE_POS] = None
+        try:
+            d[MUTE_ICON] = config_file.get(section, MUTE_ICON)
+        except:
+            d[MUTE_ICON] = None
+        try:
+            spl = config_file.get(section, MUTE_LED).split(',')
+            d[MUTE_LED] = (int(spl[0]), int(spl[1]))
+        except:
+            d[MUTE_LED] = None
+        try:
+            d[MUTE_LED_SHAPE] = config_file.get(section, MUTE_LED_SHAPE)
+        except:
+            d[MUTE_LED_SHAPE] = "circle"
+        try:
+            spl = config_file.get(section, MUTE_LED_COLOR).split(',')
+            # 6 values: on_r,on_g,on_b,off_r,off_g,off_b
+            d[MUTE_LED_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                 (int(spl[3]), int(spl[4]), int(spl[5]))]
+        except:
+            d[MUTE_LED_COLOR] = [(255, 0, 0), (64, 64, 64)]
+        try:
+            d[MUTE_LED_GLOW] = config_file.getint(section, MUTE_LED_GLOW)
+        except:
+            d[MUTE_LED_GLOW] = 0
+        try:
+            d[MUTE_LED_GLOW_INTENSITY] = config_file.getfloat(section, MUTE_LED_GLOW_INTENSITY)
+        except:
+            d[MUTE_LED_GLOW_INTENSITY] = 0.5
+        try:
+            spl = config_file.get(section, MUTE_LED_GLOW_COLOR).split(',')
+            d[MUTE_LED_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                      (int(spl[3]), int(spl[4]), int(spl[5]))]
+        except:
+            d[MUTE_LED_GLOW_COLOR] = None
+        try:
+            d[MUTE_ICON_GLOW] = config_file.getint(section, MUTE_ICON_GLOW)
+        except:
+            d[MUTE_ICON_GLOW] = 0
+        try:
+            d[MUTE_ICON_GLOW_INTENSITY] = config_file.getfloat(section, MUTE_ICON_GLOW_INTENSITY)
+        except:
+            d[MUTE_ICON_GLOW_INTENSITY] = 0.5
+        try:
+            spl = config_file.get(section, MUTE_ICON_GLOW_COLOR).split(',')
+            d[MUTE_ICON_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                       (int(spl[3]), int(spl[4]), int(spl[5]))]
+        except:
+            d[MUTE_ICON_GLOW_COLOR] = None
+
+        # Shuffle indicator
+        try:
+            spl = config_file.get(section, SHUFFLE_POS).split(',')
+            d[SHUFFLE_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[SHUFFLE_POS] = None
+        try:
+            d[SHUFFLE_ICON] = config_file.get(section, SHUFFLE_ICON)
+        except:
+            d[SHUFFLE_ICON] = None
+        try:
+            spl = config_file.get(section, SHUFFLE_LED).split(',')
+            d[SHUFFLE_LED] = (int(spl[0]), int(spl[1]))
+        except:
+            d[SHUFFLE_LED] = None
+        try:
+            d[SHUFFLE_LED_SHAPE] = config_file.get(section, SHUFFLE_LED_SHAPE)
+        except:
+            d[SHUFFLE_LED_SHAPE] = "circle"
+        try:
+            spl = config_file.get(section, SHUFFLE_LED_COLOR).split(',')
+            d[SHUFFLE_LED_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                    (int(spl[3]), int(spl[4]), int(spl[5]))]
+        except:
+            d[SHUFFLE_LED_COLOR] = [(0, 200, 255), (64, 64, 64)]
+        try:
+            d[SHUFFLE_LED_GLOW] = config_file.getint(section, SHUFFLE_LED_GLOW)
+        except:
+            d[SHUFFLE_LED_GLOW] = 0
+        try:
+            d[SHUFFLE_LED_GLOW_INTENSITY] = config_file.getfloat(section, SHUFFLE_LED_GLOW_INTENSITY)
+        except:
+            d[SHUFFLE_LED_GLOW_INTENSITY] = 0.5
+        try:
+            spl = config_file.get(section, SHUFFLE_LED_GLOW_COLOR).split(',')
+            d[SHUFFLE_LED_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                         (int(spl[3]), int(spl[4]), int(spl[5]))]
+        except:
+            d[SHUFFLE_LED_GLOW_COLOR] = None
+        try:
+            d[SHUFFLE_ICON_GLOW] = config_file.getint(section, SHUFFLE_ICON_GLOW)
+        except:
+            d[SHUFFLE_ICON_GLOW] = 0
+        try:
+            d[SHUFFLE_ICON_GLOW_INTENSITY] = config_file.getfloat(section, SHUFFLE_ICON_GLOW_INTENSITY)
+        except:
+            d[SHUFFLE_ICON_GLOW_INTENSITY] = 0.5
+        try:
+            spl = config_file.get(section, SHUFFLE_ICON_GLOW_COLOR).split(',')
+            d[SHUFFLE_ICON_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                          (int(spl[3]), int(spl[4]), int(spl[5]))]
+        except:
+            d[SHUFFLE_ICON_GLOW_COLOR] = None
+
+        # Repeat indicator (3 states: off, all, single)
+        try:
+            spl = config_file.get(section, REPEAT_POS).split(',')
+            d[REPEAT_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[REPEAT_POS] = None
+        try:
+            d[REPEAT_ICON] = config_file.get(section, REPEAT_ICON)
+        except:
+            d[REPEAT_ICON] = None
+        try:
+            spl = config_file.get(section, REPEAT_LED).split(',')
+            d[REPEAT_LED] = (int(spl[0]), int(spl[1]))
+        except:
+            d[REPEAT_LED] = None
+        try:
+            d[REPEAT_LED_SHAPE] = config_file.get(section, REPEAT_LED_SHAPE)
+        except:
+            d[REPEAT_LED_SHAPE] = "circle"
+        try:
+            spl = config_file.get(section, REPEAT_LED_COLOR).split(',')
+            # 9 values: off_r,off_g,off_b,on_r,on_g,on_b,single_r,single_g,single_b
+            d[REPEAT_LED_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                   (int(spl[3]), int(spl[4]), int(spl[5])),
+                                   (int(spl[6]), int(spl[7]), int(spl[8]))]
+        except:
+            d[REPEAT_LED_COLOR] = [(64, 64, 64), (0, 255, 0), (255, 200, 0)]
+        try:
+            d[REPEAT_LED_GLOW] = config_file.getint(section, REPEAT_LED_GLOW)
+        except:
+            d[REPEAT_LED_GLOW] = 0
+        try:
+            d[REPEAT_LED_GLOW_INTENSITY] = config_file.getfloat(section, REPEAT_LED_GLOW_INTENSITY)
+        except:
+            d[REPEAT_LED_GLOW_INTENSITY] = 0.5
+        try:
+            spl = config_file.get(section, REPEAT_LED_GLOW_COLOR).split(',')
+            d[REPEAT_LED_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                        (int(spl[3]), int(spl[4]), int(spl[5])),
+                                        (int(spl[6]), int(spl[7]), int(spl[8]))]
+        except:
+            d[REPEAT_LED_GLOW_COLOR] = None
+        try:
+            d[REPEAT_ICON_GLOW] = config_file.getint(section, REPEAT_ICON_GLOW)
+        except:
+            d[REPEAT_ICON_GLOW] = 0
+        try:
+            d[REPEAT_ICON_GLOW_INTENSITY] = config_file.getfloat(section, REPEAT_ICON_GLOW_INTENSITY)
+        except:
+            d[REPEAT_ICON_GLOW_INTENSITY] = 0.5
+        try:
+            spl = config_file.get(section, REPEAT_ICON_GLOW_COLOR).split(',')
+            d[REPEAT_ICON_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                         (int(spl[3]), int(spl[4]), int(spl[5])),
+                                         (int(spl[6]), int(spl[7]), int(spl[8]))]
+        except:
+            d[REPEAT_ICON_GLOW_COLOR] = None
+
+        # Play/Pause/Stop indicator (3 states: stop, pause, play)
+        try:
+            spl = config_file.get(section, PLAYSTATE_POS).split(',')
+            d[PLAYSTATE_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[PLAYSTATE_POS] = None
+        try:
+            d[PLAYSTATE_ICON] = config_file.get(section, PLAYSTATE_ICON)
+        except:
+            d[PLAYSTATE_ICON] = None
+        try:
+            spl = config_file.get(section, PLAYSTATE_LED).split(',')
+            d[PLAYSTATE_LED] = (int(spl[0]), int(spl[1]))
+        except:
+            d[PLAYSTATE_LED] = None
+        try:
+            d[PLAYSTATE_LED_SHAPE] = config_file.get(section, PLAYSTATE_LED_SHAPE)
+        except:
+            d[PLAYSTATE_LED_SHAPE] = "circle"
+        try:
+            spl = config_file.get(section, PLAYSTATE_LED_COLOR).split(',')
+            # 9 values: stop_r,stop_g,stop_b,pause_r,pause_g,pause_b,play_r,play_g,play_b
+            d[PLAYSTATE_LED_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                      (int(spl[3]), int(spl[4]), int(spl[5])),
+                                      (int(spl[6]), int(spl[7]), int(spl[8]))]
+        except:
+            d[PLAYSTATE_LED_COLOR] = [(64, 64, 64), (255, 200, 0), (0, 255, 0)]
+        try:
+            d[PLAYSTATE_LED_GLOW] = config_file.getint(section, PLAYSTATE_LED_GLOW)
+        except:
+            d[PLAYSTATE_LED_GLOW] = 0
+        try:
+            d[PLAYSTATE_LED_GLOW_INTENSITY] = config_file.getfloat(section, PLAYSTATE_LED_GLOW_INTENSITY)
+        except:
+            d[PLAYSTATE_LED_GLOW_INTENSITY] = 0.5
+        try:
+            spl = config_file.get(section, PLAYSTATE_LED_GLOW_COLOR).split(',')
+            d[PLAYSTATE_LED_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                           (int(spl[3]), int(spl[4]), int(spl[5])),
+                                           (int(spl[6]), int(spl[7]), int(spl[8]))]
+        except:
+            d[PLAYSTATE_LED_GLOW_COLOR] = None
+        try:
+            d[PLAYSTATE_ICON_GLOW] = config_file.getint(section, PLAYSTATE_ICON_GLOW)
+        except:
+            d[PLAYSTATE_ICON_GLOW] = 0
+        try:
+            d[PLAYSTATE_ICON_GLOW_INTENSITY] = config_file.getfloat(section, PLAYSTATE_ICON_GLOW_INTENSITY)
+        except:
+            d[PLAYSTATE_ICON_GLOW_INTENSITY] = 0.5
+        try:
+            spl = config_file.get(section, PLAYSTATE_ICON_GLOW_COLOR).split(',')
+            d[PLAYSTATE_ICON_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                            (int(spl[3]), int(spl[4]), int(spl[5])),
+                                            (int(spl[6]), int(spl[7]), int(spl[8]))]
+        except:
+            d[PLAYSTATE_ICON_GLOW_COLOR] = None
+
+        # Progress bar
+        try:
+            spl = config_file.get(section, PROGRESS_POS).split(',')
+            d[PROGRESS_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[PROGRESS_POS] = None
+        try:
+            spl = config_file.get(section, PROGRESS_DIM).split(',')
+            d[PROGRESS_DIM] = (int(spl[0]), int(spl[1]))
+        except:
+            d[PROGRESS_DIM] = None
+        try:
+            spl = config_file.get(section, PROGRESS_COLOR).split(',')
+            d[PROGRESS_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[PROGRESS_COLOR] = (0, 200, 255)
+        try:
+            spl = config_file.get(section, PROGRESS_BG_COLOR).split(',')
+            d[PROGRESS_BG_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[PROGRESS_BG_COLOR] = (40, 40, 40)
+        try:
+            d[PROGRESS_BORDER] = config_file.getint(section, PROGRESS_BORDER)
+        except:
+            d[PROGRESS_BORDER] = 0
+        try:
+            spl = config_file.get(section, PROGRESS_BORDER_COLOR).split(',')
+            d[PROGRESS_BORDER_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[PROGRESS_BORDER_COLOR] = (100, 100, 100)
 
         try:
             d[PLAY_TXT_CENTER] = config_file.getboolean(section, PLAY_TXT_CENTER)

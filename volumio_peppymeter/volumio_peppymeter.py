@@ -71,6 +71,84 @@ from volumio_configfileparser import (
     METER_BKP, RANDOM_TITLE, SPECTRUM, SPECTRUM_SIZE
 )
 
+# Indicator configuration constants - import with fallback for backward compatibility
+try:
+    from volumio_configfileparser import (
+        VOLUME_POS, VOLUME_STYLE, VOLUME_DIM, VOLUME_COLOR, VOLUME_BG_COLOR, VOLUME_FONT_SIZE,
+        MUTE_POS, MUTE_ICON, MUTE_LED, MUTE_LED_SHAPE, MUTE_LED_COLOR,
+        MUTE_LED_GLOW, MUTE_LED_GLOW_INTENSITY, MUTE_LED_GLOW_COLOR,
+        MUTE_ICON_GLOW, MUTE_ICON_GLOW_INTENSITY, MUTE_ICON_GLOW_COLOR,
+        SHUFFLE_POS, SHUFFLE_ICON, SHUFFLE_LED, SHUFFLE_LED_SHAPE, SHUFFLE_LED_COLOR,
+        SHUFFLE_LED_GLOW, SHUFFLE_LED_GLOW_INTENSITY, SHUFFLE_LED_GLOW_COLOR,
+        SHUFFLE_ICON_GLOW, SHUFFLE_ICON_GLOW_INTENSITY, SHUFFLE_ICON_GLOW_COLOR,
+        REPEAT_POS, REPEAT_ICON, REPEAT_LED, REPEAT_LED_SHAPE, REPEAT_LED_COLOR,
+        REPEAT_LED_GLOW, REPEAT_LED_GLOW_INTENSITY, REPEAT_LED_GLOW_COLOR,
+        REPEAT_ICON_GLOW, REPEAT_ICON_GLOW_INTENSITY, REPEAT_ICON_GLOW_COLOR,
+        PLAYSTATE_POS, PLAYSTATE_ICON, PLAYSTATE_LED, PLAYSTATE_LED_SHAPE, PLAYSTATE_LED_COLOR,
+        PLAYSTATE_LED_GLOW, PLAYSTATE_LED_GLOW_INTENSITY, PLAYSTATE_LED_GLOW_COLOR,
+        PLAYSTATE_ICON_GLOW, PLAYSTATE_ICON_GLOW_INTENSITY, PLAYSTATE_ICON_GLOW_COLOR,
+        PROGRESS_POS, PROGRESS_DIM, PROGRESS_COLOR, PROGRESS_BG_COLOR,
+        PROGRESS_BORDER, PROGRESS_BORDER_COLOR
+    )
+except ImportError:
+    # Fallback if volumio_configfileparser not updated yet
+    VOLUME_POS = "volume.pos"
+    VOLUME_STYLE = "volume.style"
+    VOLUME_DIM = "volume.dim"
+    VOLUME_COLOR = "volume.color"
+    VOLUME_BG_COLOR = "volume.bg.color"
+    VOLUME_FONT_SIZE = "volume.font.size"
+    MUTE_POS = "mute.pos"
+    MUTE_ICON = "mute.icon"
+    MUTE_LED = "mute.led"
+    MUTE_LED_SHAPE = "mute.led.shape"
+    MUTE_LED_COLOR = "mute.led.color"
+    MUTE_LED_GLOW = "mute.led.glow"
+    MUTE_LED_GLOW_INTENSITY = "mute.led.glow.intensity"
+    MUTE_LED_GLOW_COLOR = "mute.led.glow.color"
+    MUTE_ICON_GLOW = "mute.icon.glow"
+    MUTE_ICON_GLOW_INTENSITY = "mute.icon.glow.intensity"
+    MUTE_ICON_GLOW_COLOR = "mute.icon.glow.color"
+    SHUFFLE_POS = "shuffle.pos"
+    SHUFFLE_ICON = "shuffle.icon"
+    SHUFFLE_LED = "shuffle.led"
+    SHUFFLE_LED_SHAPE = "shuffle.led.shape"
+    SHUFFLE_LED_COLOR = "shuffle.led.color"
+    SHUFFLE_LED_GLOW = "shuffle.led.glow"
+    SHUFFLE_LED_GLOW_INTENSITY = "shuffle.led.glow.intensity"
+    SHUFFLE_LED_GLOW_COLOR = "shuffle.led.glow.color"
+    SHUFFLE_ICON_GLOW = "shuffle.icon.glow"
+    SHUFFLE_ICON_GLOW_INTENSITY = "shuffle.icon.glow.intensity"
+    SHUFFLE_ICON_GLOW_COLOR = "shuffle.icon.glow.color"
+    REPEAT_POS = "repeat.pos"
+    REPEAT_ICON = "repeat.icon"
+    REPEAT_LED = "repeat.led"
+    REPEAT_LED_SHAPE = "repeat.led.shape"
+    REPEAT_LED_COLOR = "repeat.led.color"
+    REPEAT_LED_GLOW = "repeat.led.glow"
+    REPEAT_LED_GLOW_INTENSITY = "repeat.led.glow.intensity"
+    REPEAT_LED_GLOW_COLOR = "repeat.led.glow.color"
+    REPEAT_ICON_GLOW = "repeat.icon.glow"
+    REPEAT_ICON_GLOW_INTENSITY = "repeat.icon.glow.intensity"
+    REPEAT_ICON_GLOW_COLOR = "repeat.icon.glow.color"
+    PLAYSTATE_POS = "playstate.pos"
+    PLAYSTATE_ICON = "playstate.icon"
+    PLAYSTATE_LED = "playstate.led"
+    PLAYSTATE_LED_SHAPE = "playstate.led.shape"
+    PLAYSTATE_LED_COLOR = "playstate.led.color"
+    PLAYSTATE_LED_GLOW = "playstate.led.glow"
+    PLAYSTATE_LED_GLOW_INTENSITY = "playstate.led.glow.intensity"
+    PLAYSTATE_LED_GLOW_COLOR = "playstate.led.glow.color"
+    PLAYSTATE_ICON_GLOW = "playstate.icon.glow"
+    PLAYSTATE_ICON_GLOW_INTENSITY = "playstate.icon.glow.intensity"
+    PLAYSTATE_ICON_GLOW_COLOR = "playstate.icon.glow.color"
+    PROGRESS_POS = "progress.pos"
+    PROGRESS_DIM = "progress.dim"
+    PROGRESS_COLOR = "progress.color"
+    PROGRESS_BG_COLOR = "progress.bg.color"
+    PROGRESS_BORDER = "progress.border"
+    PROGRESS_BORDER_COLOR = "progress.border.color"
+
 # Reel configuration constants - import with fallback for backward compatibility
 try:
     from volumio_configfileparser import (
@@ -288,6 +366,13 @@ class MetadataWatcher:
             self.metadata["bitrate"] = str(data.get("bitrate", "") or "")
             self.metadata["service"] = data.get("service", "") or ""
             self.metadata["status"] = data.get("status", "") or ""
+            
+            # Playback control states (for indicators)
+            self.metadata["volume"] = data.get("volume", 0) or 0
+            self.metadata["mute"] = data.get("mute", False) or False
+            self.metadata["random"] = data.get("random", False) or False
+            self.metadata["repeat"] = data.get("repeat", False) or False
+            self.metadata["repeatSingle"] = data.get("repeatSingle", False) or False
             
             # Update time tracking
             import time
@@ -2586,6 +2671,36 @@ def start_display_output(pm, callback, meter_config_volumio):
                 capture_rect("tonearm", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
             log_debug(f"[overlay_init] TonearmRenderer created: {tonearm_file}")
         
+        # Create indicator renderer (for volume, mute, shuffle, repeat, playstate, progress)
+        indicator_renderer = None
+        try:
+            from volumio_indicators import IndicatorRenderer
+            # Check if any indicator is configured
+            has_indicators = (
+                mc_vol.get(VOLUME_POS) or mc_vol.get(MUTE_POS) or
+                mc_vol.get(SHUFFLE_POS) or mc_vol.get(REPEAT_POS) or
+                mc_vol.get(PLAYSTATE_POS) or mc_vol.get(PROGRESS_POS)
+            )
+            if has_indicators:
+                fonts_dict = {
+                    "light": fontL,
+                    "regular": fontR,
+                    "bold": fontB,
+                    "digi": fontDigi
+                }
+                indicator_renderer = IndicatorRenderer(
+                    config=mc_vol,
+                    meter_config=meter_config_volumio,
+                    base_path=cfg.get(BASE_PATH),
+                    meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
+                    fonts=fonts_dict
+                )
+                log_debug(f"[overlay_init] IndicatorRenderer created: has_indicators={indicator_renderer.has_indicators()}")
+        except ImportError as e:
+            log_debug(f"[overlay_init] IndicatorRenderer not available: {e}")
+        except Exception as e:
+            print(f"[overlay_init] Failed to create IndicatorRenderer: {e}")
+        
         # Create scrollers with per-field speeds
         artist_scroller = ScrollingLabel(artist_font, artist_color, artist_pos, artist_box, center=center_flag, speed_px_per_sec=scroll_speed_artist) if artist_pos else None
         title_scroller = ScrollingLabel(title_font, title_color, title_pos, title_box, center=center_flag, speed_px_per_sec=scroll_speed_title) if title_pos else None
@@ -2598,6 +2713,11 @@ def start_display_output(pm, callback, meter_config_volumio):
             title_scroller.capture_backing(screen)
         if album_scroller:
             album_scroller.capture_backing(screen)
+        
+        # Capture backing for indicators (after static assets drawn)
+        if indicator_renderer and indicator_renderer.has_indicators():
+            indicator_renderer.capture_backings(screen)
+            log_debug("[overlay_init] Indicator backings captured")
         
         # Now run meter to show initial needle positions (after backings captured clean)
         pm.meter.run()
@@ -2662,13 +2782,14 @@ def start_display_output(pm, callback, meter_config_volumio):
             "reel_right_renderer": reel_right_renderer,
             "vinyl_renderer": vinyl_renderer,
             "tonearm_renderer": tonearm_renderer,
+            "indicator_renderer": indicator_renderer,
             "fgr_surf": fgr_surf,
             "fgr_pos": (meter_x, meter_y),
             "fgr_regions": fgr_regions,  # OPTIMIZATION: Opaque regions for selective blitting
         }
         
         log_debug("--- Initialization Complete ---", "verbose")
-        log_debug(f"  Renderers: album_art={'YES' if album_renderer else 'NO'}, reel_left={'YES' if reel_left_renderer else 'NO'}, reel_right={'YES' if reel_right_renderer else 'NO'}, vinyl={'YES' if vinyl_renderer else 'NO'}, tonearm={'YES' if tonearm_renderer else 'NO'}", "verbose")
+        log_debug(f"  Renderers: album_art={'YES' if album_renderer else 'NO'}, reel_left={'YES' if reel_left_renderer else 'NO'}, reel_right={'YES' if reel_right_renderer else 'NO'}, vinyl={'YES' if vinyl_renderer else 'NO'}, tonearm={'YES' if tonearm_renderer else 'NO'}, indicators={'YES' if indicator_renderer and indicator_renderer.has_indicators() else 'NO'}", "verbose")
         log_debug(f"  Backings captured: {len(backing_dict)} ({', '.join(backing_dict.keys())})", "verbose")
         log_debug(f"  Foreground: {'YES' if fgr_surf else 'NO'} ({len(fgr_regions) if fgr_regions else 0} regions)", "verbose")
     
@@ -2899,6 +3020,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             # 4. vinyl (turntable disc)
             # 5. album art
             # 6. tonearm
+            # 6.5. indicators (volume, mute, shuffle, repeat, playstate, progress)
             # 7. metadata/text
             # 8. fgr mask (always last)
             # =================================================================
@@ -2990,7 +3112,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                         dirty_rects.append(rect)
                         album_rendered = True
             
-            # STEP 6: Render tonearm (above album art, below metadata)
+            # STEP 6: Render tonearm (above album art, below indicators)
             # Must redraw if any lower element rendered (may have wiped tonearm area)
             if tonearm and tonearm_will_draw:
                 force = not tonearm_will_render  # Force if not naturally rendering
@@ -2998,7 +3120,13 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if rect:
                     dirty_rects.append(rect)
             
-            # STEP 7: Metadata/text (above tonearm, below fgr)
+            # STEP 6.5: Render indicators (above tonearm, below metadata)
+            # Volume, mute, shuffle, repeat, play/pause, progress bar
+            indicator_renderer = ov.get("indicator_renderer")
+            if indicator_renderer and indicator_renderer.has_indicators():
+                indicator_renderer.render(screen, meta, dirty_rects)
+            
+            # STEP 7: Metadata/text (above indicators, below fgr)
             # When tonearm renders, its large backing restore may wipe metadata areas
             # Force scrollers to redraw in that case
             
