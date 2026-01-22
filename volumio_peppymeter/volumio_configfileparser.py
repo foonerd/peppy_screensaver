@@ -84,6 +84,14 @@ VOLUME_DIM = "volume.dim"
 VOLUME_COLOR = "volume.color"
 VOLUME_BG_COLOR = "volume.bg.color"
 VOLUME_FONT_SIZE = "volume.font.size"
+# Volume knob style parameters
+VOLUME_KNOB_IMAGE = "volume.knob.image"
+VOLUME_KNOB_ANGLE_START = "volume.knob.angle.start"
+VOLUME_KNOB_ANGLE_END = "volume.knob.angle.end"
+# Volume arc style parameters
+VOLUME_ARC_WIDTH = "volume.arc.width"
+VOLUME_ARC_ANGLE_START = "volume.arc.angle.start"
+VOLUME_ARC_ANGLE_END = "volume.arc.angle.end"
 
 # Mute indicator
 MUTE_POS = "mute.pos"
@@ -495,6 +503,32 @@ class Volumio_ConfigFileParser(object):
             d[VOLUME_FONT_SIZE] = config_file.getint(section, VOLUME_FONT_SIZE)
         except:
             d[VOLUME_FONT_SIZE] = 24
+        # Volume knob parameters
+        try:
+            d[VOLUME_KNOB_IMAGE] = config_file.get(section, VOLUME_KNOB_IMAGE)
+        except:
+            d[VOLUME_KNOB_IMAGE] = None
+        try:
+            d[VOLUME_KNOB_ANGLE_START] = config_file.getfloat(section, VOLUME_KNOB_ANGLE_START)
+        except:
+            d[VOLUME_KNOB_ANGLE_START] = 225.0
+        try:
+            d[VOLUME_KNOB_ANGLE_END] = config_file.getfloat(section, VOLUME_KNOB_ANGLE_END)
+        except:
+            d[VOLUME_KNOB_ANGLE_END] = -45.0
+        # Volume arc parameters
+        try:
+            d[VOLUME_ARC_WIDTH] = config_file.getint(section, VOLUME_ARC_WIDTH)
+        except:
+            d[VOLUME_ARC_WIDTH] = 6
+        try:
+            d[VOLUME_ARC_ANGLE_START] = config_file.getfloat(section, VOLUME_ARC_ANGLE_START)
+        except:
+            d[VOLUME_ARC_ANGLE_START] = 225.0
+        try:
+            d[VOLUME_ARC_ANGLE_END] = config_file.getfloat(section, VOLUME_ARC_ANGLE_END)
+        except:
+            d[VOLUME_ARC_ANGLE_END] = -45.0
 
         # Mute indicator
         try:
@@ -572,10 +606,20 @@ class Volumio_ConfigFileParser(object):
             d[SHUFFLE_LED_SHAPE] = "circle"
         try:
             spl = config_file.get(section, SHUFFLE_LED_COLOR).split(',')
-            d[SHUFFLE_LED_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
-                                    (int(spl[3]), int(spl[4]), int(spl[5]))]
+            # Support 3 states (9 values): off, shuffle, infinity
+            # Or backwards compatible 2 states (6 values): shuffle, off
+            if len(spl) >= 9:
+                d[SHUFFLE_LED_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                        (int(spl[3]), int(spl[4]), int(spl[5])),
+                                        (int(spl[6]), int(spl[7]), int(spl[8]))]
+            else:
+                # Backwards compatible: 6 values = [on, off] -> [off, shuffle, shuffle]
+                d[SHUFFLE_LED_COLOR] = [(int(spl[3]), int(spl[4]), int(spl[5])),
+                                        (int(spl[0]), int(spl[1]), int(spl[2])),
+                                        (int(spl[0]), int(spl[1]), int(spl[2]))]
         except:
-            d[SHUFFLE_LED_COLOR] = [(0, 200, 255), (64, 64, 64)]
+            # Default: off=gray, shuffle=cyan, infinity=magenta
+            d[SHUFFLE_LED_COLOR] = [(64, 64, 64), (0, 200, 255), (200, 0, 200)]
         try:
             d[SHUFFLE_LED_GLOW] = config_file.getint(section, SHUFFLE_LED_GLOW)
         except:
@@ -586,8 +630,15 @@ class Volumio_ConfigFileParser(object):
             d[SHUFFLE_LED_GLOW_INTENSITY] = 0.5
         try:
             spl = config_file.get(section, SHUFFLE_LED_GLOW_COLOR).split(',')
-            d[SHUFFLE_LED_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
-                                         (int(spl[3]), int(spl[4]), int(spl[5]))]
+            # Support 3 states or 2 states
+            if len(spl) >= 9:
+                d[SHUFFLE_LED_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                             (int(spl[3]), int(spl[4]), int(spl[5])),
+                                             (int(spl[6]), int(spl[7]), int(spl[8]))]
+            else:
+                d[SHUFFLE_LED_GLOW_COLOR] = [(int(spl[3]), int(spl[4]), int(spl[5])),
+                                             (int(spl[0]), int(spl[1]), int(spl[2])),
+                                             (int(spl[0]), int(spl[1]), int(spl[2]))]
         except:
             d[SHUFFLE_LED_GLOW_COLOR] = None
         try:
@@ -600,8 +651,15 @@ class Volumio_ConfigFileParser(object):
             d[SHUFFLE_ICON_GLOW_INTENSITY] = 0.5
         try:
             spl = config_file.get(section, SHUFFLE_ICON_GLOW_COLOR).split(',')
-            d[SHUFFLE_ICON_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
-                                          (int(spl[3]), int(spl[4]), int(spl[5]))]
+            # Support 3 states or 2 states
+            if len(spl) >= 9:
+                d[SHUFFLE_ICON_GLOW_COLOR] = [(int(spl[0]), int(spl[1]), int(spl[2])),
+                                              (int(spl[3]), int(spl[4]), int(spl[5])),
+                                              (int(spl[6]), int(spl[7]), int(spl[8]))]
+            else:
+                d[SHUFFLE_ICON_GLOW_COLOR] = [(int(spl[3]), int(spl[4]), int(spl[5])),
+                                              (int(spl[0]), int(spl[1]), int(spl[2])),
+                                              (int(spl[0]), int(spl[1]), int(spl[2]))]
         except:
             d[SHUFFLE_ICON_GLOW_COLOR] = None
 

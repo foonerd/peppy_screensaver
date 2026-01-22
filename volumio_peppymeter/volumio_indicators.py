@@ -502,7 +502,9 @@ class VolumeIndicator:
     STYLE_ARC = "arc"
     
     def __init__(self, pos, dim, style, color, bg_color=None,
-                 font=None, font_size=24, base_path=None, meter_folder=None):
+                 font=None, font_size=24, base_path=None, meter_folder=None,
+                 knob_image=None, knob_angle_start=225.0, knob_angle_end=-45.0,
+                 arc_width=6, arc_angle_start=225.0, arc_angle_end=-45.0):
         """Initialize volume indicator.
         
         :param pos: (x, y) screen position
@@ -514,6 +516,12 @@ class VolumeIndicator:
         :param font_size: font size if font not provided
         :param base_path: base path for knob image
         :param meter_folder: meter folder for knob image
+        :param knob_image: filename for knob image (default: volume_knob.png)
+        :param knob_angle_start: start angle in degrees (default: 225)
+        :param knob_angle_end: end angle in degrees (default: -45)
+        :param arc_width: arc stroke width in pixels (default: 6)
+        :param arc_angle_start: arc start angle in degrees (default: 225)
+        :param arc_angle_end: arc end angle in degrees (default: -45)
         """
         self.pos = pos
         self.dim = dim if dim else (100, 20)
@@ -523,6 +531,18 @@ class VolumeIndicator:
         self.font_size = font_size
         self.base_path = base_path
         self.meter_folder = meter_folder
+        
+        # Knob parameters
+        self.knob_image_filename = knob_image if knob_image else "volume_knob.png"
+        self.knob_angle_start = float(knob_angle_start)
+        self.knob_angle_end = float(knob_angle_end)
+        self.knob_angle_sweep = self.knob_angle_start - self.knob_angle_end
+        
+        # Arc parameters
+        self.arc_width = max(1, int(arc_width))
+        self.arc_angle_start = float(arc_angle_start)
+        self.arc_angle_end = float(arc_angle_end)
+        self.arc_angle_sweep = self.arc_angle_start - self.arc_angle_end
         
         # Font for numeric display
         if font:
@@ -552,16 +572,24 @@ class VolumeIndicator:
         if not self.base_path or not self.meter_folder:
             return
         
-        knob_path = os.path.join(self.base_path, self.meter_folder, "volume_knob.png")
+        knob_path = os.path.join(self.base_path, self.meter_folder, self.knob_image_filename)
         try:
             if os.path.exists(knob_path):
                 self._knob_image = pg.image.load(knob_path).convert_alpha()
-                # Pre-compute rotated frames (0-100 maps to 0-270 degrees)
+                # Pre-compute rotated frames (0-100 maps to angle sweep)
                 self._knob_frames = []
+                # Calculate the offset to center the knob rotation
+                # knob_angle_start is where volume=0, knob_angle_end is where volume=100
                 for v in range(101):
-                    angle = (v / 100.0) * 270.0
-                    rotated = pg.transform.rotate(self._knob_image, -angle + 135)
+                    # Map 0-100 to angle_start to angle_end
+                    angle = self.knob_angle_start - (v / 100.0) * self.knob_angle_sweep
+                    # pygame rotation is CCW positive, 0=right
+                    # Adjust so pointer points correctly
+                    rotated = pg.transform.rotate(self._knob_image, angle)
                     self._knob_frames.append(rotated)
+                print(f"[VolumeIndicator] Knob loaded: {self.knob_image_filename}, {len(self._knob_frames)} frames, sweep={self.knob_angle_sweep}")
+            else:
+                print(f"[VolumeIndicator] Knob image not found: {knob_path}")
         except Exception as e:
             print(f"[VolumeIndicator] Failed to load knob image: {e}")
     
@@ -669,18 +697,23 @@ class VolumeIndicator:
         x, y = self.pos
         w, h = self.dim
         
-        # Draw background arc
+        # Draw background arc (full sweep)
         rect = pg.Rect(x, y, w, h)
         if self.bg_color:
             pg.draw.arc(screen, self.bg_color, rect, 
-                       math.radians(225), math.radians(-45), 3)
+                       math.radians(self.arc_angle_end), 
+                       math.radians(self.arc_angle_start), 
+                       self.arc_width)
         
         # Draw foreground arc based on volume
-        # 0% = 225 degrees, 100% = -45 degrees (270 degree sweep)
+        # volume 0% = arc_angle_start, volume 100% = arc_angle_end
         if volume > 0:
-            end_angle = 225 - (volume / 100.0) * 270
+            # Calculate end angle for current volume
+            current_angle = self.arc_angle_start - (volume / 100.0) * self.arc_angle_sweep
             pg.draw.arc(screen, self.color, rect,
-                       math.radians(end_angle), math.radians(225), 3)
+                       math.radians(current_angle), 
+                       math.radians(self.arc_angle_start), 
+                       self.arc_width)
         
         return rect
     
@@ -827,6 +860,7 @@ class IndicatorRenderer:
         self._prev_volume = None
         self._prev_mute = None
         self._prev_shuffle = None
+        self._prev_infinity = None
         self._prev_repeat = None
         self._prev_repeat_single = None
         self._prev_status = None
@@ -852,6 +886,16 @@ class IndicatorRenderer:
         bg_color = self.config.get("volume.bg.color")
         font_size = self.config.get("volume.font.size", 24)
         
+        # Knob parameters
+        knob_image = self.config.get("volume.knob.image")
+        knob_angle_start = self.config.get("volume.knob.angle.start", 225.0)
+        knob_angle_end = self.config.get("volume.knob.angle.end", -45.0)
+        
+        # Arc parameters
+        arc_width = self.config.get("volume.arc.width", 6)
+        arc_angle_start = self.config.get("volume.arc.angle.start", 225.0)
+        arc_angle_end = self.config.get("volume.arc.angle.end", -45.0)
+        
         # Get font from fonts dict if available
         font = self.fonts.get("regular") if self.fonts else None
         
@@ -864,7 +908,13 @@ class IndicatorRenderer:
             font=font,
             font_size=font_size,
             base_path=self.base_path,
-            meter_folder=self.meter_folder
+            meter_folder=self.meter_folder,
+            knob_image=knob_image,
+            knob_angle_start=knob_angle_start,
+            knob_angle_end=knob_angle_end,
+            arc_width=arc_width,
+            arc_angle_start=arc_angle_start,
+            arc_angle_end=arc_angle_end
         )
     
     def _init_mute(self):
@@ -1081,16 +1131,24 @@ class IndicatorRenderer:
                     dirty_rects.append(rect)
                 self._prev_mute = mute
         
-        # Shuffle (2 states: off=0, on=1)
+        # Shuffle (3 states: off=0, shuffle=1, infinity=2)
         if self._shuffle:
             shuffle = metadata.get("random", False)
-            if shuffle != self._prev_shuffle:
+            infinity = metadata.get("infinity", False)
+            if shuffle != self._prev_shuffle or infinity != self._prev_infinity:
                 self._shuffle.restore_backing(screen)
-                state_idx = 1 if shuffle else 0
+                # State logic: infinity takes priority over shuffle
+                if infinity:
+                    state_idx = 2
+                elif shuffle:
+                    state_idx = 1
+                else:
+                    state_idx = 0
                 rect = self._shuffle.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
                 self._prev_shuffle = shuffle
+                self._prev_infinity = infinity
         
         # Repeat (3 states: off=0, all=1, single=2)
         if self._repeat:

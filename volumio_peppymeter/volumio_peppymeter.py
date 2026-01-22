@@ -344,6 +344,9 @@ class MetadataWatcher:
         self.time_remain_sec = -1
         self.time_last_update = 0
         self.time_service = ""
+        
+        # Initialize infinity state (separate from random/shuffle)
+        self.metadata["infinity"] = False
     
     def start(self):
         self.thread = Thread(target=self._run, daemon=True)
@@ -405,10 +408,19 @@ class MetadataWatcher:
                     self.title_callback()
                 self.first_run = False
         
+        @self.sio.on('pushInfinityPlayback')
+        def on_push_infinity(data):
+            """Handle infinity playback state updates."""
+            if not self.run_flag:
+                return
+            if data and isinstance(data, dict):
+                self.metadata["infinity"] = data.get("enabled", False)
+        
         @self.sio.on('connect')
         def on_connect():
             if self.run_flag:
                 self.sio.emit('getState')
+                self.sio.emit('getInfinityPlayback')
         
         while self.run_flag:
             try:
