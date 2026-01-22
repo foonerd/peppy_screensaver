@@ -64,6 +64,7 @@ After installation, enable and configure the plugin:
 - Album art display with optional LP rotation effect
 - Vinyl turntable animation (spinning disc under album art)
 - Animated tonearm for turntable skins (tracks playback progress)
+- Playback state indicators (volume, mute, shuffle, repeat, play/pause, progress)
 - Cassette deck skins with rotating reel animation
 - Track info overlay with scrolling text
 - Random meter rotation
@@ -382,6 +383,20 @@ tonearm.lift.duration = 1.0
 - Pivot point can be anywhere in the image (for counterweight designs)
 - For S-curved arms, set pivot.image to the bearing housing location
 - Arm length from pivot determines sweep radius
+
+### Playback Indicators
+
+Skins can display playback control states including volume level, mute,
+shuffle, repeat mode, play/pause status, and track progress bar.
+
+Indicators support two display modes:
+- **LED mode**: Colored shapes (circle/rectangle) with optional glow effects
+- **Icon mode**: PNG images per state with optional glow frame/edge
+
+Volume display supports multiple styles: numeric text, horizontal bar,
+image-based fader/slider, rotary knob, or arc gauge.
+
+See the wiki for detailed configuration reference and examples.
 
 ## Troubleshooting
 
