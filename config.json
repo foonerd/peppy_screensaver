@@ -23,6 +23,10 @@
     "value":"60",
     "type":"number"
   },
+  "persist_duration": {
+    "value":"30",
+    "type":"number"
+  },
   "randomSelection": {
     "value":"",
     "type":"string"

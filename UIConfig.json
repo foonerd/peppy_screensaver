@@ -238,6 +238,56 @@
                             ]
                 },
                 {
+                "id": "playback_conf",
+                "element": "section",
+                "label": "TRANSLATE.PEPPY_SCREENSAVER.PLAYBACK_CONF",
+                "description": "TRANSLATE.PEPPY_SCREENSAVER.PLAYBACK_DESC",
+                "icon": "fa-play-circle",
+                "hidden": false,
+                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"savePlaybackConf"},
+                "saveButton": {
+                              "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
+                              "data": [
+                                      "persist_duration"
+                                      ]
+                              },
+                "content": [
+                            {
+                             "id": "persist_duration",
+                             "element": "select",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DURATION_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DURATION",
+                             "value": {"value": "30", "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_30" },
+                               "options": [
+                                 {
+                                    "value": "0",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISABLED"
+                                 },
+                                 {
+                                    "value": "15",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_15"
+                                 },
+                                 {
+                                    "value": "30",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_30"
+                                 },
+                                 {
+                                    "value": "60",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_60"
+                                 },
+                                 {
+                                    "value": "120",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_120"
+                                 },
+                                 {
+                                    "value": "300",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_300"
+                                 }
+                               ]
+                            }
+                           ]
+                },
+                {
                 "id": "VUmeter_conf",
                 "element": "section",
                 "label": "TRANSLATE.PEPPY_SCREENSAVER.VUMETER_CONF",

@@ -84,6 +84,7 @@ peppyScreensaver.prototype.onStart = function() {
     var defer=libQ.defer();
     var lastStateIsPlaying = false;
     self.Timeout = null;
+    self.persistTimer = null;
 
     // load language strings here again, otherwise needs restart after installation
     self.commandRouter.loadI18nStrings();
@@ -206,6 +207,9 @@ peppyScreensaver.prototype.onStart = function() {
         var Airplay_ON = fs.existsSync(AIRtmpl) && self.getPluginStatus ('music_service', 'airplay_emulation') === 'STARTED' && self.config.get('useAirplay') && state.service === 'airplay_emulation';
         var Other_ON = state.service !== 'spop' && state.service !== 'airplay_emulation';
         
+        // Get persist duration from config (0 = disabled, >0 = seconds to wait)
+        var persistDuration = parseInt(self.config.get('persist_duration'), 10) || 0;
+        
         // Detect if this is a transitional state (track change, seeking, etc.)
         // volatile=true indicates Volumio is in transition between states
         var isVolatile = state.volatile === true;
@@ -213,48 +217,77 @@ peppyScreensaver.prototype.onStart = function() {
         // Detect track change within same service (next/previous)
         var isTrackChange = (state.service === lastService && state.uri && lastUri && state.uri !== lastUri);
         
-        if (state.status === 'play' && !lastStateIsPlaying) {
-          if (DSP_ON || Spotify_ON || Airplay_ON || Other_ON) {
-            lastStateIsPlaying = true;
-            var ScreenTimeout = (parseInt(self.config.get('timeout'),10)) * 1000;
-          
-            if (ScreenTimeout > 0){ // for 0 do nothing
-                self.Timeout = setInterval(function () {
-                  if (!fs.existsSync(runFlag)){
-                    // Enable mpd_peppyalsa output before starting meter - only for DSD mode or x64
-                    // Modular ALSA uses inline meter and output 1 must stay disabled
-                    var alsaConf = parseInt(self.config.get('alsaSelection'),10);
-                    var arch = '';
-                    try { arch = execSync('cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'').toString().trim(); } catch(e) {}
-                    if (alsaConf == 1 || arch === 'x64') {
-                        exec('mpc enable 1 2>/dev/null', function(err) {});
-                    }
-                    exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {        
-                    if (error !== null) {
-                        self.logger.error(id + 'Error start PeppyMeter: ' + error);
-                    } else {
-                        self.logger.info(id + 'Start PeppyMeter');
-                    }    
-                  });
-                  }        
-                }, ScreenTimeout);
+        if (state.status === 'play') {
+            // Clear any pending persist timer - playback resumed
+            if (self.persistTimer) {
+                clearTimeout(self.persistTimer);
+                self.persistTimer = null;
+                self.logger.info('peppy_screensaver: Persist timer cancelled - playback resumed');
             }
-          }
+            
+            if (!lastStateIsPlaying) {
+                if (DSP_ON || Spotify_ON || Airplay_ON || Other_ON) {
+                    lastStateIsPlaying = true;
+                    var ScreenTimeout = (parseInt(self.config.get('timeout'),10)) * 1000;
+                  
+                    if (ScreenTimeout > 0){ // for 0 do nothing
+                        self.Timeout = setInterval(function () {
+                          if (!fs.existsSync(runFlag)){
+                            // Enable mpd_peppyalsa output before starting meter - only for DSD mode or x64
+                            // Modular ALSA uses inline meter and output 1 must stay disabled
+                            var alsaConf = parseInt(self.config.get('alsaSelection'),10);
+                            var arch = '';
+                            try { arch = execSync('cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'').toString().trim(); } catch(e) {}
+                            if (alsaConf == 1 || arch === 'x64') {
+                                exec('mpc enable 1 2>/dev/null', function(err) {});
+                            }
+                            exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {        
+                            if (error !== null) {
+                                self.logger.error(id + 'Error start PeppyMeter: ' + error);
+                            } else {
+                                self.logger.info(id + 'Start PeppyMeter');
+                            }    
+                          });
+                          }        
+                        }, ScreenTimeout);
+                    }
+                }
+            }
         } else if (lastStateIsPlaying) {
-            // Only stop on genuine pause/stop, not during track transitions
-            // Ignore volatile states and brief stop during track change
-            if (!isTrackChange) {
-                if (state.status === 'pause') {
-                    // Always honor pause, regardless of volatile
-                    if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+            // Pause or stop detected
+            // Only act on genuine pause/stop, not during volatile track transitions
+            if (state.status === 'pause' || (state.status === 'stop' && !isVolatile)) {
+                
+                // Clear screensaver start timer
+                if (self.Timeout) {
                     clearInterval(self.Timeout);
                     self.Timeout = null;
-                    lastStateIsPlaying = false;
-                } else if (state.status === 'stop' && !isVolatile) {
-                    // Only honor stop if not volatile (avoids track transition false stops)
-                    if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
-                    clearInterval(self.Timeout);
-                    self.Timeout = null;
+                }
+                
+                if (persistDuration > 0 && fs.existsSync(runFlag)) {
+                    // Persist mode enabled - start countdown timer
+                    // Clear any existing persist timer first (reset on repeated pause/stop)
+                    if (self.persistTimer) {
+                        clearTimeout(self.persistTimer);
+                    }
+                    
+                    self.logger.info('peppy_screensaver: Starting persist timer - ' + persistDuration + 's');
+                    
+                    self.persistTimer = setTimeout(function() {
+                        self.persistTimer = null;
+                        // Timer expired - stop PeppyMeter
+                        if (fs.existsSync(runFlag)) {
+                            fs.removeSync(runFlag);
+                            self.logger.info('peppy_screensaver: Persist timer expired - stopping PeppyMeter');
+                        }
+                        lastStateIsPlaying = false;
+                    }, persistDuration * 1000);
+                    
+                } else {
+                    // Persist disabled or PeppyMeter not running - immediate stop
+                    if (fs.existsSync(runFlag)) {
+                        fs.removeSync(runFlag);
+                    }
                     lastStateIsPlaying = false;
                 }
             }
@@ -303,6 +336,12 @@ peppyScreensaver.prototype.onStop = function() {
         if (self.Timeout) {
             clearInterval(self.Timeout);
             self.Timeout = null;
+        }
+        
+        // clear persist timer
+        if (self.persistTimer) {
+            clearTimeout(self.persistTimer);
+            self.persistTimer = null;
         }
         
         // remove old flag
@@ -506,7 +545,20 @@ peppyScreensaver.prototype.getUIConfig = function() {
             uiconf.sections[0].content[15].value.value = self.config.get('displayOutput');
             uiconf.sections[0].content[15].value.label = 'Display=' + self.config.get('displayOutput');
              
-            // section 1 ------------
+            // section 1 - Playback Behavior -----------------------------
+            var persistVal = self.config.get('persist_duration') || '30';
+            var persistLabels = {
+                '0': 'PEPPY_SCREENSAVER.PERSIST_DISABLED',
+                '15': 'PEPPY_SCREENSAVER.PERSIST_15',
+                '30': 'PEPPY_SCREENSAVER.PERSIST_30',
+                '60': 'PEPPY_SCREENSAVER.PERSIST_60',
+                '120': 'PEPPY_SCREENSAVER.PERSIST_120',
+                '300': 'PEPPY_SCREENSAVER.PERSIST_300'
+            };
+            uiconf.sections[1].content[0].value.value = persistVal;
+            uiconf.sections[1].content[0].value.label = self.commandRouter.getI18nString(persistLabels[persistVal] || 'PEPPY_SCREENSAVER.PERSIST_30');
+
+            // section 2 - VU-Meter settings -----------------------------
             availMeters = '';
            
             if (fs.existsSync(meters_file)){
@@ -514,16 +566,16 @@ peppyScreensaver.prototype.getUIConfig = function() {
 
                 // current meter
                 if ((peppy_config.current.meter).includes(',')) {
-                    uiconf.sections[1].content[0].value.value = 'list';
+                    uiconf.sections[2].content[0].value.value = 'list';
                 } else {
-                    uiconf.sections[1].content[0].value.value = peppy_config.current.meter;
+                    uiconf.sections[2].content[0].value.value = peppy_config.current.meter;
                 }
-                uiconf.sections[1].content[0].value.label = (uiconf.sections[1].content[0].value.value).replace(upperc, c => c.toUpperCase());
+                uiconf.sections[2].content[0].value.label = (uiconf.sections[2].content[0].value.value).replace(upperc, c => c.toUpperCase());
 
                 // read all sections from active meters.txt and fill selection list
                 for (var section in metersconfig) {
                     availMeters += section + ', ';
-                    self.configManager.pushUIConfigParam(uiconf, 'sections[1].content[0].options', {
+                    self.configManager.pushUIConfigParam(uiconf, 'sections[2].content[0].options', {
                         value: section,
                         label: section.replace(upperc, c => c.toUpperCase())
                     });
@@ -532,54 +584,54 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 // list selection
                 availMeters = availMeters.substring(0, availMeters.length -2);
                 if (self.config.get('randomSelection') == '') {
-                    uiconf.sections[1].content[1].value = availMeters;
+                    uiconf.sections[2].content[1].value = availMeters;
                 } else {
-                    uiconf.sections[1].content[1].value = self.config.get('randomSelection');
+                    uiconf.sections[2].content[1].value = self.config.get('randomSelection');
                 }
-                uiconf.sections[1].content[1].doc = self.commandRouter.getI18nString('PEPPY_SCREENSAVER.RANDOMSELECTION_DOC') + '<b>' + availMeters + '</b>';
+                uiconf.sections[2].content[1].doc = self.commandRouter.getI18nString('PEPPY_SCREENSAVER.RANDOMSELECTION_DOC') + '<b>' + availMeters + '</b>';
 
                 // random mode (visible only for random and list)
-                if (uiconf.sections[1].content[0].value.value == 'random' || uiconf.sections[1].content[0].value.value == 'list') {
-                    uiconf.sections[1].content[2].hidden = false;
+                if (uiconf.sections[2].content[0].value.value == 'random' || uiconf.sections[2].content[0].value.value == 'list') {
+                    uiconf.sections[2].content[2].hidden = false;
                 }
                 var random_change_title = (peppy_config.current['random.change.title']).toLowerCase() == 'true' ? true : false;
                 if (random_change_title) {
-                    uiconf.sections[1].content[2].value.value = 'titlechange';
-                    uiconf.sections[1].content[2].value.label = 'On Title Change';
+                    uiconf.sections[2].content[2].value.value = 'titlechange';
+                    uiconf.sections[2].content[2].value.label = 'On Title Change';
                 } else {
-                    uiconf.sections[1].content[2].value.value = 'interval';
-                    uiconf.sections[1].content[2].value.label = 'Interval';
+                    uiconf.sections[2].content[2].value.value = 'interval';
+                    uiconf.sections[2].content[2].value.label = 'Interval';
                 }    
                 
                 // random intervall
-                uiconf.sections[1].content[3].value = parseInt(peppy_config.current['random.meter.interval'], 10);
-                minmax[5] = [uiconf.sections[1].content[3].attributes[2].min,
-                    uiconf.sections[1].content[3].attributes[3].max,
-                    uiconf.sections[1].content[3].attributes[0].placeholder];
+                uiconf.sections[2].content[3].value = parseInt(peppy_config.current['random.meter.interval'], 10);
+                minmax[5] = [uiconf.sections[2].content[3].attributes[2].min,
+                    uiconf.sections[2].content[3].attributes[3].max,
+                    uiconf.sections[2].content[3].attributes[0].placeholder];
 
             }
             
             // section 2 - Performance settings -----------------------------
             // frame rate
             var frameRate = parseInt(peppy_config.current['frame.rate'], 10) || 30;
-            uiconf.sections[2].content[0].value = frameRate;
-            minmax[6] = [uiconf.sections[2].content[0].attributes[2].min,
-                uiconf.sections[2].content[0].attributes[3].max,
-                uiconf.sections[2].content[0].attributes[0].placeholder];
+            uiconf.sections[3].content[0].value = frameRate;
+            minmax[6] = [uiconf.sections[3].content[0].attributes[2].min,
+                uiconf.sections[3].content[0].attributes[3].max,
+                uiconf.sections[3].content[0].attributes[0].placeholder];
             
             // update interval (from peppy config.txt)
             var updateInterval = parseInt(peppy_config.current['update.interval'], 10) || 2;
-            uiconf.sections[2].content[1].value = updateInterval;
-            minmax[7] = [uiconf.sections[2].content[1].attributes[2].min,
-                uiconf.sections[2].content[1].attributes[3].max,
-                uiconf.sections[2].content[1].attributes[0].placeholder];
+            uiconf.sections[3].content[1].value = updateInterval;
+            minmax[7] = [uiconf.sections[3].content[1].attributes[2].min,
+                uiconf.sections[3].content[1].attributes[3].max,
+                uiconf.sections[3].content[1].attributes[0].placeholder];
             
             // debug level
             var debugLevel = peppy_config.current['debug.level'] || 'off';
-            var debugOptions = uiconf.sections[2].content[2].options;
+            var debugOptions = uiconf.sections[3].content[2].options;
             for (var i = 0; i < debugOptions.length; i++) {
                 if (debugOptions[i].value === debugLevel) {
-                    uiconf.sections[2].content[2].value = debugOptions[i];
+                    uiconf.sections[3].content[2].value = debugOptions[i];
                     break;
                 }
             }
@@ -587,50 +639,50 @@ peppyScreensaver.prototype.getUIConfig = function() {
             // section 3 - Scrolling settings -----------------------------
             // scrolling mode
             var scrollingMode = peppy_config.current['scrolling.mode'] || 'skin';
-            var scrollingOptions = uiconf.sections[3].content[0].options;
+            var scrollingOptions = uiconf.sections[4].content[0].options;
             for (var i = 0; i < scrollingOptions.length; i++) {
                 if (scrollingOptions[i].value === scrollingMode) {
-                    uiconf.sections[3].content[0].value = scrollingOptions[i];
+                    uiconf.sections[4].content[0].value = scrollingOptions[i];
                     break;
                 }
             }
             
             // scrolling speed artist
             var scrollSpeedArtist = parseInt(peppy_config.current['scrolling.speed.artist'], 10) || 40;
-            uiconf.sections[3].content[1].value = scrollSpeedArtist;
+            uiconf.sections[4].content[1].value = scrollSpeedArtist;
             
             // scrolling speed title
             var scrollSpeedTitle = parseInt(peppy_config.current['scrolling.speed.title'], 10) || 40;
-            uiconf.sections[3].content[2].value = scrollSpeedTitle;
+            uiconf.sections[4].content[2].value = scrollSpeedTitle;
             
             // scrolling speed album
             var scrollSpeedAlbum = parseInt(peppy_config.current['scrolling.speed.album'], 10) || 40;
-            uiconf.sections[3].content[3].value = scrollSpeedAlbum;
+            uiconf.sections[4].content[3].value = scrollSpeedAlbum;
             
             // section 4 - Animation settings -----------------------------
             // transition type
             var transitionType = peppy_config.current['transition.type'] || 'fade';
-            var transitionOptions = uiconf.sections[4].content[0].options;
+            var transitionOptions = uiconf.sections[5].content[0].options;
             for (var i = 0; i < transitionOptions.length; i++) {
                 if (transitionOptions[i].value === transitionType) {
-                    uiconf.sections[4].content[0].value = transitionOptions[i];
+                    uiconf.sections[5].content[0].value = transitionOptions[i];
                     break;
                 }
             }
             
             // transition duration
             var transitionDuration = parseFloat(peppy_config.current['transition.duration']) || 0.5;
-            uiconf.sections[4].content[1].value = transitionDuration;
-            minmax[8] = [uiconf.sections[4].content[1].attributes[2].min,
-                uiconf.sections[4].content[1].attributes[3].max,
-                uiconf.sections[4].content[1].attributes[0].placeholder];
+            uiconf.sections[5].content[1].value = transitionDuration;
+            minmax[8] = [uiconf.sections[5].content[1].attributes[2].min,
+                uiconf.sections[5].content[1].attributes[3].max,
+                uiconf.sections[5].content[1].attributes[0].placeholder];
             
             // transition color
             var transitionColor = peppy_config.current['transition.color'] || 'black';
-            var colorOptions = uiconf.sections[4].content[2].options;
+            var colorOptions = uiconf.sections[5].content[2].options;
             for (var i = 0; i < colorOptions.length; i++) {
                 if (colorOptions[i].value === transitionColor) {
-                    uiconf.sections[4].content[2].value = colorOptions[i];
+                    uiconf.sections[5].content[2].value = colorOptions[i];
                     break;
                 }
             }
@@ -638,56 +690,56 @@ peppyScreensaver.prototype.getUIConfig = function() {
             // transition opacity
             var transitionOpacity = parseInt(peppy_config.current['transition.opacity'], 10);
             if (isNaN(transitionOpacity)) transitionOpacity = 100;
-            uiconf.sections[4].content[3].value = transitionOpacity;
-            minmax[9] = [uiconf.sections[4].content[3].attributes[2].min,
-                uiconf.sections[4].content[3].attributes[3].max,
-                uiconf.sections[4].content[3].attributes[0].placeholder];
+            uiconf.sections[5].content[3].value = transitionOpacity;
+            minmax[9] = [uiconf.sections[5].content[3].attributes[2].min,
+                uiconf.sections[5].content[3].attributes[3].max,
+                uiconf.sections[5].content[3].attributes[0].placeholder];
             
             // section 5 - Rotation settings -----------------------------
             // rotation quality
             var rotationQuality = peppy_config.current['rotation.quality'] || 'medium';
-            var qualityOptions = uiconf.sections[5].content[0].options;
+            var qualityOptions = uiconf.sections[6].content[0].options;
             for (var i = 0; i < qualityOptions.length; i++) {
                 if (qualityOptions[i].value === rotationQuality) {
-                    uiconf.sections[5].content[0].value = qualityOptions[i];
+                    uiconf.sections[6].content[0].value = qualityOptions[i];
                     break;
                 }
             }
             
             // rotation FPS (custom)
             var rotationFPS = parseInt(peppy_config.current['rotation.fps'], 10) || 8;
-            uiconf.sections[5].content[1].value = rotationFPS;
-            minmax[10] = [uiconf.sections[5].content[1].attributes[2].min,
-                uiconf.sections[5].content[1].attributes[3].max,
-                uiconf.sections[5].content[1].attributes[0].placeholder];
+            uiconf.sections[6].content[1].value = rotationFPS;
+            minmax[10] = [uiconf.sections[6].content[1].attributes[2].min,
+                uiconf.sections[6].content[1].attributes[3].max,
+                uiconf.sections[6].content[1].attributes[0].placeholder];
             
             // rotation speed (vinyl multiplier)
             var rotationSpeed = parseFloat(peppy_config.current['rotation.speed']) || 1.0;
-            uiconf.sections[5].content[2].value = rotationSpeed;
-            minmax[11] = [uiconf.sections[5].content[2].attributes[2].min,
-                uiconf.sections[5].content[2].attributes[3].max,
-                uiconf.sections[5].content[2].attributes[0].placeholder];
+            uiconf.sections[6].content[2].value = rotationSpeed;
+            minmax[11] = [uiconf.sections[6].content[2].attributes[2].min,
+                uiconf.sections[6].content[2].attributes[3].max,
+                uiconf.sections[6].content[2].attributes[0].placeholder];
             
             // spool left speed (cassette multiplier)
             var spoolLeftSpeed = parseFloat(peppy_config.current['spool.left.speed']) || 1.0;
-            uiconf.sections[5].content[3].value = spoolLeftSpeed;
-            minmax[12] = [uiconf.sections[5].content[3].attributes[2].min,
-                uiconf.sections[5].content[3].attributes[3].max,
-                uiconf.sections[5].content[3].attributes[0].placeholder];
+            uiconf.sections[6].content[3].value = spoolLeftSpeed;
+            minmax[12] = [uiconf.sections[6].content[3].attributes[2].min,
+                uiconf.sections[6].content[3].attributes[3].max,
+                uiconf.sections[6].content[3].attributes[0].placeholder];
             
             // spool right speed (cassette multiplier)
             var spoolRightSpeed = parseFloat(peppy_config.current['spool.right.speed']) || 1.0;
-            uiconf.sections[5].content[4].value = spoolRightSpeed;
-            minmax[13] = [uiconf.sections[5].content[4].attributes[2].min,
-                uiconf.sections[5].content[4].attributes[3].max,
-                uiconf.sections[5].content[4].attributes[0].placeholder];
+            uiconf.sections[6].content[4].value = spoolRightSpeed;
+            minmax[13] = [uiconf.sections[6].content[4].attributes[2].min,
+                uiconf.sections[6].content[4].attributes[3].max,
+                uiconf.sections[6].content[4].attributes[0].placeholder];
             
             // reel direction
             var reelDirection = peppy_config.current['reel.direction'] || 'ccw';
-            var directionOptions = uiconf.sections[5].content[5].options;
+            var directionOptions = uiconf.sections[6].content[5].options;
             for (var i = 0; i < directionOptions.length; i++) {
                 if (directionOptions[i].value === reelDirection) {
-                    uiconf.sections[5].content[5].value = directionOptions[i];
+                    uiconf.sections[6].content[5].value = directionOptions[i];
                     break;
                 }
             }
@@ -940,6 +992,26 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
   }, 500);
   
 }; // end savePeppyMeterConf ----------------------------
+
+// called when 'save' button pressed on Playback Behavior settings
+// ---------------------------------------------------------------
+peppyScreensaver.prototype.savePlaybackConf = function(data) {
+    var self = this;
+    var defer = libQ.defer();
+    
+    var persistDuration = data['persist_duration'] && data['persist_duration'].value 
+        ? data['persist_duration'].value 
+        : '30';
+    
+    self.config.set('persist_duration', persistDuration);
+    
+    self.commandRouter.pushToastMessage('success', 
+        self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), 
+        self.commandRouter.getI18nString('COMMON.SETTINGS_SAVED_SUCCESSFULLY'));
+    
+    defer.resolve();
+    return defer.promise;
+};
 
 // called when 'save' button pressed on VU-Meter settings
 // ------------------------------------------------------
