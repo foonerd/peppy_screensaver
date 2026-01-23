@@ -1283,18 +1283,26 @@ class IndicatorRenderer:
                     dirty_rects.append(rect)
                 self._prev_volume = volume
         
-        # Mute (2 states: off=0, on=1)
+        # Mute (3 states: off=0, on=1, zero=2)
         if self._mute:
             mute = metadata.get("mute", False)
-            if force or mute != self._prev_mute:
+            volume = metadata.get("volume", 0)
+            # Determine state: mute flag takes priority, then volume=0
+            if mute:
+                mute_state = 1  # explicitly muted
+            elif volume == 0:
+                mute_state = 2  # volume is zero
+            else:
+                mute_state = 0  # not muted, volume > 0
+            
+            if force or mute_state != self._prev_mute:
                 if force:
                     self._mute.force_redraw()
                 self._mute.restore_backing(screen)
-                state_idx = 1 if mute else 0
-                rect = self._mute.render(screen, state_idx)
+                rect = self._mute.render(screen, mute_state)
                 if rect:
                     dirty_rects.append(rect)
-                self._prev_mute = mute
+                self._prev_mute = mute_state
         
         # Shuffle (3 states: off=0, shuffle=1, infinity=2)
         if self._shuffle:
