@@ -809,10 +809,20 @@ class VolumeIndicator:
         if self.bg_color:
             pg.draw.rect(screen, self.bg_color, (x, y, w, h))
         
-        # Foreground fill based on volume
-        fill_w = int((volume / 100.0) * w)
-        if fill_w > 0:
-            pg.draw.rect(screen, self.color, (x, y, fill_w, h))
+        # Foreground fill based on volume and orientation
+        # Auto-detect orientation from dimensions if not explicitly horizontal
+        is_vertical = self.slider_orientation == "vertical" or (self.slider_orientation != "horizontal" and h > w)
+        
+        if is_vertical:
+            # Vertical: fill from bottom to top
+            fill_h = int((volume / 100.0) * h)
+            if fill_h > 0:
+                pg.draw.rect(screen, self.color, (x, y + h - fill_h, w, fill_h))
+        else:
+            # Horizontal: fill from left to right
+            fill_w = int((volume / 100.0) * w)
+            if fill_w > 0:
+                pg.draw.rect(screen, self.color, (x, y, fill_w, h))
         
         return pg.Rect(x, y, w, h)
     
