@@ -27,6 +27,7 @@ const ini = require('ini');
 const id = 'peppy_screensaver: ';      // for logging
 const PluginPath = '/data/plugins/user_interface/peppy_screensaver';
 const runFlag = '/tmp/peppyrunning';   // for detection, if peppymeter always running
+const persistFile = '/tmp/peppy_persist';  // for persist countdown communication with Python
 //---
 var PeppyPath = PluginPath + '/screensaver/peppymeter';
 var RunPeppyFile = PluginPath + '/run_peppymeter.sh';
@@ -209,6 +210,7 @@ peppyScreensaver.prototype.onStart = function() {
         
         // Get persist duration from config (0 = disabled, >0 = seconds to wait)
         var persistDuration = parseInt(self.config.get('persist_duration'), 10) || 0;
+        var persistDisplay = self.config.get('persist_display') || 'freeze';
         
         // Detect if this is a transitional state (track change, seeking, etc.)
         // volatile=true indicates Volumio is in transition between states
@@ -224,6 +226,10 @@ peppyScreensaver.prototype.onStart = function() {
                 self.persistTimer = null;
                 self.logger.info('peppy_screensaver: Persist timer cancelled - playback resumed');
             }
+            // Remove persist file
+            try {
+                if (fs.existsSync(persistFile)) fs.removeSync(persistFile);
+            } catch(e) {}
             
             if (!lastStateIsPlaying) {
                 if (DSP_ON || Spotify_ON || Airplay_ON || Other_ON) {
@@ -273,8 +279,17 @@ peppyScreensaver.prototype.onStart = function() {
                     
                     self.logger.info('peppy_screensaver: Starting persist timer - ' + persistDuration + 's');
                     
+                    // Write persist info for Python (duration:timestamp_ms:display_mode)
+                    try {
+                        fs.writeFileSync(persistFile, persistDuration + ':' + Date.now() + ':' + persistDisplay);
+                    } catch(e) {}
+                    
                     self.persistTimer = setTimeout(function() {
                         self.persistTimer = null;
+                        // Remove persist file
+                        try {
+                            if (fs.existsSync(persistFile)) fs.removeSync(persistFile);
+                        } catch(e) {}
                         // Timer expired - stop PeppyMeter
                         if (fs.existsSync(runFlag)) {
                             fs.removeSync(runFlag);
@@ -557,6 +572,14 @@ peppyScreensaver.prototype.getUIConfig = function() {
             };
             uiconf.sections[1].content[0].value.value = persistVal;
             uiconf.sections[1].content[0].value.label = self.commandRouter.getI18nString(persistLabels[persistVal] || 'PEPPY_SCREENSAVER.PERSIST_30');
+
+            var persistDisplayVal = self.config.get('persist_display') || 'freeze';
+            var persistDisplayLabels = {
+                'freeze': 'PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE',
+                'countdown': 'PEPPY_SCREENSAVER.PERSIST_DISPLAY_COUNTDOWN'
+            };
+            uiconf.sections[1].content[1].value.value = persistDisplayVal;
+            uiconf.sections[1].content[1].value.label = self.commandRouter.getI18nString(persistDisplayLabels[persistDisplayVal] || 'PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE');
 
             // section 2 - VU-Meter settings -----------------------------
             availMeters = '';
@@ -1003,7 +1026,12 @@ peppyScreensaver.prototype.savePlaybackConf = function(data) {
         ? data['persist_duration'].value 
         : '30';
     
+    var persistDisplay = data['persist_display'] && data['persist_display'].value 
+        ? data['persist_display'].value 
+        : 'freeze';
+    
     self.config.set('persist_duration', persistDuration);
+    self.config.set('persist_display', persistDisplay);
     
     self.commandRouter.pushToastMessage('success', 
         self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), 

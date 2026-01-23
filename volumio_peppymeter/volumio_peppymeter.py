@@ -369,6 +369,7 @@ class MetadataWatcher:
             self.metadata["bitrate"] = str(data.get("bitrate", "") or "")
             self.metadata["service"] = data.get("service", "") or ""
             self.metadata["status"] = data.get("status", "") or ""
+            self.metadata["volatile"] = data.get("volatile", False) or False
             
             # Playback control states (for indicators)
             self.metadata["volume"] = data.get("volume", 0) or 0
@@ -386,14 +387,18 @@ class MetadataWatcher:
             # Store duration and seek for progress calculation (tonearm, etc)
             self.metadata["duration"] = duration
             self.metadata["seek"] = seek
+            self.metadata["_seek_raw"] = seek  # Original value, never modified by render loop
             self.metadata["_seek_update"] = time.time()  # Track when seek was received
             
-            if service != self.time_service or abs(seek / 1000 - (duration - self.time_remain_sec)) > 3:
-                # Reset time on track change or significant seek
-                if duration > 0:
-                    self.time_remain_sec = max(0, duration - (seek // 1000))
-                else:
-                    self.time_remain_sec = -1  # No time to display for webradio
+            # Always update time remaining from actual seek position
+            # This ensures pause/stop shows correct frozen time
+            if duration > 0:
+                self.time_remain_sec = max(0, duration - (seek // 1000))
+                self.time_last_update = time.time()
+                self.time_service = service
+            elif service != self.time_service:
+                # Service changed to one without duration (webradio)
+                self.time_remain_sec = -1
                 self.time_last_update = time.time()
                 self.time_service = service
             
@@ -770,15 +775,20 @@ class AlbumArtRenderer:
         """Compatibility stub - sync loading has no pending loads."""
         return False
 
-    def _update_angle(self, status, now_ticks):
+    def _update_angle(self, status, now_ticks, volatile=False):
         """Update rotation angle based on RPM and playback status.
         
         OPTIMIZATION: Only updates at target FPS rate.
+        
+        :param volatile: if True, ignore stop/pause (track transition in progress)
         """
         if not self.rotate_enabled or self.rotate_rpm <= 0.0:
             return
         
         status = (status or "").lower()
+        # Ignore stop/pause during volatile transitions (track skip)
+        if volatile and status in ("stop", "pause"):
+            status = "play"
         if status == "play":
             # degrees per second = rpm * 6
             dt = self._blit_interval_ms / 1000.0
@@ -813,7 +823,7 @@ class AlbumArtRenderer:
         else:
             return pg.Rect(self.art_pos[0], self.art_pos[1], self.art_dim[0], self.art_dim[1])
 
-    def render(self, screen, status, now_ticks, advance_angle=True):
+    def render(self, screen, status, now_ticks, advance_angle=True, volatile=False):
         """Render album art (rotated if enabled) plus border and LP center markers.
         
         OPTIMIZATION: FPS gating limits rotation updates to reduce CPU.
@@ -823,6 +833,7 @@ class AlbumArtRenderer:
         :param status: playback status ("play", "pause", "stop")
         :param now_ticks: pygame.time.get_ticks() value
         :param advance_angle: if False, render at current angle without advancing rotation
+        :param volatile: if True, ignore stop/pause (track transition in progress)
         """
         if not self.art_pos or not self.art_dim or not self._scaled_surf:
             return None
@@ -843,7 +854,7 @@ class AlbumArtRenderer:
                 if self.vinyl_renderer:
                     self._current_angle = self.vinyl_renderer.get_current_angle()
                 else:
-                    self._update_angle(status, now_ticks)
+                    self._update_angle(status, now_ticks, volatile=volatile)
             
             # OPTIMIZATION: Use pre-computed frame lookup if available
             if self._rot_frames:
@@ -973,12 +984,18 @@ class ReelRenderer:
         except Exception as e:
             print(f"[ReelRenderer] Failed to load '{self.filename}': {e}")
     
-    def _update_angle(self, status, now_ticks):
-        """Update rotation angle based on RPM, direction, and playback status."""
+    def _update_angle(self, status, now_ticks, volatile=False):
+        """Update rotation angle based on RPM, direction, and playback status.
+        
+        :param volatile: if True, ignore stop/pause (track transition in progress)
+        """
         if self.rotate_rpm <= 0.0:
             return
         
         status = (status or "").lower()
+        # Ignore stop/pause during volatile transitions (track skip)
+        if volatile and status in ("stop", "pause"):
+            status = "play"
         if status == "play":
             dt = self._blit_interval_ms / 1000.0
             self._current_angle = (self._current_angle + self.rotate_rpm * 6.0 * dt * self.direction_mult) % 360.0
@@ -1009,11 +1026,13 @@ class ReelRenderer:
         
         return pg.Rect(ext_x, ext_y, diag, diag)
     
-    def render(self, screen, status, now_ticks):
+    def render(self, screen, status, now_ticks, volatile=False):
         """Render the reel (rotated if playing).
         
         OPTIMIZATION: Uses pre-computed frames and FPS gating.
         Returns dirty rect if drawn, None if skipped.
+        
+        :param volatile: if True, ignore stop/pause (track transition in progress)
         """
         if not self._loaded or not self._original_surf:
             return None
@@ -1034,7 +1053,7 @@ class ReelRenderer:
                          self._original_surf.get_height())
         
         # Update angle based on playback status
-        self._update_angle(status, now_ticks)
+        self._update_angle(status, now_ticks, volatile=volatile)
         
         # OPTIMIZATION: Use pre-computed frame lookup if available
         if self._rot_frames:
@@ -1133,12 +1152,18 @@ class VinylRenderer:
         except Exception as e:
             print(f"[VinylRenderer] Failed to load '{self.filename}': {e}")
     
-    def _update_angle(self, status, now_ticks):
-        """Update rotation angle based on RPM, direction, and playback status."""
+    def _update_angle(self, status, now_ticks, volatile=False):
+        """Update rotation angle based on RPM, direction, and playback status.
+        
+        :param volatile: if True, ignore stop/pause (track transition in progress)
+        """
         if self.rotate_rpm <= 0.0:
             return
         
         status = (status or "").lower()
+        # Ignore stop/pause during volatile transitions (track skip)
+        if volatile and status in ("stop", "pause"):
+            status = "play"
         if status == "play":
             dt = self._blit_interval_ms / 1000.0
             self._current_angle = (self._current_angle + self.rotate_rpm * 6.0 * dt * self.direction_mult) % 360.0
@@ -1173,10 +1198,12 @@ class VinylRenderer:
         
         return pg.Rect(ext_x, ext_y, diag, diag)
     
-    def render(self, screen, status, now_ticks):
+    def render(self, screen, status, now_ticks, volatile=False):
         """Render the vinyl disc (rotated if playing).
         
         Returns dirty rect if drawn, None if skipped.
+        
+        :param volatile: if True, ignore stop/pause (track transition in progress)
         """
         if not self._loaded or not self._original_surf:
             return None
@@ -1197,7 +1224,7 @@ class VinylRenderer:
                          self._original_surf.get_height())
         
         # Update angle based on playback status
-        self._update_angle(status, now_ticks)
+        self._update_angle(status, now_ticks, volatile=volatile)
         
         # Use pre-computed frame lookup if available
         if self._rot_frames:
@@ -1356,13 +1383,14 @@ class TonearmRenderer:
         
         return progress >= 1.0
     
-    def update(self, status, progress_pct, time_remaining_sec=None):
+    def update(self, status, progress_pct, time_remaining_sec=None, volatile=False):
         """
         Update tonearm state based on playback status and progress.
         
         :param status: Playback status ("play", "pause", "stop")
         :param progress_pct: Track progress as percentage (0.0 to 100.0)
         :param time_remaining_sec: Seconds remaining in track (for early lift)
+        :param volatile: if True, ignore stop/pause (track transition in progress)
         :return: True if redraw needed
         """
         if not self._loaded:
@@ -1394,6 +1422,10 @@ class TonearmRenderer:
         status = (status or "").lower()
         self._last_status = status
         
+        # During volatile transitions (track skip), ignore brief stop - don't lift
+        # This prevents flicker during next/prev track changes
+        skip_lift = volatile and status in ("stop", "pause")
+        
         # State machine
         if self._state == TONEARM_STATE_REST:
             if status == "play":
@@ -1414,7 +1446,7 @@ class TonearmRenderer:
                 self._needs_redraw = True
         
         elif self._state == TONEARM_STATE_DROP:
-            if status != "play":
+            if status != "play" and not skip_lift:
                 # Playback stopped during drop - lift back
                 self._state = TONEARM_STATE_LIFT
                 self._early_lift = False  # Clear flag - this is a normal stop
@@ -1443,7 +1475,7 @@ class TonearmRenderer:
                 self._start_animation(self.angle_rest, self.lift_duration)
                 self._needs_redraw = True
                 self._last_blit_tick = 0
-            elif status != "play":
+            elif status != "play" and not skip_lift:
                 # Playback stopped - start lift (not early lift)
                 self._state = TONEARM_STATE_LIFT
                 self._pending_drop_target = None
@@ -2938,16 +2970,22 @@ def start_display_output(pm, callback, meter_config_volumio):
             overlay_init_for_meter(nm)
         
         # Handle title-change random restart
+        # Only restart if there are multiple meters to choose from
         if title_changed_flag[0]:
             title_changed_flag[0] = False
-            callback.pending_restart = True
+            meter_names = cfg.get(METER_NAMES) or []
+            if len(meter_names) > 1:
+                callback.pending_restart = True
         
         # Handle interval-based random restart
+        # Only restart if there are multiple meters
         if random_interval_mode:
             random_timer += clock.get_time() / 1000.0
             if random_timer >= random_interval:
                 random_timer = 0
-                callback.pending_restart = True
+                meter_names = cfg.get(METER_NAMES) or []
+                if len(meter_names) > 1:
+                    callback.pending_restart = True
         
         # Get overlay state
         ov = overlay_state
@@ -2973,19 +3011,22 @@ def start_display_output(pm, callback, meter_config_volumio):
             track_type = meta.get("trackType", "")
             bitrate = meta.get("bitrate", "")
             status = meta.get("status", "")
+            volatile = meta.get("volatile", False)
             is_playing = status == "play"
             bd = ov.get("backing_dict", {})
             
             # Pre-calculate seek interpolation (used by tonearm and progress bar)
             duration = meta.get("duration", 0) or 0
-            seek = meta.get("seek", 0) or 0
+            seek_raw = meta.get("_seek_raw", 0) or meta.get("seek", 0) or 0
+            seek = seek_raw
             
             # Interpolate seek based on elapsed time when playing
+            # Use _seek_raw to avoid accumulation error from previous frames
             if is_playing and duration > 0:
                 seek_update_time = meta.get("_seek_update", 0)
                 if seek_update_time > 0:
                     elapsed_ms = (current_time - seek_update_time) * 1000
-                    seek = min(duration * 1000, seek + elapsed_ms)
+                    seek = min(duration * 1000, seek_raw + elapsed_ms)
                     meta["seek"] = seek  # Update for indicators (progress bar)
             
             # Pre-calculate tonearm state
@@ -3000,7 +3041,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                     progress_pct = 0.0
                     time_remaining_sec = None  # Unknown duration (webradio etc)
                 
-                tonearm.update(status, progress_pct, time_remaining_sec)
+                tonearm.update(status, progress_pct, time_remaining_sec, volatile=volatile)
                 tonearm_will_render = tonearm.will_blit(now_ticks)
             
             # Pre-calculate album art state
@@ -3011,17 +3052,19 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if url_changed:
                     album_will_render = True
                 elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
-                    album_will_render = is_playing and album_renderer.will_blit(now_ticks)
+                    album_should_rotate = is_playing or volatile
+                    album_will_render = album_should_rotate and album_renderer.will_blit(now_ticks)
             
             # Pre-calculate reel state
             reel_left = ov.get("reel_left_renderer")
             reel_right = ov.get("reel_right_renderer")
-            left_will_blit = reel_left and is_playing and reel_left.will_blit(now_ticks)
-            right_will_blit = reel_right and is_playing and reel_right.will_blit(now_ticks)
+            reel_should_check = is_playing or volatile
+            left_will_blit = reel_left and reel_should_check and reel_left.will_blit(now_ticks)
+            right_will_blit = reel_right and reel_should_check and reel_right.will_blit(now_ticks)
             
             # Pre-calculate vinyl state
             vinyl = ov.get("vinyl_renderer")
-            vinyl_will_blit = vinyl and is_playing and vinyl.will_blit(now_ticks)
+            vinyl_will_blit = vinyl and reel_should_check and vinyl.will_blit(now_ticks)
             
             # Determine if ANY moving element needs render (triggers full z-order redraw)
             any_moving_render = tonearm_will_render or album_will_render or left_will_blit or right_will_blit or vinyl_will_blit
@@ -3085,23 +3128,25 @@ def start_display_output(pm, callback, meter_config_volumio):
                     dirty_rects.append(meter_rects)
             
             # STEP 3: Render reels/platter (above meters, below vinyl)
-            # Only render when playing and reel needs frame update
+            # Only render when playing (or volatile transition) and reel needs frame update
             reel_rendered = False
-            if reel_left and is_playing and left_will_blit:
-                rect = reel_left.render(screen, status, now_ticks)
+            reel_should_spin = is_playing or volatile
+            if reel_left and reel_should_spin and left_will_blit:
+                rect = reel_left.render(screen, status, now_ticks, volatile=volatile)
                 if rect:
                     dirty_rects.append(rect)
                     reel_rendered = True
-            if reel_right and is_playing and right_will_blit:
-                rect = reel_right.render(screen, status, now_ticks)
+            if reel_right and reel_should_spin and right_will_blit:
+                rect = reel_right.render(screen, status, now_ticks, volatile=volatile)
                 if rect:
                     dirty_rects.append(rect)
                     reel_rendered = True
             
             # STEP 4: Render vinyl (above reels, below album art)
             vinyl_rendered = False
-            if vinyl and is_playing and vinyl_will_blit:
-                rect = vinyl.render(screen, status, now_ticks)
+            vinyl_should_spin = is_playing or volatile
+            if vinyl and vinyl_should_spin and vinyl_will_blit:
+                rect = vinyl.render(screen, status, now_ticks, volatile=volatile)
                 if rect:
                     dirty_rects.append(rect)
                     vinyl_rendered = True
@@ -3114,14 +3159,14 @@ def start_display_output(pm, callback, meter_config_volumio):
                 url_changed = albumart != getattr(album_renderer, "_current_url", None)
                 if url_changed:
                     album_renderer.load_from_url(albumart)
-                    rect = album_renderer.render(screen, status, now_ticks)
+                    rect = album_renderer.render(screen, status, now_ticks, volatile=volatile)
                     if rect:
                         dirty_rects.append(rect)
                         album_rendered = True
                 elif album_will_draw:
                     # Redraw due to own rotation OR overlapping element change
                     advance = album_will_render  # Only advance angle if album itself needs update
-                    rect = album_renderer.render(screen, status, now_ticks, advance_angle=advance)
+                    rect = album_renderer.render(screen, status, now_ticks, advance_angle=advance, volatile=volatile)
                     if rect:
                         dirty_rects.append(rect)
                         album_rendered = True
@@ -3173,22 +3218,55 @@ def start_display_output(pm, callback, meter_config_volumio):
                     dirty_rects.append(rect)
             
             # Time remaining - OPTIMIZED with caching
+            # Supports: freeze when paused, optional persist countdown display
             if ov["time_pos"]:
+                # Check for persist countdown mode
+                persist_countdown_sec = None
+                persist_display_mode = "freeze"
+                persist_file = '/tmp/peppy_persist'
+                if not is_playing and os.path.exists(persist_file):
+                    try:
+                        with open(persist_file, 'r') as f:
+                            parts = f.read().strip().split(':')
+                            if len(parts) >= 2:
+                                p_duration = int(parts[0])
+                                start_ts = int(parts[1]) / 1000.0  # JS uses ms
+                                elapsed_persist = current_time - start_ts
+                                persist_countdown_sec = max(0, p_duration - int(elapsed_persist))
+                            if len(parts) >= 3:
+                                persist_display_mode = parts[2]
+                    except Exception:
+                        pass
+                
                 # Read time from socket.io metadata watcher
                 time_remain_sec = meta.get("_time_remain", -1)
                 time_last_update = meta.get("_time_update", 0)
                 
-                # Update countdown (only if we have valid time)
-                if time_remain_sec >= 0:
-                    elapsed = current_time - time_last_update
-                    if elapsed >= 1.0:
-                        # Calculate updated remaining time
-                        time_remain_sec = max(0, time_remain_sec - int(elapsed))
+                # Determine what to display
+                # Only show persist countdown if mode is "countdown"
+                show_persist_countdown = (
+                    persist_display_mode == "countdown" and 
+                    persist_countdown_sec is not None and 
+                    persist_countdown_sec >= 0
+                )
                 
-                # Format time (skip if no valid time, e.g. webradio)
-                if time_remain_sec >= 0:
-                    mins = time_remain_sec // 60
-                    secs = time_remain_sec % 60
+                if show_persist_countdown:
+                    # Show persist countdown (no label - use orange color to indicate)
+                    display_sec = persist_countdown_sec
+                elif time_remain_sec >= 0:
+                    # Show track time - only decrement if playing
+                    if is_playing:
+                        elapsed = current_time - time_last_update
+                        if elapsed >= 1.0:
+                            time_remain_sec = max(0, time_remain_sec - int(elapsed))
+                    display_sec = time_remain_sec
+                else:
+                    display_sec = -1
+                
+                # Format and render time
+                if display_sec >= 0:
+                    mins = display_sec // 60
+                    secs = display_sec % 60
                     time_str = f"{mins:02d}:{secs:02d}"
                     
                     # Force redraw if tonearm rendered (backing restore may have wiped time area)
@@ -3202,8 +3280,13 @@ def start_display_output(pm, callback, meter_config_volumio):
                             screen.blit(b, r.topleft)
                             dirty_rects.append(r.copy())
                         
-                        # Color - red for last 10 seconds
-                        t_color = (242, 0, 0) if 0 < time_remain_sec <= 10 else ov["time_color"]
+                        # Color - orange for persist countdown, red for last 10 seconds
+                        if show_persist_countdown:
+                            t_color = (242, 165, 0)  # Orange for persist countdown
+                        elif 0 < display_sec <= 10:
+                            t_color = (242, 0, 0)  # Red for last 10 seconds
+                        else:
+                            t_color = ov["time_color"]
                         
                         last_time_surf = ov["fontDigi"].render(time_str, True, t_color)
                         screen.blit(last_time_surf, ov["time_pos"])

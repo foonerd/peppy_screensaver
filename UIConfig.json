@@ -248,7 +248,8 @@
                 "saveButton": {
                               "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
                               "data": [
-                                      "persist_duration"
+                                      "persist_duration",
+                                      "persist_display"
                                       ]
                               },
                 "content": [
@@ -282,6 +283,23 @@
                                  {
                                     "value": "300",
                                     "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_300"
+                                 }
+                               ]
+                            },
+                            {
+                             "id": "persist_display",
+                             "element": "select",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY",
+                             "value": {"value": "freeze", "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE" },
+                               "options": [
+                                 {
+                                    "value": "freeze",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE"
+                                 },
+                                 {
+                                    "value": "countdown",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_COUNTDOWN"
                                  }
                                ]
                             }
