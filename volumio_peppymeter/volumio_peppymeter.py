@@ -2976,20 +2976,22 @@ def start_display_output(pm, callback, meter_config_volumio):
             is_playing = status == "play"
             bd = ov.get("backing_dict", {})
             
+            # Pre-calculate seek interpolation (used by tonearm and progress bar)
+            duration = meta.get("duration", 0) or 0
+            seek = meta.get("seek", 0) or 0
+            
+            # Interpolate seek based on elapsed time when playing
+            if is_playing and duration > 0:
+                seek_update_time = meta.get("_seek_update", 0)
+                if seek_update_time > 0:
+                    elapsed_ms = (current_time - seek_update_time) * 1000
+                    seek = min(duration * 1000, seek + elapsed_ms)
+                    meta["seek"] = seek  # Update for indicators (progress bar)
+            
             # Pre-calculate tonearm state
             tonearm = ov.get("tonearm_renderer")
             tonearm_will_render = False
             if tonearm:
-                duration = meta.get("duration", 0) or 0
-                seek = meta.get("seek", 0) or 0
-                
-                # Interpolate seek based on elapsed time when playing
-                if is_playing and duration > 0:
-                    seek_update_time = meta.get("_seek_update", 0)
-                    if seek_update_time > 0:
-                        elapsed_ms = (current_time - seek_update_time) * 1000
-                        seek = min(duration * 1000, seek + elapsed_ms)
-                
                 if duration > 0:
                     progress_pct = min(100.0, (seek / 1000.0 / duration) * 100.0)
                     # Calculate time remaining for early lift feature
