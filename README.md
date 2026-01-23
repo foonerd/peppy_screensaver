@@ -67,6 +67,7 @@ After installation, enable and configure the plugin:
 - Playback state indicators (volume, mute, shuffle, repeat, play/pause, progress)
 - Cassette deck skins with rotating reel animation
 - Track info overlay with scrolling text
+- Display persistence during pause/track changes (eliminates flicker)
 - Random meter rotation
 - Touch to exit
 - Configurable frame rate and update interval for CPU tuning
@@ -93,6 +94,21 @@ The plugin settings are organized into sections:
 | Start/Stop Animation | Enable fade animation on start/stop |
 | Smooth Buffer | Audio smoothing buffer size |
 | Needle Cache | Cache rotated needle images (reduces CPU, uses more RAM) |
+
+### Playback Behavior
+
+Controls display persistence during pause and track changes.
+
+| Setting | Options | Default | Description |
+|---------|---------|---------|-------------|
+| Keep display active | Disabled/15s/30s/1min/2min/5min | 30s | Delay before display turns off after pause/stop |
+| Time display during persist | Freeze/Countdown | Freeze | What to show in time area when paused |
+
+**Keep display active:** Prevents screen flicker during track changes by keeping the display running briefly after playback stops. Volumio sends stop-play sequence on next/prev, causing visible restart without this delay.
+
+**Time display modes:**
+- **Freeze**: Shows track time at moment of pause (default)
+- **Countdown**: Shows time until display turns off (orange color)
 
 ### Performance Settings
 
