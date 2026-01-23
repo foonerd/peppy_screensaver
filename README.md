@@ -24,6 +24,7 @@ Original Volumio plugin by [2aCD](https://github.com/2aCD-creator/volumio-plugin
 | Pi Zero 2 W | Marginal | Thermal throttling, 512MB RAM limit - not recommended |
 | Pi 2 | Marginal | Weak cores - not recommended |
 | Pi Zero/1 | Unsupported | Single core ARMv6, no NEON - will not run adequately |
+| x64 | Excellent | Spotify requires config change - see Troubleshooting |
 
 Real-time 30fps rendering with ALSA audio capture and metadata updates requires
 multi-core ARM with NEON SIMD. Single-core Pi Zero/1 cannot sustain this workload.
@@ -84,7 +85,7 @@ The plugin settings are organized into sections:
 |---------|-------------|
 | ALSA Device | Audio input source for visualization |
 | DSP | Enable DSP processing |
-| Use Spotify | Include Spotify playback |
+| Use Spotify | Include Spotify playback (x64: see Troubleshooting for config) |
 | Use USB DAC | Include USB DAC playback |
 | Use Airplay | Include Airplay playback |
 | Timeout | Idle timeout before screensaver activates |
@@ -475,6 +476,29 @@ sudo apt-get install -y libsdl2-ttf-2.0-0 libsdl2-image-2.0-0 libsdl2-mixer-2.0-
 sudo chown -R volumio:volumio /data/plugins/user_interface/peppy_screensaver
 ```
 
+### x64 Spotify Configuration
+
+On x64 systems, Spotify playback with PeppyMeter requires a reduced audio buffer time.
+Without this change, playback may fail on pause/resume with ALSA buffer negotiation errors.
+
+**Symptoms:**
+- Spotify plays initially but fails after pause/resume
+- Log shows: `ALSA error at snd_pcm_hw_params_set_buffer_time_near: Invalid argument`
+- Playback becomes unstable or stops working
+
+**Solution:**
+
+1. Go to Plugins > Installed Plugins
+2. Click Settings on the Spotify plugin
+3. Change **Audio Buffer Time** from 500000 to **100000**
+4. Click Save
+
+**Technical background:** The default 500ms buffer is too large for the ALSA multi plugin
+to negotiate compatible parameters between the main audio output and the meter capture path.
+Reducing to 100ms (100000 microseconds) allows successful buffer negotiation on x64 hardware.
+
+This issue does not affect Raspberry Pi systems.
+
 ### High CPU usage on Pi
 
 If CPU usage is higher than expected:
@@ -501,6 +525,7 @@ peppy_screensaver/
     volumio_peppymeter.py        - Main screensaver script
     volumio_spectrum.py          - Spectrum analyzer integration
     volumio_configfileparser.py  - Volumio config extensions
+    volumio_indicators.py        - Playback indicator support
     diagnose_config.py           - Configuration diagnostic tool
   volumio_peppymeter/            - Volumio integration (before install)
   asound/                        - ALSA configuration

@@ -49,19 +49,33 @@ pcm.${spotDirect} {
   slave.pcm "postpeppyalsa"
 }
 
+# spotify with meter using multi/duplicate pattern
+# main audio bypasses meter, meter receives duplicate to dummy
+# this avoids hw_params issues when meter is inline with main audio
 pcm.${spotMeter} {
   type plug
-  slave {
-    pcm "spd_peppyalsa"
-    format "S16_LE"   
+  route_policy "duplicate"
+  slave.channels 4
+  slave.pcm {
+    type multi
+
+    slaves.a.pcm "postpeppyalsa"
+    slaves.a.channels 2
+    slaves.b.pcm "spd_peppyalsa"
+    slaves.b.channels 2
+
+    bindings.0 { slave a; channel 0; }
+    bindings.1 { slave a; channel 1; }
+    bindings.2 { slave b; channel 0; }
+    bindings.3 { slave b; channel 1; }
   }
 }
 
-# spotify meter definition
-pcm.spd_peppyalsa{
-	type meter
-	slave.pcm "copy_output"
-	scopes.0 peppyalsa
+# spotify meter to dummy - side path for meter data only
+pcm.spd_peppyalsa {
+  type meter
+  slave.pcm "dummy"
+  scopes.0 peppyalsa
 }
 
 # standard scope

@@ -1539,10 +1539,25 @@ peppyScreensaver.prototype.install_dummy = function () {
   const self = this;
   let defer = libQ.defer();
   
+  // Detect architecture
+  var arch = '';
+  try { arch = execSync('cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'').toString().trim(); } catch(e) {}
+  var isX64 = (arch === 'x64');
+  
   try {
     execSync("/usr/bin/sudo /sbin/modprobe snd-dummy index=7 pcm_substreams=1 fake_buffer=0", { uid: 1000, gid: 1000 });
-//    execSync("/usr/bin/sudo /sbin/modprobe snd-aloop", { uid: 1000, gid: 1000 });
     self.commandRouter.pushConsoleMessage('snd-dummy loaded');
+    
+    // x64: also load snd-aloop for Spotify meter path (Loopback has flexible buffer params)
+    if (isX64) {
+      try {
+        execSync("/usr/bin/sudo /sbin/modprobe snd-aloop index=6 pcm_substreams=2", { uid: 1000, gid: 1000 });
+        self.commandRouter.pushConsoleMessage('snd-aloop loaded for x64 Spotify');
+      } catch (err) {
+        self.logger.info('failed to load snd-aloop: ' + err);
+      }
+    }
+    
     defer.resolve();
   } catch (err) {
     self.logger.info('failed to load snd-dummy' + err);

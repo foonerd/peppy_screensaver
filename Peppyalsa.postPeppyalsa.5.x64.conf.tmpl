@@ -2,7 +2,8 @@
 #
 # x64 version: Meter NOT inline with main audio path.
 # Reason: volumioswitch uses mmap which meter plugin cannot handle.
-# Solution: Main audio bypasses meter, separate MPD output provides meter data.
+# Solution: Main audio bypasses meter, Spotify duplicates to Loopback for meter.
+# Requires: snd_aloop module loaded (modprobe snd_aloop index=6 pcm_substreams=2)
 #
 
 # ---> pass through audio pipeline
@@ -23,7 +24,7 @@ pcm.${alsaMeter} {
 # This receives audio from mpd_custom.conf output
 pcm.mpd_peppyalsa {
   type meter
-  slave.pcm "dummy"
+  slave.pcm "hw:Loopback"
   scopes.0 peppyalsa
 }
 
@@ -40,22 +41,40 @@ pcm.${spotDirect} {
   slave.pcm "postpeppyalsa"
 }
 
+# spotify with meter using multi/duplicate pattern
+# main audio to postpeppyalsa, duplicate to Loopback for meter
+# Loopback has flexible buffer negotiation unlike hw:Dummy
 pcm.${spotMeter} {
   type plug
+  route_policy "duplicate"
   slave {
-    pcm "spd_peppyalsa"
-    format "S16_LE"
+    pcm {
+      type multi
+
+      slaves.a.pcm "postpeppyalsa"
+      slaves.a.channels 2
+      slaves.b.pcm "spd_peppyalsa"
+      slaves.b.channels 2
+
+      bindings.0 { slave a; channel 0; }
+      bindings.1 { slave a; channel 1; }
+      bindings.2 { slave b; channel 0; }
+      bindings.3 { slave b; channel 1; }
+    }
+    rate 44100
+    format S16_LE
+    channels 4
   }
 }
 
-# spotify meter definition
+# spotify meter to Loopback - snd_aloop has flexible buffer params
 pcm.spd_peppyalsa {
   type meter
-  slave.pcm "copy_output"
+  slave.pcm "hw:Loopback"
   scopes.0 peppyalsa
 }
 
-# standard scope - adjusted meter_max for better sensitivity on x64
+# standard scope
 pcm_scope.peppyalsa {
   type peppyalsa
   decay_ms 500
@@ -74,7 +93,7 @@ pcm_scope_type.peppyalsa {
   lib /data/plugins/user_interface/peppy_screensaver/lib/libpeppyalsa.so
 }
 
-# null output - use ALSA null instead of hw:Dummy for x64 compatibility
+# dummy kept for MPD output compatibility
 pcm.dummy {
   type hw
   card Dummy
