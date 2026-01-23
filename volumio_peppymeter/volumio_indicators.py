@@ -1252,18 +1252,21 @@ class IndicatorRenderer:
         if self._progress:
             self._progress.force_redraw()
     
-    def render(self, screen, metadata, dirty_rects):
+    def render(self, screen, metadata, dirty_rects, force=False):
         """Render all configured indicators.
         
         :param screen: pygame screen surface
         :param metadata: dict with volume, mute, random, repeat,
                          repeatSingle, status, seek, duration
         :param dirty_rects: list to append dirty rects
+        :param force: if True, redraw all indicators regardless of value change
         """
         # Volume
         if self._volume:
             volume = metadata.get("volume", 0)
-            if volume != self._prev_volume:
+            if force or volume != self._prev_volume:
+                if force:
+                    self._volume.force_redraw()
                 self._volume.restore_backing(screen)
                 rect = self._volume.render(screen, volume)
                 if rect:
@@ -1273,7 +1276,9 @@ class IndicatorRenderer:
         # Mute (2 states: off=0, on=1)
         if self._mute:
             mute = metadata.get("mute", False)
-            if mute != self._prev_mute:
+            if force or mute != self._prev_mute:
+                if force:
+                    self._mute.force_redraw()
                 self._mute.restore_backing(screen)
                 state_idx = 1 if mute else 0
                 rect = self._mute.render(screen, state_idx)
@@ -1285,7 +1290,9 @@ class IndicatorRenderer:
         if self._shuffle:
             shuffle = metadata.get("random", False)
             infinity = metadata.get("infinity", False)
-            if shuffle != self._prev_shuffle or infinity != self._prev_infinity:
+            if force or shuffle != self._prev_shuffle or infinity != self._prev_infinity:
+                if force:
+                    self._shuffle.force_redraw()
                 self._shuffle.restore_backing(screen)
                 # State logic: infinity takes priority over shuffle
                 if infinity:
@@ -1304,7 +1311,9 @@ class IndicatorRenderer:
         if self._repeat:
             repeat = metadata.get("repeat", False)
             repeat_single = metadata.get("repeatSingle", False)
-            if repeat != self._prev_repeat or repeat_single != self._prev_repeat_single:
+            if force or repeat != self._prev_repeat or repeat_single != self._prev_repeat_single:
+                if force:
+                    self._repeat.force_redraw()
                 self._repeat.restore_backing(screen)
                 if repeat_single:
                     state_idx = 2
@@ -1321,7 +1330,9 @@ class IndicatorRenderer:
         # Play/Pause/Stop (3 states: stop=0, pause=1, play=2)
         if self._playstate:
             status = metadata.get("status", "stop")
-            if status != self._prev_status:
+            if force or status != self._prev_status:
+                if force:
+                    self._playstate.force_redraw()
                 self._playstate.restore_backing(screen)
                 if status == "play":
                     state_idx = 2
@@ -1345,7 +1356,9 @@ class IndicatorRenderer:
             
             # Quantize to 1% steps to reduce redraws
             progress_quantized = int(progress_pct)
-            if progress_quantized != self._prev_progress:
+            if force or progress_quantized != self._prev_progress:
+                if force:
+                    self._progress.force_redraw()
                 self._progress.restore_backing(screen)
                 rect = self._progress.render(screen, progress_pct)
                 if rect:

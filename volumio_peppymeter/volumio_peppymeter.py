@@ -3069,6 +3069,9 @@ def start_display_output(pm, callback, meter_config_volumio):
             # Determine if ANY moving element needs render (triggers full z-order redraw)
             any_moving_render = tonearm_will_render or album_will_render or left_will_blit or right_will_blit or vinyl_will_blit
             
+            # Any animated element drawing may wipe overlapping areas via backing restore
+            any_animated_will_draw = any_moving_render
+            
             # =================================================================
             # RENDER Z-ORDER (bottom to top):
             # 1. bgr (via backing restore)
@@ -3102,8 +3105,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 screen.blit(b, r.topleft)
             # Tonearm uses per-frame backing - restore when tonearm will be drawn
             # (either naturally via will_render, or forced due to overlapping element changes)
-            tonearm_will_draw = tonearm_will_render or left_will_blit or right_will_blit or album_will_render or vinyl_will_blit
-            if tonearm and tonearm_will_draw:
+            if tonearm and any_animated_will_draw:
                 rect = tonearm.restore_backing(screen)
                 if rect:
                     dirty_rects.append(rect)
@@ -3173,7 +3175,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             # STEP 6: Render tonearm (above album art, below indicators)
             # Must redraw if any lower element rendered (may have wiped tonearm area)
-            if tonearm and tonearm_will_draw:
+            if tonearm and any_animated_will_draw:
                 force = not tonearm_will_render  # Force if not naturally rendering
                 rect = tonearm.render(screen, now_ticks, force=force)
                 if rect:
@@ -3181,9 +3183,10 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             # STEP 6.5: Render indicators (above tonearm, below metadata)
             # Volume, mute, shuffle, repeat, play/pause, progress bar
+            # Force redraw when any animated element's backing restored (may overlap indicator areas)
             indicator_renderer = ov.get("indicator_renderer")
             if indicator_renderer and indicator_renderer.has_indicators():
-                indicator_renderer.render(screen, meta, dirty_rects)
+                indicator_renderer.render(screen, meta, dirty_rects, force=any_animated_will_draw)
             
             # STEP 7: Metadata/text (above indicators, below fgr)
             # When tonearm renders, its large backing restore may wipe metadata areas
