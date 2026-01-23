@@ -231,8 +231,10 @@ peppyScreensaver.prototype.onStart = function() {
                 if (fs.existsSync(persistFile)) fs.removeSync(persistFile);
             } catch(e) {}
             
-            if (!lastStateIsPlaying) {
-                if (DSP_ON || Spotify_ON || Airplay_ON || Other_ON) {
+            if (DSP_ON || Spotify_ON || Airplay_ON || Other_ON) {
+                // Ensure screensaver start interval exists when playing
+                // (may have been cleared on previous pause/stop)
+                if (!self.Timeout) {
                     lastStateIsPlaying = true;
                     var ScreenTimeout = (parseInt(self.config.get('timeout'),10)) * 1000;
                   
