@@ -6,6 +6,7 @@
 
 import os
 import time
+from datetime import datetime
 from threading import Thread
 
 from spectrum.spectrum import Spectrum
@@ -14,6 +15,48 @@ from configfileparser import METER
 from volumio_configfileparser import SPECTRUM, SPECTRUM_SIZE
 # from volumio_spectrumconfigwriter import Volumio_SpectrumConfigWriter
 from spectrumconfigparser import SCREEN_WIDTH, SCREEN_HEIGHT, AVAILABLE_SPECTRUM_NAMES 
+
+
+# =============================================================================
+# Debug logging support (shared from main module)
+# =============================================================================
+_DEBUG_LEVEL = "off"
+_DEBUG_TRACE = {}
+
+def init_spectrum_debug(level, trace_dict):
+    """Initialize debug settings from main module.
+    
+    :param level: Debug level string ("off", "basic", "verbose", "trace")
+    :param trace_dict: Dictionary of trace component switches
+    """
+    global _DEBUG_LEVEL, _DEBUG_TRACE
+    _DEBUG_LEVEL = level
+    _DEBUG_TRACE = trace_dict
+
+def _log_debug(msg, level="basic", component=None):
+    """Log debug message if level is enabled.
+    
+    :param msg: Message to log
+    :param level: Required level ("basic", "verbose", "trace")
+    :param component: For trace level, the component name to check
+    """
+    if _DEBUG_LEVEL == "off":
+        return
+    
+    level_order = {"off": 0, "basic": 1, "verbose": 2, "trace": 3}
+    current_level = level_order.get(_DEBUG_LEVEL, 0)
+    required_level = level_order.get(level, 1)
+    
+    if current_level < required_level:
+        return
+    
+    # For trace level, check component switch
+    if level == "trace" and component:
+        if not _DEBUG_TRACE.get(component, False):
+            return
+    
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    print(f"[{timestamp}] {msg}") 
 
 class SpectrumOutput(Thread):
     """ Provides show spectrum in a separate thread """
@@ -38,6 +81,10 @@ class SpectrumOutput(Thread):
         self.w = self.meter_section[SPECTRUM_SIZE][0]
         self.h = self.meter_section[SPECTRUM_SIZE][1]
         self.s = self.meter_section[SPECTRUM]
+        
+        # TRACE: Log init
+        if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("spectrum", False):
+            _log_debug(f"[Spectrum] INIT: size={self.w}x{self.h}, spectrum={self.s}", "trace", "spectrum")
 
     def VolumeFadeIn(self, spectrum):
         """ callback methode to fade in volume for spectrum bars """
@@ -54,6 +101,10 @@ class SpectrumOutput(Thread):
         
     def run(self):
         """ Thread method start peppySpectrum """
+    
+        # TRACE: Log run start
+        if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("spectrum", False):
+            _log_debug(f"[Spectrum] INPUT: starting thread, path={self.SpectrumPath}", "trace", "spectrum")
     
         # write new spectrum config
         # writer_SP = Volumio_SpectrumConfigWriter(self.SpectrumPath)
@@ -85,6 +136,10 @@ class SpectrumOutput(Thread):
         # self.sp.callback_start = lambda x: x # <-- dummy function to prevent update_ui on start
         self.sp.callback_start = self.VolumeFadeIn
         self.sp.start()
+        
+        # TRACE: Log run complete
+        if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("spectrum", False):
+            _log_debug(f"[Spectrum] OUTPUT: thread started, spectrum={self.s}", "trace", "spectrum")
 
 
     def update(self):
@@ -101,12 +156,24 @@ class SpectrumOutput(Thread):
                 
                 # Restore previous clip
                 self.util.pygame_screen.set_clip(prev_clip)
+                
+                # TRACE: Log update (only occasionally to reduce noise)
+                if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("spectrum", False):
+                    _log_debug(f"[Spectrum] OUTPUT: dirty_draw_update, clip={self.util.screen_rect}", "trace", "spectrum")
 
     
     def stop_thread(self):
         """ Stop thread """
+        
+        # TRACE: Log stop
+        if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("spectrum", False):
+            _log_debug(f"[Spectrum] INPUT: stopping thread", "trace", "spectrum")
 
         if hasattr(self, 'sp') and self.sp is not None:
             self.sp.stop()
         if hasattr(self, 'FadeIn'):
             del self.FadeIn
+        
+        # TRACE: Log stop complete
+        if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("spectrum", False):
+            _log_debug(f"[Spectrum] OUTPUT: thread stopped", "trace", "spectrum")

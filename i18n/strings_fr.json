@@ -150,6 +150,8 @@
     "DEBUG_TRACE":"Trace",
     "TRACE_METERS":"Trace: Compteurs/Aiguilles",
     "TRACE_METERS_DOC":"Journaliser les niveaux audio, calculs de position d'aiguille, décisions de rendu",
+    "TRACE_SPECTRUM":"Trace: Analyseur de spectre",
+    "TRACE_SPECTRUM_DOC":"Journaliser l'init du spectre, les appels de mise à jour, et le cycle de vie du thread",
     "TRACE_VINYL":"Trace: Rotation vinyle",
     "TRACE_VINYL_DOC":"Journaliser l'état de rotation du vinyle, angle, gating FPS",
     "TRACE_REEL_LEFT":"Trace: Bobine (gauche)",

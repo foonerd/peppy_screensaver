@@ -702,6 +702,7 @@
                               "data": [
                                       "debugLevel",
                                       "traceMeters",
+                                      "traceSpectrum",
                                       "traceVinyl",
                                       "traceReelLeft",
                                       "traceReelRight",
@@ -742,6 +743,14 @@
                              "visibleIf": {"field": "debugLevel", "value": "trace"},
                              "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_METERS_DOC",
                              "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_METERS",
+                             "value": false
+                            },
+                            {
+                             "id": "traceSpectrum",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_SPECTRUM_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_SPECTRUM",
                              "value": false
                             },
                             {

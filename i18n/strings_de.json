@@ -150,6 +150,8 @@
     "DEBUG_TRACE":"Trace",
     "TRACE_METERS":"Trace: Messgeräte/Nadeln",
     "TRACE_METERS_DOC":"Audio-Pegel, Nadelpositionen und Render-Entscheidungen protokollieren",
+    "TRACE_SPECTRUM":"Trace: Spektrumanalysator",
+    "TRACE_SPECTRUM_DOC":"Spectrum-Init, Update-Aufrufe und Thread-Lebenszyklus protokollieren",
     "TRACE_VINYL":"Trace: Vinyl-Rotation",
     "TRACE_VINYL_DOC":"Vinyl-Rotationsstatus, Winkel, FPS-Gating protokollieren",
     "TRACE_REEL_LEFT":"Trace: Spule (links)",

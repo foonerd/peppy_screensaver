@@ -54,7 +54,7 @@ from volumio_configfileparser import (
     COLOR_DEPTH, POSITION_TYPE, POS_X, POS_Y, START_ANIMATION, UPDATE_INTERVAL,
     TRANSITION_TYPE, TRANSITION_DURATION, TRANSITION_COLOR, TRANSITION_OPACITY,
     DEBUG_LEVEL, DEBUG_TRACE_SWITCHES,
-    DEBUG_TRACE_METERS, DEBUG_TRACE_VINYL, DEBUG_TRACE_REEL_LEFT, DEBUG_TRACE_REEL_RIGHT,
+    DEBUG_TRACE_METERS, DEBUG_TRACE_SPECTRUM, DEBUG_TRACE_VINYL, DEBUG_TRACE_REEL_LEFT, DEBUG_TRACE_REEL_RIGHT,
     DEBUG_TRACE_TONEARM, DEBUG_TRACE_ALBUMART, DEBUG_TRACE_SCROLLING,
     DEBUG_TRACE_VOLUME, DEBUG_TRACE_MUTE, DEBUG_TRACE_SHUFFLE, DEBUG_TRACE_REPEAT,
     DEBUG_TRACE_PLAYSTATE, DEBUG_TRACE_PROGRESS,
@@ -279,7 +279,7 @@ except ImportError:
     TONEARM_DROP_DURATION = "tonearm.drop.duration"
     TONEARM_LIFT_DURATION = "tonearm.lift.duration"
 
-from volumio_spectrum import SpectrumOutput
+from volumio_spectrum import SpectrumOutput, init_spectrum_debug
 
 # Optional SVG support for pygame < 2
 try:
@@ -377,9 +377,10 @@ def init_debug_config(meter_config_volumio):
     # Load trace switches from config
     trace_key_map = {
         DEBUG_TRACE_METERS: "meters",
+        DEBUG_TRACE_SPECTRUM: "spectrum",
         DEBUG_TRACE_VINYL: "vinyl",
-        DEBUG_TRACE_REEL_LEFT: "reel.left",
-        DEBUG_TRACE_REEL_RIGHT: "reel.right",
+        DEBUG_TRACE_REEL_LEFT: "reel_left",
+        DEBUG_TRACE_REEL_RIGHT: "reel_right",
         DEBUG_TRACE_TONEARM: "tonearm",
         DEBUG_TRACE_ALBUMART: "albumart",
         DEBUG_TRACE_SCROLLING: "scrolling",
@@ -617,12 +618,17 @@ class ScrollingLabel:
         except Exception:
             self._backing = pg.Surface((self._backing_rect.width, self._backing_rect.height))
             self._backing.fill((0, 0, 0))
+        
+        # TRACE: Log backing capture
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] CAPTURE: pos={self.pos}, box_w={self.box_width}, backing_rect={self._backing_rect}", "trace", "scrolling")
 
     def update_text(self, new_text):
         """Update text content, reset scroll position if changed."""
         new_text = new_text or ""
         if new_text == self.text and self.surf is not None:
             return False  # No change
+        old_text = self.text
         self.text = new_text
         self.surf = self.font.render(self.text, True, self.color)
         self.text_w, self.text_h = self.surf.get_size()
@@ -632,12 +638,21 @@ class ScrollingLabel:
         self._last_time = pg.time.get_ticks()
         self._needs_redraw = True
         self._last_draw_offset = -1
+        
+        # TRACE: Log text update
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] UPDATE: text='{new_text[:30]}', text_w={self.text_w}, box_w={self.box_width}, scrolls={self.text_w > self.box_width}", "trace", "scrolling")
+        
         return True  # Changed
 
     def force_redraw(self):
         """Force redraw on next draw() call."""
         self._needs_redraw = True
         self._last_draw_offset = -1
+        
+        # TRACE: Log force redraw
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] FORCE: text='{self.text[:20]}...', pos={self.pos}", "trace", "scrolling")
 
     def draw(self, surface):
         """Draw label, handling scroll animation with self-backing.
@@ -654,6 +669,10 @@ class ScrollingLabel:
             if not self._needs_redraw:
                 return None
             
+            # TRACE: Log static text draw
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+                log_debug(f"[Scrolling] STATIC: text='{self.text[:20]}...', pos={self.pos}, box_w={self.box_width}, text_w={self.text_w}", "trace", "scrolling")
+            
             # Restore backing before drawing (prevents artifacts)
             if self._backing and self._backing_rect:
                 surface.blit(self._backing, self._backing_rect.topleft)
@@ -664,7 +683,14 @@ class ScrollingLabel:
             else:
                 surface.blit(self.surf, (box_rect.x, box_rect.y))
             self._needs_redraw = False
-            return self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+            
+            dirty = self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+            
+            # TRACE: Log static draw output
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+                log_debug(f"[Scrolling] OUTPUT: static, dirty_rect={dirty}", "trace", "scrolling")
+            
+            return dirty
         
         # Scrolling text - check if offset changed enough to warrant redraw
         now = pg.time.get_ticks()
@@ -690,6 +716,10 @@ class ScrollingLabel:
         if current_offset_int == self._last_draw_offset and not self._needs_redraw:
             return None
         
+        # TRACE: Log scrolling text draw
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] SCROLL: text='{self.text[:20]}...', offset={current_offset_int}, forced={self._needs_redraw}, backing={self._backing_rect}", "trace", "scrolling")
+        
         # Restore backing before drawing (prevents artifacts)
         if self._backing and self._backing_rect:
             surface.blit(self._backing, self._backing_rect.topleft)
@@ -703,7 +733,14 @@ class ScrollingLabel:
         
         self._last_draw_offset = current_offset_int
         self._needs_redraw = False
-        return self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+        
+        dirty = self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+        
+        # TRACE: Log draw output
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] OUTPUT: dirty_rect={dirty}", "trace", "scrolling")
+        
+        return dirty
 
 
 # =============================================================================
@@ -922,10 +959,20 @@ class AlbumArtRenderer:
         if self._scaled_surf is None:
             return False
         if self._need_first_blit:
+            # TRACE: Log first blit decision
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("albumart", False):
+                log_debug(f"[AlbumArt] DECISION: will_blit=True (first_blit)", "trace", "albumart")
             return True
         if not self.rotate_enabled or self.rotate_rpm <= 0.0:
             return self._needs_redraw
-        return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        
+        result = (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        
+        # TRACE: Log will_blit decision (only when true to reduce noise)
+        if result and DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("albumart", False):
+            log_debug(f"[AlbumArt] DECISION: will_blit=True, angle={self._current_angle:.1f}, rotate_enabled={self.rotate_enabled}", "trace", "albumart")
+        
+        return result
 
     def get_backing_rect(self):
         """Get backing rect for this renderer, extended for rotation if needed."""
@@ -964,6 +1011,11 @@ class AlbumArtRenderer:
         # FPS gating: skip if not time to blit yet (unless advance_angle=False which forces render)
         if advance_angle and not self.will_blit(now_ticks):
             return None
+
+        # TRACE: Log render input
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("albumart", False):
+            coupled = "vinyl-coupled" if self.vinyl_renderer else "independent"
+            log_debug(f"[AlbumArt] INPUT: status={status}, angle={self._current_angle:.1f}, advance={advance_angle}, {coupled}", "trace", "albumart")
 
         dirty_rect = None
         # Only update timing when advancing (so tonearm redraws don't reset album art's FPS schedule)
@@ -1024,6 +1076,12 @@ class AlbumArtRenderer:
             except Exception:
                 pass
 
+        # TRACE: Log render output
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("albumart", False):
+            mode = "rotating" if (self.rotate_enabled and self.rotate_rpm > 0.0) else "static"
+            frame_info = f"frame_idx={idx}" if (self.rotate_enabled and self._rot_frames) else ""
+            log_debug(f"[AlbumArt] OUTPUT: {mode}, angle={self._current_angle:.1f}, {frame_info}, rect={dirty_rect}", "trace", "albumart")
+
         return dirty_rect
 
 
@@ -1041,7 +1099,7 @@ class ReelRenderer:
 
     def __init__(self, base_path, meter_folder, filename, pos, center, 
                  rotate_rpm=1.5, angle_step_deg=1.0, rotation_fps=8, rotation_step=6,
-                 speed_multiplier=1.0, direction="ccw"):
+                 speed_multiplier=1.0, direction="ccw", name="reel"):
         """
         Initialize reel renderer.
         
@@ -1056,6 +1114,7 @@ class ReelRenderer:
         :param rotation_step: Degrees per pre-computed frame
         :param speed_multiplier: Multiplier for rotation speed (from config)
         :param direction: Rotation direction - "ccw" (counter-clockwise) or "cw" (clockwise)
+        :param name: Identifier for trace logging ("reel_left" or "reel_right")
         """
         self.base_path = base_path
         self.meter_folder = meter_folder
@@ -1067,6 +1126,10 @@ class ReelRenderer:
         self.rotation_fps = int(rotation_fps)
         self.rotation_step = int(rotation_step)
         self.direction_mult = 1 if direction == "cw" else -1  # CCW = negative angle change
+        
+        # Trace identification
+        self._trace_name = name.replace("_", " ").title()  # "reel_left" -> "Reel Left"
+        self._trace_component = name.replace(".", "_")  # "reel.left" -> "reel_left"
         
         # Runtime state
         self._original_surf = None
@@ -1128,10 +1191,20 @@ class ReelRenderer:
         if not self._loaded or not self._original_surf:
             return False
         if self._need_first_blit:
+            # TRACE: Log first blit decision
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+                log_debug(f"[{self._trace_name}] DECISION: will_blit=True (first_blit)", "trace", self._trace_component)
             return True
         if not self.center or self.rotate_rpm <= 0.0:
             return self._needs_redraw
-        return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        
+        result = (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        
+        # TRACE: Log will_blit decision (only when true to reduce noise)
+        if result and DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+            log_debug(f"[{self._trace_name}] DECISION: will_blit=True, angle={self._current_angle:.1f}", "trace", self._trace_component)
+        
+        return result
     
     def get_backing_rect(self):
         """Get bounding rectangle for backing surface (extended for rotation)."""
@@ -1164,6 +1237,10 @@ class ReelRenderer:
         if not self.will_blit(now_ticks):
             return None
         
+        # TRACE: Log render input
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+            log_debug(f"[{self._trace_name}] INPUT: status={status}, angle={self._current_angle:.1f}, volatile={volatile}", "trace", self._trace_component)
+        
         self._last_blit_tick = now_ticks
         
         if not self.center:
@@ -1171,9 +1248,13 @@ class ReelRenderer:
             screen.blit(self._original_surf, self.pos)
             self._needs_redraw = False
             self._need_first_blit = False
-            return pg.Rect(self.pos[0], self.pos[1], 
+            rect = pg.Rect(self.pos[0], self.pos[1], 
                          self._original_surf.get_width(), 
                          self._original_surf.get_height())
+            # TRACE: Log static render output
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+                log_debug(f"[{self._trace_name}] OUTPUT: static, rect={rect}", "trace", self._trace_component)
+            return rect
         
         # Update angle based on playback status
         self._update_angle(status, now_ticks, volatile=volatile)
@@ -1194,7 +1275,15 @@ class ReelRenderer:
         screen.blit(rot, rot_rect.topleft)
         self._needs_redraw = False
         self._need_first_blit = False
-        return self.get_backing_rect()
+        
+        backing_rect = self.get_backing_rect()
+        
+        # TRACE: Log rotated render output
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+            frame_info = f"frame_idx={idx}" if self._rot_frames else "realtime"
+            log_debug(f"[{self._trace_name}] OUTPUT: {frame_info}, angle={self._current_angle:.1f}, rect={backing_rect}", "trace", self._trace_component)
+        
+        return backing_rect
 
 
 # =============================================================================
@@ -1300,10 +1389,20 @@ class VinylRenderer:
         if not self._loaded or not self._original_surf:
             return False
         if self._need_first_blit:
+            # TRACE: Log first blit decision
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("vinyl", False):
+                log_debug(f"[Vinyl] DECISION: will_blit=True (first_blit)", "trace", "vinyl")
             return True
         if not self.center or self.rotate_rpm <= 0.0:
             return self._needs_redraw
-        return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        
+        result = (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        
+        # TRACE: Log will_blit decision (only when true to reduce noise)
+        if result and DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("vinyl", False):
+            log_debug(f"[Vinyl] DECISION: will_blit=True, angle={self._current_angle:.1f}, interval={self._blit_interval_ms}ms", "trace", "vinyl")
+        
+        return result
     
     def get_backing_rect(self):
         """Get bounding rectangle for backing surface (extended for rotation)."""
@@ -1335,6 +1434,10 @@ class VinylRenderer:
         if not self.will_blit(now_ticks):
             return None
         
+        # TRACE: Log render input
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("vinyl", False):
+            log_debug(f"[Vinyl] INPUT: status={status}, angle={self._current_angle:.1f}, volatile={volatile}", "trace", "vinyl")
+        
         self._last_blit_tick = now_ticks
         
         if not self.center:
@@ -1342,9 +1445,13 @@ class VinylRenderer:
             screen.blit(self._original_surf, self.pos)
             self._needs_redraw = False
             self._need_first_blit = False
-            return pg.Rect(self.pos[0], self.pos[1],
+            rect = pg.Rect(self.pos[0], self.pos[1],
                          self._original_surf.get_width(),
                          self._original_surf.get_height())
+            # TRACE: Log static render output
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("vinyl", False):
+                log_debug(f"[Vinyl] OUTPUT: static (no rotation), rect={rect}", "trace", "vinyl")
+            return rect
         
         # Update angle based on playback status
         self._update_angle(status, now_ticks, volatile=volatile)
@@ -1365,7 +1472,15 @@ class VinylRenderer:
         screen.blit(rot, rot_rect.topleft)
         self._needs_redraw = False
         self._need_first_blit = False
-        return self.get_backing_rect()
+        
+        backing_rect = self.get_backing_rect()
+        
+        # TRACE: Log rotated render output
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("vinyl", False):
+            frame_info = f"frame_idx={idx}" if self._rot_frames else "realtime"
+            log_debug(f"[Vinyl] OUTPUT: {frame_info}, angle={self._current_angle:.1f}, backing={backing_rect}", "trace", "vinyl")
+        
+        return backing_rect
 
 
 # =============================================================================
@@ -2063,6 +2178,7 @@ class CallBack:
             
             # Start spectrum if visible
             if meter_section_volumio[SPECTRUM_VISIBLE]:
+                init_spectrum_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
                 self.spectrum_output = SpectrumOutput(self.util, self.meter_config_volumio, CurDir)
                 self.spectrum_output.start()
         
@@ -2728,7 +2844,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                 rotation_fps=rot_fps,
                 rotation_step=rot_step,
                 speed_multiplier=spool_left_mult,
-                direction=reel_direction
+                direction=reel_direction,
+                name="reel_left"
             )
             # Capture backing for left reel
             backing_rect = reel_left_renderer.get_backing_rect()
@@ -2748,7 +2865,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                 rotation_fps=rot_fps,
                 rotation_step=rot_step,
                 speed_multiplier=spool_right_mult,
-                direction=reel_direction
+                direction=reel_direction,
+                name="reel_right"
             )
             # Capture backing for right reel
             backing_rect = reel_right_renderer.get_backing_rect()
@@ -3239,6 +3357,17 @@ def start_display_output(pm, callback, meter_config_volumio):
             # Any animated element drawing may wipe overlapping areas via backing restore
             any_animated_will_draw = any_moving_render
             
+            # TRACE: Log will_blit decisions for all animated components
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("frame", False):
+                if any_animated_will_draw and _dbg_frame_count % 10 == 0:  # Every 10 frames when animating
+                    blits = []
+                    if tonearm_will_render: blits.append("tonearm")
+                    if album_will_render: blits.append("albumart")
+                    if vinyl_will_blit: blits.append("vinyl")
+                    if left_will_blit: blits.append("reel_L")
+                    if right_will_blit: blits.append("reel_R")
+                    log_debug(f"[Frame #{_dbg_frame_count}] DECISION: will_blit=[{','.join(blits)}]", "trace", "frame")
+            
             # =================================================================
             # RENDER Z-ORDER (bottom to top):
             # 1. bgr (via backing restore)
@@ -3458,6 +3587,10 @@ def start_display_output(pm, callback, meter_config_volumio):
                 time_remain_sec = meta.get("_time_remain", -1)
                 time_last_update = meta.get("_time_update", 0)
                 
+                # TRACE: Log time input
+                if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
+                    log_debug(f"[Time] INPUT: remain={time_remain_sec}s, playing={is_playing}, persist_mode={persist_display_mode}, persist_sec={persist_countdown_sec}", "trace", "time")
+                
                 # Determine what to display
                 # Only show persist countdown if mode is "countdown"
                 show_persist_countdown = (
@@ -3488,7 +3621,21 @@ def start_display_output(pm, callback, meter_config_volumio):
                     # Force redraw if tonearm or vinyl backing was restored
                     # (vinyl backing on turntable skins may overlap time area)
                     # or if time string changed
-                    if time_str != last_time_str or tonearm_will_render or vinyl_will_blit:
+                    needs_redraw = time_str != last_time_str or tonearm_will_render or vinyl_will_blit
+                    
+                    # TRACE: Log time decision
+                    if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
+                        if needs_redraw:
+                            reason = []
+                            if time_str != last_time_str:
+                                reason.append("changed")
+                            if tonearm_will_render:
+                                reason.append("tonearm")
+                            if vinyl_will_blit:
+                                reason.append("vinyl")
+                            log_debug(f"[Time] DECISION: redraw=True ({'+'.join(reason)}), str={time_str}, last={last_time_str}", "trace", "time")
+                    
+                    if needs_redraw:
                         last_time_str = time_str
                         
                         # Restore backing for time area
@@ -3507,6 +3654,10 @@ def start_display_output(pm, callback, meter_config_volumio):
                         
                         last_time_surf = ov["fontDigi"].render(time_str, True, t_color)
                         screen.blit(last_time_surf, ov["time_pos"])
+                        
+                        # TRACE: Log time output
+                        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
+                            log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {ov['time_pos']}, color={t_color}", "trace", "time")
             
             # Format icon - OPTIMIZED with caching (swapped with sample per Gelo5)
             # Force redraw if tonearm rendered (backing restore may have wiped icon area)
@@ -3574,6 +3725,10 @@ def start_display_output(pm, callback, meter_config_volumio):
             # OPTIMIZATION: Update only dirty rectangles
             if dirty_rects:
                 pg.display.update(dirty_rects)
+                # TRACE: Log frame output summary
+                if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("frame", False):
+                    if _dbg_frame_count % 30 == 0:  # Every 30 frames to reduce noise
+                        log_debug(f"[Frame #{_dbg_frame_count}] OUTPUT: dirty_rects={len(dirty_rects)}", "trace", "frame")
             # If nothing changed, skip display update entirely
         
         # Handle events

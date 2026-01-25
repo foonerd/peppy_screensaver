@@ -150,6 +150,8 @@
     "DEBUG_TRACE":"Trace",
     "TRACE_METERS":"Trace: Meters/Needles",
     "TRACE_METERS_DOC":"Log audio levels, needle position calculations, and render decisions",
+    "TRACE_SPECTRUM":"Trace: Spectrum analyzer",
+    "TRACE_SPECTRUM_DOC":"Log spectrum init, update calls, and thread lifecycle",
     "TRACE_VINYL":"Trace: Vinyl rotation",
     "TRACE_VINYL_DOC":"Log vinyl rotation state, angle, FPS gating, and skip reasons",
     "TRACE_REEL_LEFT":"Trace: Reel (left)",

@@ -778,7 +778,7 @@ peppyScreensaver.prototype.getUIConfig = function() {
             
             // trace switches (all default to false)
             var traceKeys = [
-                'debug.trace.meters', 'debug.trace.vinyl', 'debug.trace.reel.left',
+                'debug.trace.meters', 'debug.trace.spectrum', 'debug.trace.vinyl', 'debug.trace.reel.left',
                 'debug.trace.reel.right', 'debug.trace.tonearm', 'debug.trace.albumart',
                 'debug.trace.scrolling', 'debug.trace.volume', 'debug.trace.mute',
                 'debug.trace.shuffle', 'debug.trace.repeat', 'debug.trace.playstate',
@@ -1438,6 +1438,7 @@ peppyScreensaver.prototype.saveDebugConf = function (confData) {
     // write trace switches (map UI field names to config keys)
     var traceMap = {
         'traceMeters': 'debug.trace.meters',
+        'traceSpectrum': 'debug.trace.spectrum',
         'traceVinyl': 'debug.trace.vinyl',
         'traceReelLeft': 'debug.trace.reel.left',
         'traceReelRight': 'debug.trace.reel.right',

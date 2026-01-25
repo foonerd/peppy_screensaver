@@ -22,61 +22,47 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
-# =============================================================================
-# Debug logging for indicators (shared config with peppymeter)
-# =============================================================================
-_DEBUG_LOG_PATH = "/tmp/peppy_debug.log"
 
-# Debug level and trace switches - set by init_indicator_debug() from main module
+# =============================================================================
+# Debug logging support (shared from main module)
+# =============================================================================
 _DEBUG_LEVEL = "off"
-_DEBUG_TRACE = {
-    "volume": False,
-    "mute": False,
-    "shuffle": False,
-    "repeat": False,
-    "playstate": False,
-    "progress": False,
-}
+_DEBUG_TRACE = {}
 
 def init_indicator_debug(level, trace_dict):
-    """Initialize indicator debug settings from main module.
+    """Initialize debug settings from main module.
     
-    :param level: Debug level ('off', 'basic', 'verbose', 'trace')
-    :param trace_dict: Dict of trace switches from main module
+    :param level: Debug level string ("off", "basic", "verbose", "trace")
+    :param trace_dict: Dictionary of trace component switches
     """
     global _DEBUG_LEVEL, _DEBUG_TRACE
     _DEBUG_LEVEL = level
-    # Copy relevant trace switches
-    for key in _DEBUG_TRACE:
-        _DEBUG_TRACE[key] = trace_dict.get(key, False)
+    _DEBUG_TRACE = trace_dict
 
 def _log_debug(msg, level="basic", component=None):
-    """Debug logging for indicators module.
+    """Log debug message if level is enabled.
     
     :param msg: Message to log
-    :param level: Required level - 'basic', 'verbose', or 'trace'
-    :param component: For trace level, which component (e.g., 'volume', 'mute')
+    :param level: Required level ("basic", "verbose", "trace")
+    :param component: For trace level, the component name to check
     """
     if _DEBUG_LEVEL == "off":
         return
     
-    if level == "basic":
-        pass  # Logs at any level
-    elif level == "verbose":
-        if _DEBUG_LEVEL == "basic":
-            return
-    elif level == "trace":
-        if _DEBUG_LEVEL != "trace":
-            return
-        if component and not _DEBUG_TRACE.get(component, False):
+    level_order = {"off": 0, "basic": 1, "verbose": 2, "trace": 3}
+    current_level = level_order.get(_DEBUG_LEVEL, 0)
+    required_level = level_order.get(level, 1)
+    
+    if current_level < required_level:
+        return
+    
+    # For trace level, check component switch
+    if level == "trace" and component:
+        if not _DEBUG_TRACE.get(component, False):
             return
     
-    try:
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        with open(_DEBUG_LOG_PATH, "a") as f:
-            f.write(f"[{timestamp}] {msg}\n")
-    except:
-        pass
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    print(f"[{timestamp}] {msg}")
 
 
 # =============================================================================
@@ -1331,15 +1317,25 @@ class IndicatorRenderer:
         # Volume
         if self._volume:
             volume = metadata.get("volume", 0)
-            if force or volume != self._prev_volume:
+            will_render = force or volume != self._prev_volume
+            
+            # TRACE: Log volume input and decision
+            if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("volume", False):
+                _log_debug(f"[Volume] INPUT: volume={volume}, prev={self._prev_volume}, force={force}", "trace", "volume")
+                if will_render:
+                    reason = "forced" if force else "changed"
+                    _log_debug(f"[Volume] DECISION: render=True ({reason})", "trace", "volume")
+            
+            if will_render:
                 if force:
                     self._volume.force_redraw()
                 self._volume.restore_backing(screen)
                 rect = self._volume.render(screen, volume)
                 if rect:
                     dirty_rects.append(rect)
-                if volume != self._prev_volume:
-                    _log_debug(f"[Indicators] Volume: {self._prev_volume} -> {volume}", "trace", "volume")
+                    # TRACE: Log volume output
+                    if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("volume", False):
+                        _log_debug(f"[Volume] OUTPUT: rect={rect}, type={self._volume._render_type}", "trace", "volume")
                 self._prev_volume = volume
         
         # Mute (3 states: off=0, on=1, zero=2)
@@ -1354,35 +1350,60 @@ class IndicatorRenderer:
             else:
                 mute_state = 0  # not muted, volume > 0
             
-            if force or mute_state != self._prev_mute:
+            will_render = force or mute_state != self._prev_mute
+            
+            # TRACE: Log mute input and decision
+            if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("mute", False):
+                state_names = {0: "off", 1: "muted", 2: "zero"}
+                _log_debug(f"[Mute] INPUT: mute_flag={mute}, volume={volume}, state={state_names.get(mute_state, mute_state)}", "trace", "mute")
+                if will_render:
+                    reason = "forced" if force else "changed"
+                    _log_debug(f"[Mute] DECISION: render=True ({reason}), prev_state={self._prev_mute}", "trace", "mute")
+            
+            if will_render:
                 if force:
                     self._mute.force_redraw()
                 self._mute.restore_backing(screen)
                 rect = self._mute.render(screen, mute_state)
                 if rect:
                     dirty_rects.append(rect)
-                if mute_state != self._prev_mute:
-                    _log_debug(f"[Indicators] Mute state: {self._prev_mute} -> {mute_state} (mute={mute}, vol={volume})", "trace", "mute")
+                    # TRACE: Log mute output
+                    if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("mute", False):
+                        _log_debug(f"[Mute] OUTPUT: state={mute_state}, rect={rect}", "trace", "mute")
                 self._prev_mute = mute_state
         
         # Shuffle (3 states: off=0, shuffle=1, infinity=2)
         if self._shuffle:
             shuffle = metadata.get("random", False)
             infinity = metadata.get("infinity", False)
-            if force or shuffle != self._prev_shuffle or infinity != self._prev_infinity:
+            will_render = force or shuffle != self._prev_shuffle or infinity != self._prev_infinity
+            
+            # State logic: infinity takes priority over shuffle
+            if infinity:
+                state_idx = 2
+            elif shuffle:
+                state_idx = 1
+            else:
+                state_idx = 0
+            
+            # TRACE: Log shuffle input and decision
+            if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("shuffle", False):
+                state_names = {0: "off", 1: "shuffle", 2: "infinity"}
+                _log_debug(f"[Shuffle] INPUT: shuffle={shuffle}, infinity={infinity}, state={state_names.get(state_idx, state_idx)}", "trace", "shuffle")
+                if will_render:
+                    reason = "forced" if force else "changed"
+                    _log_debug(f"[Shuffle] DECISION: render=True ({reason})", "trace", "shuffle")
+            
+            if will_render:
                 if force:
                     self._shuffle.force_redraw()
                 self._shuffle.restore_backing(screen)
-                # State logic: infinity takes priority over shuffle
-                if infinity:
-                    state_idx = 2
-                elif shuffle:
-                    state_idx = 1
-                else:
-                    state_idx = 0
                 rect = self._shuffle.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
+                    # TRACE: Log shuffle output
+                    if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("shuffle", False):
+                        _log_debug(f"[Shuffle] OUTPUT: state={state_idx}, rect={rect}", "trace", "shuffle")
                 self._prev_shuffle = shuffle
                 self._prev_infinity = infinity
         
@@ -1390,40 +1411,65 @@ class IndicatorRenderer:
         if self._repeat:
             repeat = metadata.get("repeat", False)
             repeat_single = metadata.get("repeatSingle", False)
-            if force or repeat != self._prev_repeat or repeat_single != self._prev_repeat_single:
+            will_render = force or repeat != self._prev_repeat or repeat_single != self._prev_repeat_single
+            
+            if repeat_single:
+                state_idx = 2
+            elif repeat:
+                state_idx = 1
+            else:
+                state_idx = 0
+            
+            # TRACE: Log repeat input and decision
+            if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("repeat", False):
+                state_names = {0: "off", 1: "all", 2: "single"}
+                _log_debug(f"[Repeat] INPUT: repeat={repeat}, repeatSingle={repeat_single}, state={state_names.get(state_idx, state_idx)}", "trace", "repeat")
+                if will_render:
+                    reason = "forced" if force else "changed"
+                    _log_debug(f"[Repeat] DECISION: render=True ({reason})", "trace", "repeat")
+            
+            if will_render:
                 if force:
                     self._repeat.force_redraw()
                 self._repeat.restore_backing(screen)
-                if repeat_single:
-                    state_idx = 2
-                elif repeat:
-                    state_idx = 1
-                else:
-                    state_idx = 0
                 rect = self._repeat.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
+                    # TRACE: Log repeat output
+                    if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("repeat", False):
+                        _log_debug(f"[Repeat] OUTPUT: state={state_idx}, rect={rect}", "trace", "repeat")
                 self._prev_repeat = repeat
                 self._prev_repeat_single = repeat_single
         
         # Play/Pause/Stop (3 states: stop=0, pause=1, play=2)
         if self._playstate:
             status = metadata.get("status", "stop")
-            if force or status != self._prev_status:
+            will_render = force or status != self._prev_status
+            
+            if status == "play":
+                state_idx = 2
+            elif status == "pause":
+                state_idx = 1
+            else:
+                state_idx = 0
+            
+            # TRACE: Log playstate input and decision
+            if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("playstate", False):
+                _log_debug(f"[Playstate] INPUT: status={status}, state_idx={state_idx}", "trace", "playstate")
+                if will_render:
+                    reason = "forced" if force else "changed"
+                    _log_debug(f"[Playstate] DECISION: render=True ({reason}), prev={self._prev_status}", "trace", "playstate")
+            
+            if will_render:
                 if force:
                     self._playstate.force_redraw()
                 self._playstate.restore_backing(screen)
-                if status == "play":
-                    state_idx = 2
-                elif status == "pause":
-                    state_idx = 1
-                else:
-                    state_idx = 0
                 rect = self._playstate.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
-                if status != self._prev_status:
-                    _log_debug(f"[Indicators] Playstate: {self._prev_status} -> {status}", "trace", "playstate")
+                    # TRACE: Log playstate output
+                    if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("playstate", False):
+                        _log_debug(f"[Playstate] OUTPUT: state={state_idx}, rect={rect}", "trace", "playstate")
                 self._prev_status = status
         
         # Progress bar
@@ -1437,14 +1483,23 @@ class IndicatorRenderer:
             
             # Quantize to 1% steps to reduce redraws
             progress_quantized = int(progress_pct)
-            if force or progress_quantized != self._prev_progress:
+            will_render = force or progress_quantized != self._prev_progress
+            
+            # TRACE: Log progress input and decision
+            if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("progress", False):
+                _log_debug(f"[Progress] INPUT: seek={seek}ms, duration={duration}s, pct={progress_pct:.1f}%", "trace", "progress")
+                if will_render:
+                    reason = "forced" if force else "changed"
+                    _log_debug(f"[Progress] DECISION: render=True ({reason}), quantized={progress_quantized}%", "trace", "progress")
+            
+            if will_render:
                 if force:
                     self._progress.force_redraw()
                 self._progress.restore_backing(screen)
                 rect = self._progress.render(screen, progress_pct)
                 if rect:
                     dirty_rects.append(rect)
-                # Log significant progress jumps (>10%)
-                if self._prev_progress is not None and abs(progress_quantized - self._prev_progress) > 10:
-                    _log_debug(f"[Indicators] Progress jump: {self._prev_progress}% -> {progress_quantized}% (seek={seek/1000:.1f}s, dur={duration}s)", "trace", "progress")
+                    # TRACE: Log progress output
+                    if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("progress", False):
+                        _log_debug(f"[Progress] OUTPUT: pct={progress_pct:.1f}%, rect={rect}", "trace", "progress")
                 self._prev_progress = progress_quantized
