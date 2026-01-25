@@ -1559,11 +1559,37 @@ class TonearmRenderer:
         self._last_blit_rect = None
         self._last_backing = None
         
+        # Exclusion zones - areas where tonearm backing should not restore
+        # (scrollers manage these areas with their own backings)
+        self._exclusion_zones = []
+        self._exclusion_min_x = 9999  # Pre-calculated for fast early-exit check
+        
         # Arm geometry for backing rect calculation
         self._arm_length = 0
         
         # Load the tonearm image
         self._load_image()
+    
+    def set_exclusion_zones(self, zones):
+        """Set rectangles that should be excluded from backing restore.
+        These are typically scroller areas that manage their own backings.
+        
+        :param zones: List of pygame.Rect objects to exclude
+        """
+        self._exclusion_zones = zones if zones else []
+        # Pre-calculate min x for fast early-exit check
+        if self._exclusion_zones:
+            self._exclusion_min_x = min(z.left for z in self._exclusion_zones)
+        else:
+            self._exclusion_min_x = 9999
+    
+    def get_last_blit_rect(self):
+        """Return the last blit rect for overlap checking."""
+        return self._last_blit_rect
+    
+    def is_animating(self):
+        """Return True if tonearm is in DROP or LIFT animation."""
+        return self._state in (TONEARM_STATE_DROP, TONEARM_STATE_LIFT)
     
     def _load_image(self):
         """Load the tonearm PNG file."""
@@ -1866,16 +1892,89 @@ class TonearmRenderer:
         Restore backing from previous frame's tonearm position.
         Call this BEFORE meter.run() to avoid wiping meters.
         
+        Excludes any configured exclusion zones (scroller areas) to prevent
+        restoring stale content in those areas. Uses efficient chunk-based
+        blitting to avoid per-row overhead.
+        
         :param screen: Pygame screen surface
         :return: Dirty rect if restored, None if nothing to restore
         """
-        if self._last_backing is not None and self._last_blit_rect is not None:
-            # TRACE: Log backing restore
-            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("tonearm", False):
-                log_debug(f"[Tonearm] RESTORE: rect={self._last_blit_rect}, state={self._state}", "trace", "tonearm")
+        if self._last_backing is None or self._last_blit_rect is None:
+            return None
+        
+        # TRACE: Log backing restore
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("tonearm", False):
+            log_debug(f"[Tonearm] RESTORE: rect={self._last_blit_rect}, state={self._state}, exclusions={len(self._exclusion_zones)}", "trace", "tonearm")
+        
+        # If no exclusion zones or not animating, restore entire backing
+        if not self._exclusion_zones or self._state == TONEARM_STATE_TRACKING:
             screen.blit(self._last_backing, self._last_blit_rect.topleft)
             return self._last_blit_rect.copy()
-        return None
+        
+        # Find exclusion zones that actually overlap with current backing rect
+        br = self._last_blit_rect
+        overlaps = []
+        for zone in self._exclusion_zones:
+            if br.colliderect(zone):
+                overlaps.append(br.clip(zone))
+        
+        # If no actual overlap, restore entire backing
+        if not overlaps:
+            screen.blit(self._last_backing, self._last_blit_rect.topleft)
+            return self._last_blit_rect.copy()
+        
+        # Efficient chunk-based restore: split into up to 4 regions around exclusions
+        # Find bounding box of all overlapping exclusion zones
+        ex_left = min(o.left for o in overlaps)
+        ex_right = max(o.right for o in overlaps)
+        ex_top = min(o.top for o in overlaps)
+        ex_bottom = max(o.bottom for o in overlaps)
+        
+        bx, by = br.topleft
+        bw, bh = br.size
+        
+        # Region 1: Full width strip ABOVE exclusion zones
+        if ex_top > by:
+            h = ex_top - by
+            src_rect = pg.Rect(0, 0, bw, h)
+            screen.blit(self._last_backing, (bx, by), src_rect)
+        
+        # Region 2: Full width strip BELOW exclusion zones
+        if ex_bottom < by + bh:
+            h = (by + bh) - ex_bottom
+            local_y = ex_bottom - by
+            src_rect = pg.Rect(0, local_y, bw, h)
+            screen.blit(self._last_backing, (bx, ex_bottom), src_rect)
+        
+        # Region 3: Strip to LEFT of exclusion zones (between top and bottom of exclusions)
+        if ex_left > bx:
+            w = ex_left - bx
+            h = ex_bottom - ex_top
+            local_y = ex_top - by
+            src_rect = pg.Rect(0, local_y, w, h)
+            screen.blit(self._last_backing, (bx, ex_top), src_rect)
+        
+        # Region 4: Strip to RIGHT of exclusion zones (between top and bottom of exclusions)
+        if ex_right < bx + bw:
+            w = (bx + bw) - ex_right
+            h = ex_bottom - ex_top
+            local_x = ex_right - bx
+            local_y = ex_top - by
+            src_rect = pg.Rect(local_x, local_y, w, h)
+            screen.blit(self._last_backing, (ex_right, ex_top), src_rect)
+        
+        return self._last_blit_rect.copy()
+    
+    def has_scroller_overlap(self):
+        """Check if current tonearm position overlaps with scroller exclusion zones.
+        Used to determine if scrollers need force_redraw during animation.
+        
+        :return: True if tonearm backing overlaps any exclusion zone
+        """
+        if not self._last_blit_rect or not self._exclusion_zones:
+            return False
+        # Fast check using pre-calculated min_x
+        return self._last_blit_rect.right >= self._exclusion_min_x
     
     def render(self, screen, now_ticks, force=False):
         """
@@ -1958,8 +2057,8 @@ class TonearmRenderer:
         blit_y = int(scr_py - rot_py)
         blit_rect = pg.Rect(blit_x, blit_y, rot_w, rot_h)
         
-        # Capture backing for THIS frame's position AFTER other elements are drawn
-        # (backing is captured just before we draw the tonearm, so it includes meters etc.)
+        # Capture backing for THIS frame's position BEFORE drawing tonearm
+        # (backing must NOT contain the tonearm itself to avoid ghosting)
         screen_rect = screen.get_rect()
         clipped_rect = blit_rect.clip(screen_rect)
         if clipped_rect.width > 0 and clipped_rect.height > 0:
@@ -3026,6 +3125,20 @@ def start_display_output(pm, callback, meter_config_volumio):
         # Type rect
         type_rect = pg.Rect(type_pos[0], type_pos[1], type_dim[0], type_dim[1]) if (type_pos and type_dim) else None
         
+        # Set tonearm exclusion zones (scroller backing rects) to prevent
+        # restoring stale content in text areas during DROP/LIFT animations
+        if tonearm_renderer:
+            exclusion_zones = []
+            if artist_scroller and artist_scroller._backing_rect:
+                exclusion_zones.append(artist_scroller._backing_rect)
+            if title_scroller and title_scroller._backing_rect:
+                exclusion_zones.append(title_scroller._backing_rect)
+            if album_scroller and album_scroller._backing_rect:
+                exclusion_zones.append(album_scroller._backing_rect)
+            if exclusion_zones:
+                tonearm_renderer.set_exclusion_zones(exclusion_zones)
+                log_debug(f"[overlay_init] Tonearm exclusion zones set: {len(exclusion_zones)} scroller areas", "verbose")
+        
         # Reset cover
         last_cover_url = None
         cover_img = None
@@ -3525,24 +3638,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                         album_rendered = True
                         log_debug("[AlbumArt] OUTPUT: rendered (rotation)", "trace", "albumart")
             
-            # STEP 6: Render tonearm (above album art, below indicators)
-            # Must redraw if any lower element rendered (may have wiped tonearm area)
-            if tonearm and any_animated_will_draw:
-                force = not tonearm_will_render  # Force if not naturally rendering
-                rect = tonearm.render(screen, now_ticks, force=force)
-                if rect:
-                    dirty_rects.append(rect)
-            
-            # STEP 6.5: Render indicators (above tonearm, below metadata)
-            # Volume, mute, shuffle, repeat, play/pause, progress bar
-            # Force redraw when any animated element's backing restored (may overlap indicator areas)
-            indicator_renderer = ov.get("indicator_renderer")
-            if indicator_renderer and indicator_renderer.has_indicators():
-                indicator_renderer.render(screen, meta, dirty_rects, force=any_animated_will_draw)
-            
-            # STEP 7: Metadata/text (above indicators, below fgr)
-            # When tonearm renders, its large backing restore may wipe metadata areas
-            # Force scrollers to redraw in that case
+            # STEP 6: Metadata/text - rendered BEFORE tonearm so tonearm captures fresh content
+            # Exclusion zones in tonearm restore prevent stale content in scroller areas
             
             if ov["artist_scroller"]:
                 # Combine artist + album if no album position
@@ -3550,27 +3647,36 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if not ov["album_pos"] and album:
                     display_artist = f"{artist} - {album}" if artist else album
                 ov["artist_scroller"].update_text(display_artist)
-                if tonearm_will_render:
-                    ov["artist_scroller"].force_redraw()
                 rect = ov["artist_scroller"].draw(screen)
                 if rect:
                     dirty_rects.append(rect)
             
             if ov["title_scroller"]:
                 ov["title_scroller"].update_text(title)
-                if tonearm_will_render:
-                    ov["title_scroller"].force_redraw()
                 rect = ov["title_scroller"].draw(screen)
                 if rect:
                     dirty_rects.append(rect)
             
             if ov["album_scroller"]:
                 ov["album_scroller"].update_text(album)
-                if tonearm_will_render:
-                    ov["album_scroller"].force_redraw()
                 rect = ov["album_scroller"].draw(screen)
                 if rect:
                     dirty_rects.append(rect)
+            
+            # STEP 7: Render tonearm (now AFTER scrollers so backing has fresh content)
+            # Tonearm draws ON TOP of text in overlap zone
+            if tonearm and any_animated_will_draw:
+                force = not tonearm_will_render  # Force if not naturally rendering
+                rect = tonearm.render(screen, now_ticks, force=force)
+                if rect:
+                    dirty_rects.append(rect)
+            
+            # STEP 7.5: Render indicators (above tonearm)
+            # Volume, mute, shuffle, repeat, play/pause, progress bar
+            # Force redraw when any animated element's backing restored (may overlap indicator areas)
+            indicator_renderer = ov.get("indicator_renderer")
+            if indicator_renderer and indicator_renderer.has_indicators():
+                indicator_renderer.render(screen, meta, dirty_rects, force=any_animated_will_draw)
             
             # Time remaining - OPTIMIZED with caching
             # Supports: freeze when paused, optional persist countdown display
@@ -3628,10 +3734,11 @@ def start_display_output(pm, callback, meter_config_volumio):
                     secs = display_sec % 60
                     time_str = f"{mins:02d}:{secs:02d}"
                     
-                    # Force redraw if tonearm or vinyl backing was restored
+                    # Force redraw if vinyl backing was restored
                     # (vinyl backing on turntable skins may overlap time area)
                     # or if time string changed
-                    needs_redraw = time_str != last_time_str or tonearm_will_render or vinyl_will_blit
+                    # NOTE: tonearm removed - time position (315,667) outside tonearm backing area
+                    needs_redraw = time_str != last_time_str or vinyl_will_blit
                     
                     # TRACE: Log time decision
                     if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
@@ -3639,8 +3746,6 @@ def start_display_output(pm, callback, meter_config_volumio):
                             reason = []
                             if time_str != last_time_str:
                                 reason.append("changed")
-                            if tonearm_will_render:
-                                reason.append("tonearm")
                             if vinyl_will_blit:
                                 reason.append("vinyl")
                             log_debug(f"[Time] DECISION: redraw=True ({'+'.join(reason)}), str={time_str}, last={last_time_str}", "trace", "time")
@@ -3670,8 +3775,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                             log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {ov['time_pos']}, color={t_color}", "trace", "time")
             
             # Format icon - OPTIMIZED with caching (swapped with sample per Gelo5)
-            # Force redraw if tonearm rendered (backing restore may have wiped icon area)
-            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"], force_redraw=tonearm_will_render)
+            # NOTE: tonearm_will_render removed - icon position outside tonearm backing area
+            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"], force_redraw=False)
             if icon_rect:
                 dirty_rects.append(icon_rect)
             
@@ -3682,9 +3787,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if not sample_text:
                     sample_text = bitrate.strip() if bitrate else ""
                 
-                # Force redraw if tonearm rendered (backing restore may have wiped sample area)
-                # or if sample text changed
-                if sample_text and (sample_text != last_sample_text or tonearm_will_render):
+                # NOTE: tonearm_will_render removed - sample position outside tonearm backing area
+                if sample_text and sample_text != last_sample_text:
                     last_sample_text = sample_text
                     
                     # Restore backing for sample area
