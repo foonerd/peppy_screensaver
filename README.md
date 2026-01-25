@@ -179,11 +179,13 @@ When **Trace** is selected, additional switches appear to enable logging for spe
 | Switch | Description |
 |--------|-------------|
 | Meters/Needles | Audio levels, needle positions, render decisions |
+| Spectrum | Spectrum analyzer updates and throttling |
 | Vinyl rotation | Rotation state, angle, FPS gating |
-| Reel (left/right) | Cassette spool state and render decisions |
-| Tonearm | State machine, angles, transitions |
+| Reel left | Left cassette spool state and render decisions |
+| Reel right | Right cassette spool state and render decisions |
+| Tonearm | State machine, angles, DROP/LIFT/TRACKING transitions, backing restore |
 | Album art | URL changes, rotation, cache |
-| Text scrolling | Scroll position, wrap events |
+| Text scrolling | Scroll position, offset changes, backing restore |
 | Volume indicator | Value changes, position calculations |
 | Mute indicator | 3-state logic (off, muted, volume=0) |
 | Shuffle indicator | Shuffle/infinity state changes |
