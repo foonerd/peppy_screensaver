@@ -113,13 +113,12 @@ Controls display persistence during pause and track changes.
 
 ### Performance Settings
 
-Frame rate, update intervals, and debug logging.
+Frame rate and update intervals.
 
 | Setting | Range | Default | Description |
 |---------|-------|---------|-------------|
 | Frame Rate | 10-60 | 30 | Display refresh rate (FPS). Lower = less CPU |
 | Update Interval | 1-10 | 2 | Spectrum/needle updates per N frames. Higher = less CPU |
-| Debug Logging | Off/Basic/Verbose | Off | Enable logging to /tmp/peppy_debug.log |
 
 ### Scrolling Settings
 
@@ -160,6 +159,45 @@ Album art and cassette spool rotation speed and quality.
 | Left Spool Speed | 0.1-5.0 | 1.0 | Left cassette reel multiplier |
 | Right Spool Speed | 0.1-5.0 | 1.0 | Right cassette reel multiplier |
 | Reel Rotation Direction | CCW/CW | CCW | Cassette reel rotation direction |
+
+### Debug Settings
+
+Diagnostic logging for troubleshooting.
+
+| Setting | Options | Default | Description |
+|---------|---------|---------|-------------|
+| Debug Level | Off/Basic/Verbose/Trace | Off | Logging verbosity |
+
+**Debug levels:**
+- **Off**: No logging (recommended for normal use)
+- **Basic**: Startup, errors, key state changes
+- **Verbose**: Configuration details (includes Basic)
+- **Trace**: Component-specific logging (includes Verbose)
+
+When **Trace** is selected, additional switches appear to enable logging for specific components:
+
+| Switch | Description |
+|--------|-------------|
+| Meters/Needles | Audio levels, needle positions, render decisions |
+| Vinyl rotation | Rotation state, angle, FPS gating |
+| Reel (left/right) | Cassette spool state and render decisions |
+| Tonearm | State machine, angles, transitions |
+| Album art | URL changes, rotation, cache |
+| Text scrolling | Scroll position, wrap events |
+| Volume indicator | Value changes, position calculations |
+| Mute indicator | 3-state logic (off, muted, volume=0) |
+| Shuffle indicator | Shuffle/infinity state changes |
+| Repeat indicator | Repeat state changes (off, all, single) |
+| Playstate indicator | Play/pause/stop transitions |
+| Progress bar | Progress percentage, seek input |
+| Metadata (pushState) | Every pushState event from Volumio |
+| Seek interpolation | Raw vs interpolated seek calculations |
+| Time remaining | Time calculations and display updates |
+| Initialization | Meter init, backing captures, renderer creation |
+| Fade transitions | Fade timing, lock states, skip reasons |
+| Frame timing | Render loop timing, status changes |
+
+All trace switches default to OFF and persist independently.
 
 ## Performance Tuning
 
@@ -422,15 +460,19 @@ See the wiki for detailed configuration reference and examples.
 Enable debug logging via plugin settings:
 
 1. Settings > Plugins > PeppyMeter Screensaver > Settings
-2. Performance Settings > Debug Logging
-3. Select "Basic" or "Verbose"
-4. Apply settings
-5. Check `/tmp/peppy_debug.log` for diagnostic output
+2. Debug Settings > Debug Level
+3. Select level: Basic, Verbose, or Trace
+4. If Trace selected, enable specific component switches as needed
+5. Apply settings
+6. Check `/tmp/peppy_debug.log` for diagnostic output
 
 Log levels:
 - **Off**: No logging (recommended for normal use)
-- **Basic**: Essential events and errors
-- **Verbose**: Detailed information for troubleshooting
+- **Basic**: Startup, errors, key state changes
+- **Verbose**: Configuration details (includes Basic)
+- **Trace**: Component-specific logging (use switches to select components)
+
+**Trace mode:** When debugging specific issues (e.g., tonearm behavior), select Trace level and enable only the relevant component switch(es). This avoids flooding the log with unrelated data.
 
 **Note:** Disable after troubleshooting - the log file can fill /tmp (volatile RAM disk).
 

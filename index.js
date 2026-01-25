@@ -651,16 +651,6 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 uiconf.sections[3].content[1].attributes[3].max,
                 uiconf.sections[3].content[1].attributes[0].placeholder];
             
-            // debug level
-            var debugLevel = peppy_config.current['debug.level'] || 'off';
-            var debugOptions = uiconf.sections[3].content[2].options;
-            for (var i = 0; i < debugOptions.length; i++) {
-                if (debugOptions[i].value === debugLevel) {
-                    uiconf.sections[3].content[2].value = debugOptions[i];
-                    break;
-                }
-            }
-            
             // section 3 - Scrolling settings -----------------------------
             // scrolling mode
             var scrollingMode = peppy_config.current['scrolling.mode'] || 'skin';
@@ -767,6 +757,31 @@ peppyScreensaver.prototype.getUIConfig = function() {
                     uiconf.sections[6].content[5].value = directionOptions[i];
                     break;
                 }
+            }
+            
+            // section 6 - Debug settings -----------------------------
+            // debug level
+            var debugLevel = peppy_config.current['debug.level'] || 'off';
+            var debugLevelOptions = uiconf.sections[7].content[0].options;
+            for (var i = 0; i < debugLevelOptions.length; i++) {
+                if (debugLevelOptions[i].value === debugLevel) {
+                    uiconf.sections[7].content[0].value = debugLevelOptions[i];
+                    break;
+                }
+            }
+            
+            // trace switches (all default to false)
+            var traceKeys = [
+                'debug.trace.meters', 'debug.trace.vinyl', 'debug.trace.reel.left',
+                'debug.trace.reel.right', 'debug.trace.tonearm', 'debug.trace.albumart',
+                'debug.trace.scrolling', 'debug.trace.volume', 'debug.trace.mute',
+                'debug.trace.shuffle', 'debug.trace.repeat', 'debug.trace.playstate',
+                'debug.trace.progress', 'debug.trace.metadata', 'debug.trace.seek',
+                'debug.trace.time', 'debug.trace.init', 'debug.trace.fade', 'debug.trace.frame'
+            ];
+            for (var i = 0; i < traceKeys.length; i++) {
+                var traceValue = peppy_config.current[traceKeys[i]] === 'true' || peppy_config.current[traceKeys[i]] === true;
+                uiconf.sections[7].content[i + 1].value = traceValue;
             }
             
         } else {
@@ -1154,13 +1169,6 @@ peppyScreensaver.prototype.savePerformanceConf = function (confData) {
         }
     }
     
-    // write debug level
-    var debugLevel = confData.debugLevel.value || 'off';
-    if (peppy_config.current['debug.level'] != debugLevel) {
-        peppy_config.current['debug.level'] = debugLevel;
-        noChanges = false;
-    }
-    
     if (!noChanges) {
         fs.writeFileSync(PeppyConf, ini.stringify(peppy_config, {whitespace: true}));
         // Restart meter to apply new settings
@@ -1404,6 +1412,71 @@ peppyScreensaver.prototype.saveRotationConf = function (confData) {
     }
   }, 500);
 }; // end saveRotationConf -------------------------------------
+
+// Debug settings save handler
+//-------------------------------------------------------------
+peppyScreensaver.prototype.saveDebugConf = function (confData) {
+  const self = this;
+  let noChanges = true;
+  
+  if (fs.existsSync(PeppyConf)){
+    
+    // write debug level
+    var debugLevel = confData.debugLevel.value || 'off';
+    if (peppy_config.current['debug.level'] != debugLevel) {
+        peppy_config.current['debug.level'] = debugLevel;
+        noChanges = false;
+    }
+    
+    // write trace switches (map UI field names to config keys)
+    var traceMap = {
+        'traceMeters': 'debug.trace.meters',
+        'traceVinyl': 'debug.trace.vinyl',
+        'traceReelLeft': 'debug.trace.reel.left',
+        'traceReelRight': 'debug.trace.reel.right',
+        'traceTonearm': 'debug.trace.tonearm',
+        'traceAlbumart': 'debug.trace.albumart',
+        'traceScrolling': 'debug.trace.scrolling',
+        'traceVolume': 'debug.trace.volume',
+        'traceMute': 'debug.trace.mute',
+        'traceShuffle': 'debug.trace.shuffle',
+        'traceRepeat': 'debug.trace.repeat',
+        'tracePlaystate': 'debug.trace.playstate',
+        'traceProgress': 'debug.trace.progress',
+        'traceMetadata': 'debug.trace.metadata',
+        'traceSeek': 'debug.trace.seek',
+        'traceTime': 'debug.trace.time',
+        'traceInit': 'debug.trace.init',
+        'traceFade': 'debug.trace.fade',
+        'traceFrame': 'debug.trace.frame'
+    };
+    
+    for (var uiKey in traceMap) {
+        var configKey = traceMap[uiKey];
+        var newValue = confData[uiKey] ? 'true' : 'false';
+        if (peppy_config.current[configKey] != newValue) {
+            peppy_config.current[configKey] = newValue;
+            noChanges = false;
+        }
+    }
+    
+    if (!noChanges) {
+        fs.writeFileSync(PeppyConf, ini.stringify(peppy_config, {whitespace: true}));
+        // Restart meter to apply new debug settings
+        if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+    }
+  } else {
+      self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));
+  }
+  
+  setTimeout(function () {
+    if (noChanges) {
+        self.commandRouter.pushToastMessage('info', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_CHANGES'));
+    } else {
+        self.commandRouter.pushToastMessage('success', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('COMMON.SETTINGS_SAVED_SUCCESSFULLY'));
+    }
+  }, 500);
+}; // end saveDebugConf -------------------------------------
 
 // global functions
 //-------------------------------------------------------------

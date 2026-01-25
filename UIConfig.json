@@ -396,8 +396,7 @@
                               "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
                               "data": [
                                       "frameRate",
-                                      "updateInterval",
-                                      "debugLevel"
+                                      "updateInterval"
                                       ]
                               },
                 "content": [
@@ -428,18 +427,6 @@
                                              {"max": 10}
                                            ],
                              "value": 2
-                            },
-                            {
-                             "id": "debugLevel",
-                             "element": "select",
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_LEVEL_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_LEVEL",
-                             "value": {"value": "off", "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_OFF"},
-                             "options": [
-                                          {"value": "off", "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_OFF"},
-                                          {"value": "basic", "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_BASIC"},
-                                          {"value": "verbose", "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_VERBOSE"}
-                                        ]
                             }
                             ]
                 },
@@ -695,6 +682,207 @@
                                           {"value": "ccw", "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_CCW"},
                                           {"value": "cw", "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_CW"}
                                         ]
+                            }
+                            ]
+                },
+                {
+                "id": "debug_conf",
+                "element": "section",
+                "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_CONF",
+                "description": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_DESC",
+                "icon": "fa-bug",
+                "hidden": false,
+                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"saveDebugConf"},
+                "saveButton": {
+                              "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
+                              "data": [
+                                      "debugLevel",
+                                      "traceMeters",
+                                      "traceVinyl",
+                                      "traceReelLeft",
+                                      "traceReelRight",
+                                      "traceTonearm",
+                                      "traceAlbumart",
+                                      "traceScrolling",
+                                      "traceVolume",
+                                      "traceMute",
+                                      "traceShuffle",
+                                      "traceRepeat",
+                                      "tracePlaystate",
+                                      "traceProgress",
+                                      "traceMetadata",
+                                      "traceSeek",
+                                      "traceTime",
+                                      "traceInit",
+                                      "traceFade",
+                                      "traceFrame"
+                                      ]
+                              },
+                "content": [
+                            {
+                             "id": "debugLevel",
+                             "element": "select",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_LEVEL_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_LEVEL",
+                             "value": {"value": "off", "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_OFF"},
+                             "options": [
+                                          {"value": "off", "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_OFF"},
+                                          {"value": "basic", "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_BASIC"},
+                                          {"value": "verbose", "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_VERBOSE"},
+                                          {"value": "trace", "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_TRACE"}
+                                        ]
+                            },
+                            {
+                             "id": "traceMeters",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_METERS_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_METERS",
+                             "value": false
+                            },
+                            {
+                             "id": "traceVinyl",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_VINYL_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_VINYL",
+                             "value": false
+                            },
+                            {
+                             "id": "traceReelLeft",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REEL_LEFT_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REEL_LEFT",
+                             "value": false
+                            },
+                            {
+                             "id": "traceReelRight",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REEL_RIGHT_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REEL_RIGHT",
+                             "value": false
+                            },
+                            {
+                             "id": "traceTonearm",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_TONEARM_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_TONEARM",
+                             "value": false
+                            },
+                            {
+                             "id": "traceAlbumart",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_ALBUMART_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_ALBUMART",
+                             "value": false
+                            },
+                            {
+                             "id": "traceScrolling",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_SCROLLING_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_SCROLLING",
+                             "value": false
+                            },
+                            {
+                             "id": "traceVolume",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_VOLUME_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_VOLUME",
+                             "value": false
+                            },
+                            {
+                             "id": "traceMute",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_MUTE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_MUTE",
+                             "value": false
+                            },
+                            {
+                             "id": "traceShuffle",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_SHUFFLE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_SHUFFLE",
+                             "value": false
+                            },
+                            {
+                             "id": "traceRepeat",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REPEAT_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REPEAT",
+                             "value": false
+                            },
+                            {
+                             "id": "tracePlaystate",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_PLAYSTATE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_PLAYSTATE",
+                             "value": false
+                            },
+                            {
+                             "id": "traceProgress",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_PROGRESS_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_PROGRESS",
+                             "value": false
+                            },
+                            {
+                             "id": "traceMetadata",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_METADATA_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_METADATA",
+                             "value": false
+                            },
+                            {
+                             "id": "traceSeek",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_SEEK_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_SEEK",
+                             "value": false
+                            },
+                            {
+                             "id": "traceTime",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_TIME_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_TIME",
+                             "value": false
+                            },
+                            {
+                             "id": "traceInit",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_INIT_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_INIT",
+                             "value": false
+                            },
+                            {
+                             "id": "traceFade",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_FADE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_FADE",
+                             "value": false
+                            },
+                            {
+                             "id": "traceFrame",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_FRAME_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_FRAME",
+                             "value": false
                             }
                             ]
                 }
