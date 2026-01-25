@@ -353,14 +353,48 @@ class MetadataWatcher:
         self.thread.start()
     
     def _run(self):
+        # DEBUG: Track previous values for change detection
+        _prev_status = ""
+        _prev_volatile = False
+        _prev_title = ""
+        _prev_seek = 0
+        _pushstate_count = 0
+        
         @self.sio.on('pushState')
         def on_push_state(data):
+            nonlocal _prev_status, _prev_volatile, _prev_title, _prev_seek, _pushstate_count
             if not self.run_flag:
                 return
             
+            # Extract ALL key values
+            status = data.get("status", "") or ""
+            volatile = data.get("volatile", False) or False
+            title = data.get("title", "") or ""
+            seek = data.get("seek", 0) or 0
+            duration = data.get("duration", 0) or 0
+            service = data.get("service", "") or ""
+            
+            # DEBUG: Log EVERY pushState with sequence number and ALL data
+            _pushstate_count += 1
+            log_debug(f"[pushState #{_pushstate_count}] status={status}, seek={seek}ms ({seek/1000:.1f}s), dur={duration}s, volatile={volatile}, svc={service}, title='{title[:30]}'")
+            
+            # Also log when values CHANGE
+            if status != _prev_status:
+                log_debug(f"[pushState] STATUS CHANGE: '{_prev_status}' -> '{status}'")
+                _prev_status = status
+            if volatile != _prev_volatile:
+                log_debug(f"[pushState] VOLATILE CHANGE: {_prev_volatile} -> {volatile}")
+                _prev_volatile = volatile
+            if title != _prev_title:
+                log_debug(f"[pushState] TITLE CHANGE: '{_prev_title[:20]}' -> '{title[:20]}'")
+                _prev_title = title
+            if abs(seek - _prev_seek) > 1000:  # >1s seek change
+                log_debug(f"[pushState] SEEK CHANGE: {_prev_seek}ms -> {seek}ms (delta={seek - _prev_seek}ms)")
+                _prev_seek = seek
+            
             # Extract metadata
             self.metadata["artist"] = data.get("artist", "") or ""
-            self.metadata["title"] = data.get("title", "") or ""
+            self.metadata["title"] = title
             self.metadata["album"] = data.get("album", "") or ""
             self.metadata["albumart"] = data.get("albumart", "") or ""
             self.metadata["samplerate"] = str(data.get("samplerate", "") or "")
@@ -368,8 +402,8 @@ class MetadataWatcher:
             self.metadata["trackType"] = data.get("trackType", "") or ""
             self.metadata["bitrate"] = str(data.get("bitrate", "") or "")
             self.metadata["service"] = data.get("service", "") or ""
-            self.metadata["status"] = data.get("status", "") or ""
-            self.metadata["volatile"] = data.get("volatile", False) or False
+            self.metadata["status"] = status
+            self.metadata["volatile"] = volatile
             
             # Playback control states (for indicators)
             self.metadata["volume"] = data.get("volume", 0) or 0
@@ -380,8 +414,6 @@ class MetadataWatcher:
             
             # Update time tracking
             import time
-            duration = data.get("duration", 0) or 0
-            seek = data.get("seek", 0) or 0
             service = data.get("service", "")
             
             # Store duration and seek for progress calculation (tonearm, etc)
@@ -1383,14 +1415,13 @@ class TonearmRenderer:
         
         return progress >= 1.0
     
-    def update(self, status, progress_pct, time_remaining_sec=None, volatile=False):
+    def update(self, status, progress_pct, time_remaining_sec=None):
         """
         Update tonearm state based on playback status and progress.
         
         :param status: Playback status ("play", "pause", "stop")
         :param progress_pct: Track progress as percentage (0.0 to 100.0)
         :param time_remaining_sec: Seconds remaining in track (for early lift)
-        :param volatile: if True, ignore stop/pause (track transition in progress)
         :return: True if redraw needed
         """
         if not self._loaded:
@@ -1422,10 +1453,6 @@ class TonearmRenderer:
         status = (status or "").lower()
         self._last_status = status
         
-        # During volatile transitions (track skip), ignore brief stop - don't lift
-        # This prevents flicker during next/prev track changes
-        skip_lift = volatile and status in ("stop", "pause")
-        
         # State machine
         if self._state == TONEARM_STATE_REST:
             if status == "play":
@@ -1441,13 +1468,15 @@ class TonearmRenderer:
                     self.angle_start + 
                     (self.angle_end - self.angle_start) * (progress_pct / 100.0)
                 )
+                log_debug(f"[Tonearm] REST->DROP: progress={progress_pct:.1f}%, target={target_angle:.1f}")
                 self._state = TONEARM_STATE_DROP
                 self._start_animation(target_angle, self.drop_duration)
                 self._needs_redraw = True
         
         elif self._state == TONEARM_STATE_DROP:
-            if status != "play" and not skip_lift:
+            if status != "play":
                 # Playback stopped during drop - lift back
+                log_debug(f"[Tonearm] DROP->LIFT: playback stopped (status={status})")
                 self._state = TONEARM_STATE_LIFT
                 self._early_lift = False  # Clear flag - this is a normal stop
                 self._start_animation(self.angle_rest, self.lift_duration)
@@ -1457,10 +1486,12 @@ class TonearmRenderer:
                     # Drop complete - sync to current progress before entering TRACKING
                     # This prevents jump detection from triggering immediately
                     progress_pct = max(0.0, min(100.0, progress_pct or 0.0))
-                    self._current_angle = (
+                    sync_angle = (
                         self.angle_start + 
                         (self.angle_end - self.angle_start) * (progress_pct / 100.0)
                     )
+                    log_debug(f"[Tonearm] DROP->TRACKING: progress={progress_pct:.1f}%, sync_angle={sync_angle:.1f}, drop_target={self._animation_end_angle:.1f}")
+                    self._current_angle = sync_angle
                     self._state = TONEARM_STATE_TRACKING
                 self._needs_redraw = True
         
@@ -1468,15 +1499,16 @@ class TonearmRenderer:
             # Early lift: when track is about to end, lift tonearm preemptively
             # This hides the freeze during track change - looks like natural LP change
             if time_remaining_sec is not None and time_remaining_sec < 1.5 and time_remaining_sec > 0:
-                log_debug(f"[Tonearm] Early lift - track ending in {time_remaining_sec:.1f}s")
+                log_debug(f"[Tonearm] TRACKING->LIFT: early lift, track ending in {time_remaining_sec:.1f}s")
                 self._state = TONEARM_STATE_LIFT
                 self._pending_drop_target = None  # Will get new position from next track
                 self._early_lift = True  # Flag to stay at REST after lift completes
                 self._start_animation(self.angle_rest, self.lift_duration)
                 self._needs_redraw = True
                 self._last_blit_tick = 0
-            elif status != "play" and not skip_lift:
+            elif status != "play":
                 # Playback stopped - start lift (not early lift)
+                log_debug(f"[Tonearm] TRACKING->LIFT: playback stopped (status={status})")
                 self._state = TONEARM_STATE_LIFT
                 self._pending_drop_target = None
                 self._early_lift = False  # Clear flag - this is a normal stop
@@ -1496,7 +1528,7 @@ class TonearmRenderer:
                 # Any sudden movement > 2 degrees triggers lift/drop animation
                 if abs(target_angle - self._current_angle) > 2.0:
                     # Large jump - lift and drop to new position
-                    log_debug(f"[Tonearm] Large jump detected: {self._current_angle:.1f} -> {target_angle:.1f}, lifting")
+                    log_debug(f"[Tonearm] TRACKING->LIFT: jump detected, current={self._current_angle:.1f}, target={target_angle:.1f}, progress={progress_pct:.1f}%")
                     self._state = TONEARM_STATE_LIFT
                     self._pending_drop_target = target_angle
                     self._early_lift = False  # Clear flag - this is a seek/jump
@@ -1513,12 +1545,13 @@ class TonearmRenderer:
                 # Lift animation complete
                 if self._early_lift:
                     # Early lift for track change - stay at REST until new track
-                    log_debug("[Tonearm] Early lift complete - staying at REST")
+                    log_debug("[Tonearm] LIFT->REST: early lift complete, waiting for new track")
                     self._state = TONEARM_STATE_REST
                     self._pending_drop_target = None
                     # Keep _early_lift=True - will be cleared when DROP starts
                 elif self._pending_drop_target is not None:
                     # Seek/jump - drop to pending target
+                    log_debug(f"[Tonearm] LIFT->DROP: pending target={self._pending_drop_target:.1f}")
                     self._state = TONEARM_STATE_DROP
                     self._start_animation(self._pending_drop_target, self.drop_duration)
                     self._pending_drop_target = None
@@ -1529,10 +1562,12 @@ class TonearmRenderer:
                         self.angle_start + 
                         (self.angle_end - self.angle_start) * (progress_pct / 100.0)
                     )
+                    log_debug(f"[Tonearm] LIFT->DROP: no pending, using progress={progress_pct:.1f}%, target={target_angle:.1f}")
                     self._state = TONEARM_STATE_DROP
                     self._start_animation(target_angle, self.drop_duration)
                 else:
                     # Lift complete, not playing - back to rest
+                    log_debug(f"[Tonearm] LIFT->REST: not playing (status={status})")
                     self._state = TONEARM_STATE_REST
                     self._pending_drop_target = None
             self._needs_redraw = True
@@ -2938,6 +2973,15 @@ def start_display_output(pm, callback, meter_config_volumio):
     last_status = ""
     idle_frame_skip = 0
     
+    # DEBUG: Track previous values for change detection logging
+    _dbg_last_status = ""
+    _dbg_last_volatile = False
+    _dbg_last_seek_raw = 0
+    _dbg_last_seek_interp = 0
+    _dbg_last_progress = 0.0
+    _dbg_frame_count = 0
+    _dbg_log_time = 0  # Throttle periodic logging
+    
     while running:
         current_time = time.time()
         now_ticks = pg.time.get_ticks()  # OPTIMIZATION: For FPS-gated rendering
@@ -3017,17 +3061,42 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             # Pre-calculate seek interpolation (used by tonearm and progress bar)
             duration = meta.get("duration", 0) or 0
-            seek_raw = meta.get("_seek_raw", 0) or meta.get("seek", 0) or 0
+            # CRITICAL: Don't use 'or' fallback - 0 is a valid seek position!
+            # The old code: seek_raw = meta.get("_seek_raw", 0) or meta.get("seek", 0) or 0
+            # treated 0 as falsy and fell back to interpolated meta["seek"], causing runaway
+            seek_raw = meta.get("_seek_raw")
+            if seek_raw is None:
+                seek_raw = meta.get("seek", 0) or 0
             seek = seek_raw
+            seek_update_time = meta.get("_seek_update", 0)
+            elapsed_ms = 0
             
             # Interpolate seek based on elapsed time when playing
             # Use _seek_raw to avoid accumulation error from previous frames
-            if is_playing and duration > 0:
-                seek_update_time = meta.get("_seek_update", 0)
+            # Skip interpolation during volatile (track change) - seek values may be stale
+            if is_playing and duration > 0 and not volatile:
                 if seek_update_time > 0:
                     elapsed_ms = (current_time - seek_update_time) * 1000
                     seek = min(duration * 1000, seek_raw + elapsed_ms)
                     meta["seek"] = seek  # Update for indicators (progress bar)
+            
+            # DEBUG: Increment frame counter
+            _dbg_frame_count += 1
+            
+            # DEBUG: Log ALL changes
+            if status != _dbg_last_status:
+                log_debug(f"[Render #{_dbg_frame_count}] STATUS CHANGE: '{_dbg_last_status}' -> '{status}'")
+                _dbg_last_status = status
+            if volatile != _dbg_last_volatile:
+                log_debug(f"[Render #{_dbg_frame_count}] VOLATILE CHANGE: {_dbg_last_volatile} -> {volatile}")
+                _dbg_last_volatile = volatile
+            # Log significant seek changes (raw or interpolated)
+            if abs(seek_raw - _dbg_last_seek_raw) > 1000:  # >1s raw change
+                log_debug(f"[Render #{_dbg_frame_count}] SEEK_RAW CHANGE: {_dbg_last_seek_raw}ms -> {seek_raw}ms")
+                _dbg_last_seek_raw = seek_raw
+            if abs(seek - _dbg_last_seek_interp) > 5000:  # >5s interpolated change
+                log_debug(f"[Render #{_dbg_frame_count}] SEEK_INTERP: raw={seek_raw}ms + elapsed={elapsed_ms:.0f}ms = {seek:.0f}ms ({seek/1000:.1f}s)")
+                _dbg_last_seek_interp = seek
             
             # Pre-calculate tonearm state
             tonearm = ov.get("tonearm_renderer")
@@ -3041,7 +3110,12 @@ def start_display_output(pm, callback, meter_config_volumio):
                     progress_pct = 0.0
                     time_remaining_sec = None  # Unknown duration (webradio etc)
                 
-                tonearm.update(status, progress_pct, time_remaining_sec, volatile=volatile)
+                # DEBUG: Log significant progress changes
+                if abs(progress_pct - _dbg_last_progress) > 5.0:  # >5% change
+                    log_debug(f"[Render #{_dbg_frame_count}] PROGRESS: {_dbg_last_progress:.1f}% -> {progress_pct:.1f}% (seek={seek/1000:.1f}s, dur={duration}s)")
+                    _dbg_last_progress = progress_pct
+                
+                tonearm.update(status, progress_pct, time_remaining_sec)
                 tonearm_will_render = tonearm.will_blit(now_ticks)
             
             # Pre-calculate album art state

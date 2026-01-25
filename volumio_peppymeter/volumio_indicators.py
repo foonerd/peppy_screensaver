@@ -14,12 +14,30 @@
 import os
 import math
 import pygame as pg
+from datetime import datetime
 
 try:
     from PIL import Image, ImageFilter, ImageDraw
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
+
+# =============================================================================
+# Simple logging for indicators (writes to same log as peppymeter)
+# =============================================================================
+_DEBUG_LOG_PATH = "/tmp/peppy_debug.log"
+_DEBUG_ENABLED = os.path.exists("/tmp/peppy_debug.level")
+
+def _log_debug(msg):
+    """Simple debug logging for indicators module."""
+    if not _DEBUG_ENABLED:
+        return
+    try:
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        with open(_DEBUG_LOG_PATH, "a") as f:
+            f.write(f"[{timestamp}] {msg}\n")
+    except:
+        pass
 
 
 # =============================================================================
@@ -1281,6 +1299,8 @@ class IndicatorRenderer:
                 rect = self._volume.render(screen, volume)
                 if rect:
                     dirty_rects.append(rect)
+                if volume != self._prev_volume:
+                    _log_debug(f"[Indicators] Volume: {self._prev_volume} -> {volume}")
                 self._prev_volume = volume
         
         # Mute (3 states: off=0, on=1, zero=2)
@@ -1302,6 +1322,8 @@ class IndicatorRenderer:
                 rect = self._mute.render(screen, mute_state)
                 if rect:
                     dirty_rects.append(rect)
+                if mute_state != self._prev_mute:
+                    _log_debug(f"[Indicators] Mute state: {self._prev_mute} -> {mute_state} (mute={mute}, vol={volume})")
                 self._prev_mute = mute_state
         
         # Shuffle (3 states: off=0, shuffle=1, infinity=2)
@@ -1361,6 +1383,8 @@ class IndicatorRenderer:
                 rect = self._playstate.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
+                if status != self._prev_status:
+                    _log_debug(f"[Indicators] Playstate: {self._prev_status} -> {status}")
                 self._prev_status = status
         
         # Progress bar
@@ -1381,4 +1405,7 @@ class IndicatorRenderer:
                 rect = self._progress.render(screen, progress_pct)
                 if rect:
                     dirty_rects.append(rect)
+                # Log significant progress jumps (>10%)
+                if self._prev_progress is not None and abs(progress_quantized - self._prev_progress) > 10:
+                    _log_debug(f"[Indicators] Progress jump: {self._prev_progress}% -> {progress_quantized}% (seek={seek/1000:.1f}s, dur={duration}s)")
                 self._prev_progress = progress_quantized
