@@ -1870,6 +1870,9 @@ class TonearmRenderer:
         :return: Dirty rect if restored, None if nothing to restore
         """
         if self._last_backing is not None and self._last_blit_rect is not None:
+            # TRACE: Log backing restore
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("tonearm", False):
+                log_debug(f"[Tonearm] RESTORE: rect={self._last_blit_rect}, state={self._state}", "trace", "tonearm")
             screen.blit(self._last_backing, self._last_blit_rect.topleft)
             return self._last_blit_rect.copy()
         return None
@@ -1963,12 +1966,19 @@ class TonearmRenderer:
             try:
                 self._last_backing = screen.subsurface(clipped_rect).copy()
                 self._last_blit_rect = clipped_rect
+                # TRACE: Log backing capture
+                if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("tonearm", False):
+                    log_debug(f"[Tonearm] CAPTURE: rect={clipped_rect}, angle={self._current_angle:.1f}, state={self._state}", "trace", "tonearm")
             except Exception:
                 self._last_backing = None
                 self._last_blit_rect = None
         
         # Blit tonearm to screen
         screen.blit(rotated, (blit_x, blit_y))
+        
+        # TRACE: Log render output
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("tonearm", False):
+            log_debug(f"[Tonearm] RENDER: angle={self._current_angle:.1f}, blit_rect={blit_rect}", "trace", "tonearm")
         
         self._needs_redraw = False
         self._last_drawn_angle = self._current_angle
