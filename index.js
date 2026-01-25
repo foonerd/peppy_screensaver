@@ -563,9 +563,15 @@ peppyScreensaver.prototype.getUIConfig = function() {
             uiconf.sections[0].content[15].value.label = 'Display=' + self.config.get('displayOutput');
              
             // section 1 - Playback Behavior -----------------------------
-            var persistVal = self.config.get('persist_duration') || '30';
+            var persistVal = self.config.get('persist_duration');
+            // Handle 0 (Disabled) as valid value - don't use || which treats 0 as falsy
+            if (persistVal === undefined || persistVal === null || persistVal === '') {
+                persistVal = '30';
+            }
+            persistVal = String(persistVal);
             var persistLabels = {
                 '0': 'PEPPY_SCREENSAVER.PERSIST_DISABLED',
+                '5': 'PEPPY_SCREENSAVER.PERSIST_5',
                 '15': 'PEPPY_SCREENSAVER.PERSIST_15',
                 '30': 'PEPPY_SCREENSAVER.PERSIST_30',
                 '60': 'PEPPY_SCREENSAVER.PERSIST_60',
@@ -1039,8 +1045,9 @@ peppyScreensaver.prototype.savePlaybackConf = function(data) {
     var self = this;
     var defer = libQ.defer();
     
-    var persistDuration = data['persist_duration'] && data['persist_duration'].value 
-        ? data['persist_duration'].value 
+    // Handle 0 (Disabled) as valid value - check for undefined/null, not truthiness
+    var persistDuration = (data['persist_duration'] && data['persist_duration'].value !== undefined) 
+        ? String(data['persist_duration'].value)
         : '30';
     
     var persistDisplay = data['persist_display'] && data['persist_display'].value 

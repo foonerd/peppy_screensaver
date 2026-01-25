@@ -31,6 +31,7 @@
     "PERSIST_DURATION":"Keep display active after pause/stop",
     "PERSIST_DURATION_DOC":"How long to keep PeppyMeter running when playback pauses or stops.<br /><br />This prevents flicker during track changes and allows brief pauses without restarting the display.<br /><br /><b>Default: 30 seconds</b><br /><br />Set to 'Disabled' for immediate stop (original behavior).",
     "PERSIST_DISABLED":"Disabled (stop immediately)",
+    "PERSIST_5":"5 seconds",
     "PERSIST_15":"15 seconds",
     "PERSIST_30":"30 seconds",
     "PERSIST_60":"1 minute",

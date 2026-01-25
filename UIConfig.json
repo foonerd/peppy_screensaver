@@ -265,6 +265,10 @@
                                     "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISABLED"
                                  },
                                  {
+                                    "value": "5",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_5"
+                                 },
+                                 {
                                     "value": "15",
                                     "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_15"
                                  },

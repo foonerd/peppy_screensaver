@@ -31,6 +31,7 @@
     "PERSIST_DURATION":"Maintenir l'affichage actif apres pause/arret",
     "PERSIST_DURATION_DOC":"Combien de temps garder PeppyMeter actif apres une pause ou un arret.<br /><br />Cela evite le scintillement lors des changements de piste et permet de courtes pauses sans redemarrer l'affichage.<br /><br /><b>Par defaut: 30 secondes</b><br /><br />Definir sur 'Desactive' pour un arret immediat (comportement original).",
     "PERSIST_DISABLED":"Desactive (arret immediat)",
+    "PERSIST_5":"5 secondes",
     "PERSIST_15":"15 secondes",
     "PERSIST_30":"30 secondes",
     "PERSIST_60":"1 minute",

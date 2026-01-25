@@ -102,7 +102,7 @@ Controls display persistence during pause and track changes.
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
-| Keep display active | Disabled/15s/30s/1min/2min/5min | 30s | Delay before display turns off after pause/stop |
+| Keep display active | Disabled/5s/15s/30s/1min/2min/5min | 30s | Delay before display turns off after pause/stop |
 | Time display during persist | Freeze/Countdown | Freeze | What to show in time area when paused |
 
 **Keep display active:** Prevents screen flicker during track changes by keeping the display running briefly after playback stops. Volumio sends stop-play sequence on next/prev, causing visible restart without this delay.
