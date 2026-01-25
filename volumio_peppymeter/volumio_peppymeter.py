@@ -3411,7 +3411,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if not ov["album_pos"] and album:
                     display_artist = f"{artist} - {album}" if artist else album
                 ov["artist_scroller"].update_text(display_artist)
-                if any_animated_will_draw:
+                if tonearm_will_render:
                     ov["artist_scroller"].force_redraw()
                 rect = ov["artist_scroller"].draw(screen)
                 if rect:
@@ -3419,7 +3419,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             if ov["title_scroller"]:
                 ov["title_scroller"].update_text(title)
-                if any_animated_will_draw:
+                if tonearm_will_render:
                     ov["title_scroller"].force_redraw()
                 rect = ov["title_scroller"].draw(screen)
                 if rect:
@@ -3427,7 +3427,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             if ov["album_scroller"]:
                 ov["album_scroller"].update_text(album)
-                if any_animated_will_draw:
+                if tonearm_will_render:
                     ov["album_scroller"].force_redraw()
                 rect = ov["album_scroller"].draw(screen)
                 if rect:
@@ -3485,10 +3485,10 @@ def start_display_output(pm, callback, meter_config_volumio):
                     secs = display_sec % 60
                     time_str = f"{mins:02d}:{secs:02d}"
                     
-                    # Force redraw if any animated element's backing was restored
-                    # (vinyl, tonearm, reels may overlap time area and wipe it)
+                    # Force redraw if tonearm or vinyl backing was restored
+                    # (vinyl backing on turntable skins may overlap time area)
                     # or if time string changed
-                    if time_str != last_time_str or any_animated_will_draw:
+                    if time_str != last_time_str or tonearm_will_render or vinyl_will_blit:
                         last_time_str = time_str
                         
                         # Restore backing for time area
@@ -3509,8 +3509,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                         screen.blit(last_time_surf, ov["time_pos"])
             
             # Format icon - OPTIMIZED with caching (swapped with sample per Gelo5)
-            # Force redraw if any animated element rendered (backing restore may have wiped icon area)
-            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"], force_redraw=any_animated_will_draw)
+            # Force redraw if tonearm rendered (backing restore may have wiped icon area)
+            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"], force_redraw=tonearm_will_render)
             if icon_rect:
                 dirty_rects.append(icon_rect)
             
@@ -3521,9 +3521,9 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if not sample_text:
                     sample_text = bitrate.strip() if bitrate else ""
                 
-                # Force redraw if any animated element rendered (backing restore may have wiped sample area)
+                # Force redraw if tonearm rendered (backing restore may have wiped sample area)
                 # or if sample text changed
-                if sample_text and (sample_text != last_sample_text or any_animated_will_draw):
+                if sample_text and (sample_text != last_sample_text or tonearm_will_render):
                     last_sample_text = sample_text
                     
                     # Restore backing for sample area
