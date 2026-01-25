@@ -53,7 +53,14 @@ from volumio_configfileparser import (
     Volumio_ConfigFileParser, EXTENDED_CONF, METER_VISIBLE, SPECTRUM_VISIBLE,
     COLOR_DEPTH, POSITION_TYPE, POS_X, POS_Y, START_ANIMATION, UPDATE_INTERVAL,
     TRANSITION_TYPE, TRANSITION_DURATION, TRANSITION_COLOR, TRANSITION_OPACITY,
-    DEBUG_LEVEL, ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
+    DEBUG_LEVEL, DEBUG_TRACE_SWITCHES,
+    DEBUG_TRACE_METERS, DEBUG_TRACE_VINYL, DEBUG_TRACE_REEL_LEFT, DEBUG_TRACE_REEL_RIGHT,
+    DEBUG_TRACE_TONEARM, DEBUG_TRACE_ALBUMART, DEBUG_TRACE_SCROLLING,
+    DEBUG_TRACE_VOLUME, DEBUG_TRACE_MUTE, DEBUG_TRACE_SHUFFLE, DEBUG_TRACE_REPEAT,
+    DEBUG_TRACE_PLAYSTATE, DEBUG_TRACE_PROGRESS,
+    DEBUG_TRACE_METADATA, DEBUG_TRACE_SEEK, DEBUG_TRACE_TIME,
+    DEBUG_TRACE_INIT, DEBUG_TRACE_FADE, DEBUG_TRACE_FRAME,
+    ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
     REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
@@ -288,25 +295,70 @@ except Exception:
     PIL_AVAILABLE = False
 
 # Debug logging - controlled by config debug.level setting
-# Levels: off, basic, verbose
-# When enabled, writes to /tmp/peppy_debug.log
+# Levels: off, basic, verbose, trace
+# When trace enabled, individual component switches control what gets logged
+# Writes to /tmp/peppy_debug.log
 DEBUG_LOG_FILE = '/tmp/peppy_debug.log'
 
 # Global debug level - will be set from config after parsing
 # Default to off until config is loaded
 DEBUG_LEVEL_CURRENT = "off"
 
-def log_debug(msg, level="basic"):
-    """Write debug message to log file based on debug level.
+# Debug trace switches - dict mapping component name to enabled state
+# Keys match the config key suffix (e.g., "meters" for debug.trace.meters)
+DEBUG_TRACE = {
+    "meters": False,
+    "vinyl": False,
+    "reel.left": False,
+    "reel.right": False,
+    "tonearm": False,
+    "albumart": False,
+    "scrolling": False,
+    "volume": False,
+    "mute": False,
+    "shuffle": False,
+    "repeat": False,
+    "playstate": False,
+    "progress": False,
+    "metadata": False,
+    "seek": False,
+    "time": False,
+    "init": False,
+    "fade": False,
+    "frame": False,
+}
+
+def log_debug(msg, level="basic", component=None):
+    """Write debug message to log file based on debug level and component switches.
+    
+    Debug Levels:
+    - off: No logging
+    - basic: Startup, errors, key state changes
+    - verbose: Configuration details (includes basic)
+    - trace: Component-specific logging (includes verbose, requires component switch)
     
     :param msg: Message to log
-    :param level: Required level - 'basic' or 'verbose'
+    :param level: Required level - 'basic', 'verbose', or 'trace'
+    :param component: For trace level, which component (e.g., 'tonearm', 'meters')
+                     Must match a key in DEBUG_TRACE dict
     """
     if DEBUG_LEVEL_CURRENT == "off":
         return
-    if DEBUG_LEVEL_CURRENT == "basic" and level == "verbose":
-        return
-    # verbose level logs everything
+    
+    if level == "basic":
+        # basic logs at basic, verbose, or trace
+        pass
+    elif level == "verbose":
+        # verbose logs at verbose or trace only
+        if DEBUG_LEVEL_CURRENT == "basic":
+            return
+    elif level == "trace":
+        # trace logs only at trace level AND component switch must be on
+        if DEBUG_LEVEL_CURRENT != "trace":
+            return
+        if component and not DEBUG_TRACE.get(component, False):
+            return
+    
     try:
         import datetime
         ts = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
@@ -314,6 +366,45 @@ def log_debug(msg, level="basic"):
             f.write(f"[{ts}] {msg}\n")
     except Exception:
         pass
+
+
+def init_debug_config(meter_config_volumio):
+    """Initialize debug settings from config. Called after config is parsed."""
+    global DEBUG_LEVEL_CURRENT, DEBUG_TRACE
+    
+    DEBUG_LEVEL_CURRENT = meter_config_volumio.get(DEBUG_LEVEL, "off")
+    
+    # Load trace switches from config
+    trace_key_map = {
+        DEBUG_TRACE_METERS: "meters",
+        DEBUG_TRACE_VINYL: "vinyl",
+        DEBUG_TRACE_REEL_LEFT: "reel.left",
+        DEBUG_TRACE_REEL_RIGHT: "reel.right",
+        DEBUG_TRACE_TONEARM: "tonearm",
+        DEBUG_TRACE_ALBUMART: "albumart",
+        DEBUG_TRACE_SCROLLING: "scrolling",
+        DEBUG_TRACE_VOLUME: "volume",
+        DEBUG_TRACE_MUTE: "mute",
+        DEBUG_TRACE_SHUFFLE: "shuffle",
+        DEBUG_TRACE_REPEAT: "repeat",
+        DEBUG_TRACE_PLAYSTATE: "playstate",
+        DEBUG_TRACE_PROGRESS: "progress",
+        DEBUG_TRACE_METADATA: "metadata",
+        DEBUG_TRACE_SEEK: "seek",
+        DEBUG_TRACE_TIME: "time",
+        DEBUG_TRACE_INIT: "init",
+        DEBUG_TRACE_FADE: "fade",
+        DEBUG_TRACE_FRAME: "frame",
+    }
+    
+    for config_key, trace_key in trace_key_map.items():
+        DEBUG_TRACE[trace_key] = meter_config_volumio.get(config_key, False)
+    
+    log_debug(f"Debug level set to: {DEBUG_LEVEL_CURRENT}", "basic")
+    if DEBUG_LEVEL_CURRENT == "trace":
+        enabled = [k for k, v in DEBUG_TRACE.items() if v]
+        if enabled:
+            log_debug(f"Trace components enabled: {', '.join(enabled)}", "basic")
 
 # Runtime paths
 PeppyRunning = '/tmp/peppyrunning'
@@ -374,22 +465,22 @@ class MetadataWatcher:
             duration = data.get("duration", 0) or 0
             service = data.get("service", "") or ""
             
-            # DEBUG: Log EVERY pushState with sequence number and ALL data
+            # TRACE: Log EVERY pushState with sequence number and ALL data
             _pushstate_count += 1
-            log_debug(f"[pushState #{_pushstate_count}] status={status}, seek={seek}ms ({seek/1000:.1f}s), dur={duration}s, volatile={volatile}, svc={service}, title='{title[:30]}'")
+            log_debug(f"[pushState #{_pushstate_count}] status={status}, seek={seek}ms ({seek/1000:.1f}s), dur={duration}s, volatile={volatile}, svc={service}, title='{title[:30]}'", "trace", "metadata")
             
-            # Also log when values CHANGE
+            # TRACE: Log when values CHANGE
             if status != _prev_status:
-                log_debug(f"[pushState] STATUS CHANGE: '{_prev_status}' -> '{status}'")
+                log_debug(f"[pushState] STATUS CHANGE: '{_prev_status}' -> '{status}'", "trace", "metadata")
                 _prev_status = status
             if volatile != _prev_volatile:
-                log_debug(f"[pushState] VOLATILE CHANGE: {_prev_volatile} -> {volatile}")
+                log_debug(f"[pushState] VOLATILE CHANGE: {_prev_volatile} -> {volatile}", "trace", "metadata")
                 _prev_volatile = volatile
             if title != _prev_title:
-                log_debug(f"[pushState] TITLE CHANGE: '{_prev_title[:20]}' -> '{title[:20]}'")
+                log_debug(f"[pushState] TITLE CHANGE: '{_prev_title[:20]}' -> '{title[:20]}'", "trace", "metadata")
                 _prev_title = title
             if abs(seek - _prev_seek) > 1000:  # >1s seek change
-                log_debug(f"[pushState] SEEK CHANGE: {_prev_seek}ms -> {seek}ms (delta={seek - _prev_seek}ms)")
+                log_debug(f"[pushState] SEEK CHANGE: {_prev_seek}ms -> {seek}ms (delta={seek - _prev_seek}ms)", "trace", "metadata")
                 _prev_seek = seek
             
             # Extract metadata
@@ -1446,7 +1537,7 @@ class TonearmRenderer:
                             self._animation_start_time = now
                             self._animation_start_angle = self._current_angle
                             self._animation_duration = remaining_duration
-                            log_debug(f"[Tonearm] Update freeze ({gap_sec*1000:.0f}ms), restart animation")
+                            log_debug(f"[Tonearm] Update freeze ({gap_sec*1000:.0f}ms), restart animation", "trace", "tonearm")
         
         self._last_update_time = now
         
@@ -1468,7 +1559,7 @@ class TonearmRenderer:
                     self.angle_start + 
                     (self.angle_end - self.angle_start) * (progress_pct / 100.0)
                 )
-                log_debug(f"[Tonearm] REST->DROP: progress={progress_pct:.1f}%, target={target_angle:.1f}")
+                log_debug(f"[Tonearm] REST->DROP: progress={progress_pct:.1f}%, target={target_angle:.1f}", "trace", "tonearm")
                 self._state = TONEARM_STATE_DROP
                 self._start_animation(target_angle, self.drop_duration)
                 self._needs_redraw = True
@@ -1476,7 +1567,7 @@ class TonearmRenderer:
         elif self._state == TONEARM_STATE_DROP:
             if status != "play":
                 # Playback stopped during drop - lift back
-                log_debug(f"[Tonearm] DROP->LIFT: playback stopped (status={status})")
+                log_debug(f"[Tonearm] DROP->LIFT: playback stopped (status={status})", "trace", "tonearm")
                 self._state = TONEARM_STATE_LIFT
                 self._early_lift = False  # Clear flag - this is a normal stop
                 self._start_animation(self.angle_rest, self.lift_duration)
@@ -1490,7 +1581,7 @@ class TonearmRenderer:
                         self.angle_start + 
                         (self.angle_end - self.angle_start) * (progress_pct / 100.0)
                     )
-                    log_debug(f"[Tonearm] DROP->TRACKING: progress={progress_pct:.1f}%, sync_angle={sync_angle:.1f}, drop_target={self._animation_end_angle:.1f}")
+                    log_debug(f"[Tonearm] DROP->TRACKING: progress={progress_pct:.1f}%, sync_angle={sync_angle:.1f}, drop_target={self._animation_end_angle:.1f}", "trace", "tonearm")
                     self._current_angle = sync_angle
                     self._state = TONEARM_STATE_TRACKING
                 self._needs_redraw = True
@@ -1499,7 +1590,7 @@ class TonearmRenderer:
             # Early lift: when track is about to end, lift tonearm preemptively
             # This hides the freeze during track change - looks like natural LP change
             if time_remaining_sec is not None and time_remaining_sec < 1.5 and time_remaining_sec > 0:
-                log_debug(f"[Tonearm] TRACKING->LIFT: early lift, track ending in {time_remaining_sec:.1f}s")
+                log_debug(f"[Tonearm] TRACKING->LIFT: early lift, track ending in {time_remaining_sec:.1f}s", "trace", "tonearm")
                 self._state = TONEARM_STATE_LIFT
                 self._pending_drop_target = None  # Will get new position from next track
                 self._early_lift = True  # Flag to stay at REST after lift completes
@@ -1508,7 +1599,7 @@ class TonearmRenderer:
                 self._last_blit_tick = 0
             elif status != "play":
                 # Playback stopped - start lift (not early lift)
-                log_debug(f"[Tonearm] TRACKING->LIFT: playback stopped (status={status})")
+                log_debug(f"[Tonearm] TRACKING->LIFT: playback stopped (status={status})", "trace", "tonearm")
                 self._state = TONEARM_STATE_LIFT
                 self._pending_drop_target = None
                 self._early_lift = False  # Clear flag - this is a normal stop
@@ -1528,7 +1619,7 @@ class TonearmRenderer:
                 # Any sudden movement > 2 degrees triggers lift/drop animation
                 if abs(target_angle - self._current_angle) > 2.0:
                     # Large jump - lift and drop to new position
-                    log_debug(f"[Tonearm] TRACKING->LIFT: jump detected, current={self._current_angle:.1f}, target={target_angle:.1f}, progress={progress_pct:.1f}%")
+                    log_debug(f"[Tonearm] TRACKING->LIFT: jump detected, current={self._current_angle:.1f}, target={target_angle:.1f}, progress={progress_pct:.1f}%", "trace", "tonearm")
                     self._state = TONEARM_STATE_LIFT
                     self._pending_drop_target = target_angle
                     self._early_lift = False  # Clear flag - this is a seek/jump
@@ -1545,13 +1636,13 @@ class TonearmRenderer:
                 # Lift animation complete
                 if self._early_lift:
                     # Early lift for track change - stay at REST until new track
-                    log_debug("[Tonearm] LIFT->REST: early lift complete, waiting for new track")
+                    log_debug("[Tonearm] LIFT->REST: early lift complete, waiting for new track", "trace", "tonearm")
                     self._state = TONEARM_STATE_REST
                     self._pending_drop_target = None
                     # Keep _early_lift=True - will be cleared when DROP starts
                 elif self._pending_drop_target is not None:
                     # Seek/jump - drop to pending target
-                    log_debug(f"[Tonearm] LIFT->DROP: pending target={self._pending_drop_target:.1f}")
+                    log_debug(f"[Tonearm] LIFT->DROP: pending target={self._pending_drop_target:.1f}", "trace", "tonearm")
                     self._state = TONEARM_STATE_DROP
                     self._start_animation(self._pending_drop_target, self.drop_duration)
                     self._pending_drop_target = None
@@ -1562,12 +1653,12 @@ class TonearmRenderer:
                         self.angle_start + 
                         (self.angle_end - self.angle_start) * (progress_pct / 100.0)
                     )
-                    log_debug(f"[Tonearm] LIFT->DROP: no pending, using progress={progress_pct:.1f}%, target={target_angle:.1f}")
+                    log_debug(f"[Tonearm] LIFT->DROP: no pending, using progress={progress_pct:.1f}%, target={target_angle:.1f}", "trace", "tonearm")
                     self._state = TONEARM_STATE_DROP
                     self._start_animation(target_angle, self.drop_duration)
                 else:
                     # Lift complete, not playing - back to rest
-                    log_debug(f"[Tonearm] LIFT->REST: not playing (status={status})")
+                    log_debug(f"[Tonearm] LIFT->REST: not playing (status={status})", "trace", "tonearm")
                     self._state = TONEARM_STATE_REST
                     self._pending_drop_target = None
             self._needs_redraw = True
@@ -1703,7 +1794,7 @@ class TonearmRenderer:
                             self._animation_start_time = time.time()
                             self._animation_start_angle = self._current_angle
                             self._animation_duration = remaining_duration
-                            log_debug(f"[Tonearm] Freeze detected ({gap_ms}ms), restarting animation")
+                            log_debug(f"[Tonearm] Freeze detected ({gap_ms}ms), restarting animation", "trace", "tonearm")
         
         self._last_blit_tick = actual_now  # Use fresh timestamp
         
@@ -1808,11 +1899,11 @@ class CallBack:
         :param screen: pygame screen surface
         :param duration: fade duration in seconds
         """
-        log_debug(f"screen_fade_in called, duration={duration}")
+        log_debug(f"screen_fade_in called, duration={duration}", "trace", "fade")
         
         transition_type = self.meter_config_volumio.get(TRANSITION_TYPE, "fade")
         if transition_type == "none":
-            log_debug("-> skipped (transition_type=none)")
+            log_debug("-> skipped (transition_type=none)", "trace", "fade")
             return
             
         clock = Clock()
@@ -1828,7 +1919,7 @@ class CallBack:
         # Get opacity (0-100, default 100 for solid fade)
         opacity = self.meter_config_volumio.get(TRANSITION_OPACITY, 100)
         max_alpha = int(255 * opacity / 100)
-        log_debug(f"-> fade_in with opacity={opacity}%, max_alpha={max_alpha}")
+        log_debug(f"-> fade_in with opacity={opacity}%, max_alpha={max_alpha}", "trace", "fade")
         
         # Capture current screen content
         screen_copy = screen.copy()
@@ -1862,11 +1953,11 @@ class CallBack:
         :param screen: pygame screen surface
         :param duration: fade duration in seconds
         """
-        log_debug(f"screen_fade_out called, duration={duration}")
+        log_debug(f"screen_fade_out called, duration={duration}", "trace", "fade")
         
         transition_type = self.meter_config_volumio.get(TRANSITION_TYPE, "fade")
         if transition_type == "none":
-            log_debug("-> skipped (transition_type=none)")
+            log_debug("-> skipped (transition_type=none)", "trace", "fade")
             return
             
         clock = Clock()
@@ -1882,7 +1973,7 @@ class CallBack:
         # Get opacity (0-100, default 100 for solid fade)
         opacity = self.meter_config_volumio.get(TRANSITION_OPACITY, 100)
         max_alpha = int(255 * opacity / 100)
-        log_debug(f"-> fade_out with opacity={opacity}%, max_alpha={max_alpha}")
+        log_debug(f"-> fade_out with opacity={opacity}%, max_alpha={max_alpha}", "trace", "fade")
         
         # Create overlay
         overlay = pg.Surface(screen.get_size())
@@ -1918,9 +2009,9 @@ class CallBack:
         animation = self.meter_config_volumio.get(START_ANIMATION, False)
         cooldown = duration + 1.0  # cooldown is fade duration + 1 second
         
-        # Debug: track calls
+        # TRACE: track calls
         time_since_last = current_time - self.last_fade_time
-        log_debug(f"peppy_meter_start: first_run={self.first_run}, animation={animation}, duration={duration}s, cooldown={cooldown}s")
+        log_debug(f"peppy_meter_start: first_run={self.first_run}, animation={animation}, duration={duration}s, cooldown={cooldown}s", "trace", "fade")
         
         # Use file-based cooldown that persists across process restarts
         # This prevents double fade when skin change triggers multiple restarts
@@ -1931,34 +2022,34 @@ class CallBack:
             if os.path.exists(fade_lockfile):
                 lock_mtime = os.path.getmtime(fade_lockfile)
                 lock_age = current_time - lock_mtime
-                log_debug(f"-> fade lock exists, age={lock_age:.2f}s")
+                log_debug(f"-> fade lock exists, age={lock_age:.2f}s", "trace", "fade")
                 if lock_age > cooldown:
                     # Lock expired, allow fade
                     should_fade = True
                 else:
-                    log_debug(f"-> skipped (lock active: {lock_age:.2f}s < {cooldown}s)")
+                    log_debug(f"-> skipped (lock active: {lock_age:.2f}s < {cooldown}s)", "trace", "fade")
             else:
                 # No lock, allow fade
                 should_fade = True
         except Exception as e:
-            log_debug(f"-> lock check error: {e}")
+            log_debug(f"-> lock check error: {e}", "trace", "fade")
             should_fade = True
         
         # Only fade on first run with animation, or meter change
         if should_fade:
             if self.first_run and animation:
-                log_debug("-> will fade (first_run + animation)")
+                log_debug("-> will fade (first_run + animation)", "trace", "fade")
                 # Touch lock file
                 Path(fade_lockfile).touch()
                 self.did_fade_in = True
                 self.screen_fade_in(meter.util.PYGAME_SCREEN, duration)
             elif not self.first_run:
-                log_debug("-> will fade (meter change)")
+                log_debug("-> will fade (meter change)", "trace", "fade")
                 Path(fade_lockfile).touch()
                 self.did_fade_in = True
                 self.screen_fade_in(meter.util.PYGAME_SCREEN, duration)
             else:
-                log_debug("-> no fade (first_run but no animation)")
+                log_debug("-> no fade (first_run but no animation)", "trace", "fade")
         
         # Restore screen reference
         meter.util.PYGAME_SCREEN = meter.util.screen_copy
@@ -2748,12 +2839,14 @@ def start_display_output(pm, callback, meter_config_volumio):
             backing_rect = tonearm_renderer.get_backing_rect()
             if backing_rect:
                 capture_rect("tonearm", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
-            log_debug(f"[overlay_init] TonearmRenderer created: {tonearm_file}")
+            log_debug(f"[overlay_init] TonearmRenderer created: {tonearm_file}", "trace", "init")
         
         # Create indicator renderer (for volume, mute, shuffle, repeat, playstate, progress)
         indicator_renderer = None
         try:
-            from volumio_indicators import IndicatorRenderer
+            from volumio_indicators import IndicatorRenderer, init_indicator_debug
+            # Initialize indicator debug settings from main module
+            init_indicator_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
             # Check if any indicator is configured
             has_indicators = (
                 mc_vol.get(VOLUME_POS) or mc_vol.get(MUTE_POS) or
@@ -2774,9 +2867,9 @@ def start_display_output(pm, callback, meter_config_volumio):
                     meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
                     fonts=fonts_dict
                 )
-                log_debug(f"[overlay_init] IndicatorRenderer created: has_indicators={indicator_renderer.has_indicators()}")
+                log_debug(f"[overlay_init] IndicatorRenderer created: has_indicators={indicator_renderer.has_indicators()}", "trace", "init")
         except ImportError as e:
-            log_debug(f"[overlay_init] IndicatorRenderer not available: {e}")
+            log_debug(f"[overlay_init] IndicatorRenderer not available: {e}", "trace", "init")
         except Exception as e:
             print(f"[overlay_init] Failed to create IndicatorRenderer: {e}")
         
@@ -2796,7 +2889,7 @@ def start_display_output(pm, callback, meter_config_volumio):
         # Capture backing for indicators (after static assets drawn)
         if indicator_renderer and indicator_renderer.has_indicators():
             indicator_renderer.capture_backings(screen)
-            log_debug("[overlay_init] Indicator backings captured")
+            log_debug("[overlay_init] Indicator backings captured", "trace", "init")
         
         # Now run meter to show initial needle positions (after backings captured clean)
         pm.meter.run()
@@ -3080,22 +3173,22 @@ def start_display_output(pm, callback, meter_config_volumio):
                     seek = min(duration * 1000, seek_raw + elapsed_ms)
                     meta["seek"] = seek  # Update for indicators (progress bar)
             
-            # DEBUG: Increment frame counter
+            # TRACE: Increment frame counter
             _dbg_frame_count += 1
             
-            # DEBUG: Log ALL changes
+            # TRACE: Log status/volatile changes (frame component)
             if status != _dbg_last_status:
-                log_debug(f"[Render #{_dbg_frame_count}] STATUS CHANGE: '{_dbg_last_status}' -> '{status}'")
+                log_debug(f"[Render #{_dbg_frame_count}] STATUS CHANGE: '{_dbg_last_status}' -> '{status}'", "trace", "frame")
                 _dbg_last_status = status
             if volatile != _dbg_last_volatile:
-                log_debug(f"[Render #{_dbg_frame_count}] VOLATILE CHANGE: {_dbg_last_volatile} -> {volatile}")
+                log_debug(f"[Render #{_dbg_frame_count}] VOLATILE CHANGE: {_dbg_last_volatile} -> {volatile}", "trace", "frame")
                 _dbg_last_volatile = volatile
-            # Log significant seek changes (raw or interpolated)
+            # TRACE: Log significant seek changes (seek component)
             if abs(seek_raw - _dbg_last_seek_raw) > 1000:  # >1s raw change
-                log_debug(f"[Render #{_dbg_frame_count}] SEEK_RAW CHANGE: {_dbg_last_seek_raw}ms -> {seek_raw}ms")
+                log_debug(f"[Render #{_dbg_frame_count}] SEEK_RAW CHANGE: {_dbg_last_seek_raw}ms -> {seek_raw}ms", "trace", "seek")
                 _dbg_last_seek_raw = seek_raw
             if abs(seek - _dbg_last_seek_interp) > 5000:  # >5s interpolated change
-                log_debug(f"[Render #{_dbg_frame_count}] SEEK_INTERP: raw={seek_raw}ms + elapsed={elapsed_ms:.0f}ms = {seek:.0f}ms ({seek/1000:.1f}s)")
+                log_debug(f"[Render #{_dbg_frame_count}] SEEK_INTERP: raw={seek_raw}ms + elapsed={elapsed_ms:.0f}ms = {seek:.0f}ms ({seek/1000:.1f}s)", "trace", "seek")
                 _dbg_last_seek_interp = seek
             
             # Pre-calculate tonearm state
@@ -3110,9 +3203,9 @@ def start_display_output(pm, callback, meter_config_volumio):
                     progress_pct = 0.0
                     time_remaining_sec = None  # Unknown duration (webradio etc)
                 
-                # DEBUG: Log significant progress changes
+                # TRACE: Log significant progress changes (tonearm component)
                 if abs(progress_pct - _dbg_last_progress) > 5.0:  # >5% change
-                    log_debug(f"[Render #{_dbg_frame_count}] PROGRESS: {_dbg_last_progress:.1f}% -> {progress_pct:.1f}% (seek={seek/1000:.1f}s, dur={duration}s)")
+                    log_debug(f"[Render #{_dbg_frame_count}] PROGRESS: {_dbg_last_progress:.1f}% -> {progress_pct:.1f}% (seek={seek/1000:.1f}s, dur={duration}s)", "trace", "tonearm")
                     _dbg_last_progress = progress_pct
                 
                 tonearm.update(status, progress_pct, time_remaining_sec)
@@ -3185,7 +3278,32 @@ def start_display_output(pm, callback, meter_config_volumio):
                     dirty_rects.append(rect)
             
             # STEP 2: meter.run() - draws meters/spectrum
+            # TRACE: Log meter input (audio levels) before run
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("meters", False):
+                try:
+                    ds = pm.data_source
+                    if ds:
+                        left = ds.get_current_left_channel_data()
+                        right = ds.get_current_right_channel_data()
+                        mono = ds.get_current_mono_channel_data()
+                        log_debug(f"[Meter] INPUT: left={left}, right={right}, mono={mono}", "trace", "meters")
+                except Exception:
+                    pass
+            
             meter_rects = pm.meter.run()
+            
+            # TRACE: Log meter output (render result)
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("meters", False):
+                if meter_rects:
+                    rect_count = 0
+                    if isinstance(meter_rects, list):
+                        rect_count = sum(1 for item in meter_rects if item)
+                    elif meter_rects:
+                        rect_count = 1
+                    log_debug(f"[Meter] OUTPUT: rendered={rect_count} rects", "trace", "meters")
+                else:
+                    log_debug("[Meter] OUTPUT: no render (unchanged)", "trace", "meters")
+            
             if meter_rects:
                 if isinstance(meter_rects, list):
                     for item in meter_rects:
@@ -3208,24 +3326,39 @@ def start_display_output(pm, callback, meter_config_volumio):
             reel_rendered = False
             reel_should_spin = is_playing or volatile
             if reel_left and reel_should_spin and left_will_blit:
+                # TRACE: Log reel left render
+                log_debug(f"[Reel.Left] INPUT: status={status}, should_spin={reel_should_spin}, will_blit={left_will_blit}", "trace", "reel.left")
                 rect = reel_left.render(screen, status, now_ticks, volatile=volatile)
                 if rect:
                     dirty_rects.append(rect)
                     reel_rendered = True
+                    log_debug(f"[Reel.Left] OUTPUT: rendered rect={rect}", "trace", "reel.left")
+                else:
+                    log_debug("[Reel.Left] OUTPUT: no render", "trace", "reel.left")
             if reel_right and reel_should_spin and right_will_blit:
+                # TRACE: Log reel right render
+                log_debug(f"[Reel.Right] INPUT: status={status}, should_spin={reel_should_spin}, will_blit={right_will_blit}", "trace", "reel.right")
                 rect = reel_right.render(screen, status, now_ticks, volatile=volatile)
                 if rect:
                     dirty_rects.append(rect)
                     reel_rendered = True
+                    log_debug(f"[Reel.Right] OUTPUT: rendered rect={rect}", "trace", "reel.right")
+                else:
+                    log_debug("[Reel.Right] OUTPUT: no render", "trace", "reel.right")
             
             # STEP 4: Render vinyl (above reels, below album art)
             vinyl_rendered = False
             vinyl_should_spin = is_playing or volatile
             if vinyl and vinyl_should_spin and vinyl_will_blit:
+                # TRACE: Log vinyl render
+                log_debug(f"[Vinyl] INPUT: status={status}, should_spin={vinyl_should_spin}, will_blit={vinyl_will_blit}", "trace", "vinyl")
                 rect = vinyl.render(screen, status, now_ticks, volatile=volatile)
                 if rect:
                     dirty_rects.append(rect)
                     vinyl_rendered = True
+                    log_debug(f"[Vinyl] OUTPUT: rendered", "trace", "vinyl")
+                else:
+                    log_debug("[Vinyl] OUTPUT: no render", "trace", "vinyl")
             
             # STEP 5: Render album art (above vinyl, below tonearm)
             # Must redraw if vinyl rendered (vinyl backing may overlap art area)
@@ -3234,18 +3367,24 @@ def start_display_output(pm, callback, meter_config_volumio):
             if album_renderer:
                 url_changed = albumart != getattr(album_renderer, "_current_url", None)
                 if url_changed:
+                    # TRACE: Log album art URL change
+                    log_debug(f"[AlbumArt] INPUT: url_changed=True, new_url={albumart[:50] if albumart else 'None'}", "trace", "albumart")
                     album_renderer.load_from_url(albumart)
                     rect = album_renderer.render(screen, status, now_ticks, volatile=volatile)
                     if rect:
                         dirty_rects.append(rect)
                         album_rendered = True
+                        log_debug("[AlbumArt] OUTPUT: rendered (new image)", "trace", "albumart")
                 elif album_will_draw:
                     # Redraw due to own rotation OR overlapping element change
                     advance = album_will_render  # Only advance angle if album itself needs update
+                    # TRACE: Log album art rotation render
+                    log_debug(f"[AlbumArt] INPUT: will_draw={album_will_draw}, advance_angle={advance}", "trace", "albumart")
                     rect = album_renderer.render(screen, status, now_ticks, advance_angle=advance, volatile=volatile)
                     if rect:
                         dirty_rects.append(rect)
                         album_rendered = True
+                        log_debug("[AlbumArt] OUTPUT: rendered (rotation)", "trace", "albumart")
             
             # STEP 6: Render tonearm (above album art, below indicators)
             # Must redraw if any lower element rendered (may have wiped tonearm area)
@@ -3272,7 +3411,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if not ov["album_pos"] and album:
                     display_artist = f"{artist} - {album}" if artist else album
                 ov["artist_scroller"].update_text(display_artist)
-                if tonearm_will_render:
+                if any_animated_will_draw:
                     ov["artist_scroller"].force_redraw()
                 rect = ov["artist_scroller"].draw(screen)
                 if rect:
@@ -3280,7 +3419,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             if ov["title_scroller"]:
                 ov["title_scroller"].update_text(title)
-                if tonearm_will_render:
+                if any_animated_will_draw:
                     ov["title_scroller"].force_redraw()
                 rect = ov["title_scroller"].draw(screen)
                 if rect:
@@ -3288,7 +3427,7 @@ def start_display_output(pm, callback, meter_config_volumio):
             
             if ov["album_scroller"]:
                 ov["album_scroller"].update_text(album)
-                if tonearm_will_render:
+                if any_animated_will_draw:
                     ov["album_scroller"].force_redraw()
                 rect = ov["album_scroller"].draw(screen)
                 if rect:
@@ -3346,9 +3485,10 @@ def start_display_output(pm, callback, meter_config_volumio):
                     secs = display_sec % 60
                     time_str = f"{mins:02d}:{secs:02d}"
                     
-                    # Force redraw if tonearm rendered (backing restore may have wiped time area)
+                    # Force redraw if any animated element's backing was restored
+                    # (vinyl, tonearm, reels may overlap time area and wipe it)
                     # or if time string changed
-                    if time_str != last_time_str or tonearm_will_render:
+                    if time_str != last_time_str or any_animated_will_draw:
                         last_time_str = time_str
                         
                         # Restore backing for time area
@@ -3369,8 +3509,8 @@ def start_display_output(pm, callback, meter_config_volumio):
                         screen.blit(last_time_surf, ov["time_pos"])
             
             # Format icon - OPTIMIZED with caching (swapped with sample per Gelo5)
-            # Force redraw if tonearm rendered (backing restore may have wiped icon area)
-            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"], force_redraw=tonearm_will_render)
+            # Force redraw if any animated element rendered (backing restore may have wiped icon area)
+            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"], force_redraw=any_animated_will_draw)
             if icon_rect:
                 dirty_rects.append(icon_rect)
             
@@ -3381,9 +3521,9 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if not sample_text:
                     sample_text = bitrate.strip() if bitrate else ""
                 
-                # Force redraw if tonearm rendered (backing restore may have wiped sample area)
+                # Force redraw if any animated element rendered (backing restore may have wiped sample area)
                 # or if sample text changed
-                if sample_text and (sample_text != last_sample_text or tonearm_will_render):
+                if sample_text and (sample_text != last_sample_text or any_animated_will_draw):
                     last_sample_text = sample_text
                     
                     # Restore backing for sample area
@@ -3455,7 +3595,7 @@ def start_display_output(pm, callback, meter_config_volumio):
         # Recreate runFlag to prevent new instance starting during our fade_out
         # index.js checks this flag before starting peppymeter
         Path(PeppyRunning).touch()
-        log_debug("runFlag recreated for fade_out protection")
+        log_debug("runFlag recreated for fade_out protection", "trace", "fade")
         
         duration = meter_config_volumio.get(TRANSITION_DURATION, 0.5)
         callback.screen_fade_out(screen, duration)
@@ -3463,9 +3603,9 @@ def start_display_output(pm, callback, meter_config_volumio):
         # Remove runFlag after fade_out complete
         if os.path.exists(PeppyRunning):
             os.remove(PeppyRunning)
-            log_debug("runFlag removed after fade_out")
+            log_debug("runFlag removed after fade_out", "trace", "fade")
     else:
-        log_debug("screen_fade_out skipped (no fade_in was done)")
+        log_debug("screen_fade_out skipped (no fade_in was done)", "trace", "fade")
     
     # Cleanup
     metadata_watcher.stop()
@@ -3490,8 +3630,8 @@ if __name__ == "__main__":
     parser = Volumio_ConfigFileParser(pm.util)
     meter_config_volumio = parser.meter_config_volumio
     
-    # Set debug level from config early so logging works
-    DEBUG_LEVEL_CURRENT = meter_config_volumio.get(DEBUG_LEVEL, "off")
+    # Initialize debug settings from config (sets level and trace switches)
+    init_debug_config(meter_config_volumio)
     
     # Clear debug log on fresh start (after config is loaded)
     if DEBUG_LEVEL_CURRENT != "off":

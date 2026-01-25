@@ -29,6 +29,37 @@ UPDATE_INTERVAL = "update.interval"
 # Debug settings
 DEBUG_LEVEL = "debug.level"
 
+# Debug trace switches (only active when level=trace)
+DEBUG_TRACE_METERS = "debug.trace.meters"
+DEBUG_TRACE_VINYL = "debug.trace.vinyl"
+DEBUG_TRACE_REEL_LEFT = "debug.trace.reel.left"
+DEBUG_TRACE_REEL_RIGHT = "debug.trace.reel.right"
+DEBUG_TRACE_TONEARM = "debug.trace.tonearm"
+DEBUG_TRACE_ALBUMART = "debug.trace.albumart"
+DEBUG_TRACE_SCROLLING = "debug.trace.scrolling"
+DEBUG_TRACE_VOLUME = "debug.trace.volume"
+DEBUG_TRACE_MUTE = "debug.trace.mute"
+DEBUG_TRACE_SHUFFLE = "debug.trace.shuffle"
+DEBUG_TRACE_REPEAT = "debug.trace.repeat"
+DEBUG_TRACE_PLAYSTATE = "debug.trace.playstate"
+DEBUG_TRACE_PROGRESS = "debug.trace.progress"
+DEBUG_TRACE_METADATA = "debug.trace.metadata"
+DEBUG_TRACE_SEEK = "debug.trace.seek"
+DEBUG_TRACE_TIME = "debug.trace.time"
+DEBUG_TRACE_INIT = "debug.trace.init"
+DEBUG_TRACE_FADE = "debug.trace.fade"
+DEBUG_TRACE_FRAME = "debug.trace.frame"
+
+# List of all trace switch keys for iteration
+DEBUG_TRACE_SWITCHES = [
+    DEBUG_TRACE_METERS, DEBUG_TRACE_VINYL, DEBUG_TRACE_REEL_LEFT, DEBUG_TRACE_REEL_RIGHT,
+    DEBUG_TRACE_TONEARM, DEBUG_TRACE_ALBUMART, DEBUG_TRACE_SCROLLING,
+    DEBUG_TRACE_VOLUME, DEBUG_TRACE_MUTE, DEBUG_TRACE_SHUFFLE, DEBUG_TRACE_REPEAT,
+    DEBUG_TRACE_PLAYSTATE, DEBUG_TRACE_PROGRESS,
+    DEBUG_TRACE_METADATA, DEBUG_TRACE_SEEK, DEBUG_TRACE_TIME,
+    DEBUG_TRACE_INIT, DEBUG_TRACE_FADE, DEBUG_TRACE_FRAME
+]
+
 TRANSITION_TYPE = "transition.type"
 TRANSITION_DURATION = "transition.duration"
 TRANSITION_COLOR = "transition.color"
@@ -267,6 +298,13 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[DEBUG_LEVEL] = c.get(CURRENT, DEBUG_LEVEL)
         except:
             self.meter_config_volumio[DEBUG_LEVEL] = "off"
+
+        # Debug trace switches (all default to False)
+        for trace_key in DEBUG_TRACE_SWITCHES:
+            try:
+                self.meter_config_volumio[trace_key] = c.getboolean(CURRENT, trace_key)
+            except:
+                self.meter_config_volumio[trace_key] = False
 
         # Rotation settings (global)
         try:

@@ -23,15 +23,54 @@ except ImportError:
     PIL_AVAILABLE = False
 
 # =============================================================================
-# Simple logging for indicators (writes to same log as peppymeter)
+# Debug logging for indicators (shared config with peppymeter)
 # =============================================================================
 _DEBUG_LOG_PATH = "/tmp/peppy_debug.log"
-_DEBUG_ENABLED = os.path.exists("/tmp/peppy_debug.level")
 
-def _log_debug(msg):
-    """Simple debug logging for indicators module."""
-    if not _DEBUG_ENABLED:
+# Debug level and trace switches - set by init_indicator_debug() from main module
+_DEBUG_LEVEL = "off"
+_DEBUG_TRACE = {
+    "volume": False,
+    "mute": False,
+    "shuffle": False,
+    "repeat": False,
+    "playstate": False,
+    "progress": False,
+}
+
+def init_indicator_debug(level, trace_dict):
+    """Initialize indicator debug settings from main module.
+    
+    :param level: Debug level ('off', 'basic', 'verbose', 'trace')
+    :param trace_dict: Dict of trace switches from main module
+    """
+    global _DEBUG_LEVEL, _DEBUG_TRACE
+    _DEBUG_LEVEL = level
+    # Copy relevant trace switches
+    for key in _DEBUG_TRACE:
+        _DEBUG_TRACE[key] = trace_dict.get(key, False)
+
+def _log_debug(msg, level="basic", component=None):
+    """Debug logging for indicators module.
+    
+    :param msg: Message to log
+    :param level: Required level - 'basic', 'verbose', or 'trace'
+    :param component: For trace level, which component (e.g., 'volume', 'mute')
+    """
+    if _DEBUG_LEVEL == "off":
         return
+    
+    if level == "basic":
+        pass  # Logs at any level
+    elif level == "verbose":
+        if _DEBUG_LEVEL == "basic":
+            return
+    elif level == "trace":
+        if _DEBUG_LEVEL != "trace":
+            return
+        if component and not _DEBUG_TRACE.get(component, False):
+            return
+    
     try:
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         with open(_DEBUG_LOG_PATH, "a") as f:
@@ -1300,7 +1339,7 @@ class IndicatorRenderer:
                 if rect:
                     dirty_rects.append(rect)
                 if volume != self._prev_volume:
-                    _log_debug(f"[Indicators] Volume: {self._prev_volume} -> {volume}")
+                    _log_debug(f"[Indicators] Volume: {self._prev_volume} -> {volume}", "trace", "volume")
                 self._prev_volume = volume
         
         # Mute (3 states: off=0, on=1, zero=2)
@@ -1323,7 +1362,7 @@ class IndicatorRenderer:
                 if rect:
                     dirty_rects.append(rect)
                 if mute_state != self._prev_mute:
-                    _log_debug(f"[Indicators] Mute state: {self._prev_mute} -> {mute_state} (mute={mute}, vol={volume})")
+                    _log_debug(f"[Indicators] Mute state: {self._prev_mute} -> {mute_state} (mute={mute}, vol={volume})", "trace", "mute")
                 self._prev_mute = mute_state
         
         # Shuffle (3 states: off=0, shuffle=1, infinity=2)
@@ -1384,7 +1423,7 @@ class IndicatorRenderer:
                 if rect:
                     dirty_rects.append(rect)
                 if status != self._prev_status:
-                    _log_debug(f"[Indicators] Playstate: {self._prev_status} -> {status}")
+                    _log_debug(f"[Indicators] Playstate: {self._prev_status} -> {status}", "trace", "playstate")
                 self._prev_status = status
         
         # Progress bar
@@ -1407,5 +1446,5 @@ class IndicatorRenderer:
                     dirty_rects.append(rect)
                 # Log significant progress jumps (>10%)
                 if self._prev_progress is not None and abs(progress_quantized - self._prev_progress) > 10:
-                    _log_debug(f"[Indicators] Progress jump: {self._prev_progress}% -> {progress_quantized}% (seek={seek/1000:.1f}s, dur={duration}s)")
+                    _log_debug(f"[Indicators] Progress jump: {self._prev_progress}% -> {progress_quantized}% (seek={seek/1000:.1f}s, dur={duration}s)", "trace", "progress")
                 self._prev_progress = progress_quantized
