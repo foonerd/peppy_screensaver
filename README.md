@@ -222,7 +222,7 @@ All trace switches default to OFF and persist independently.
 
 ### Optimization Details
 
-v3.0.7+ includes several CPU optimizations:
+v3.2.0+ includes several CPU optimizations:
 
 - **Dirty rectangle rendering**: Spectrum analyzer only redraws bars that changed
 - **Skip-if-unchanged**: Needle animation skips frames when volume is static
@@ -566,7 +566,10 @@ peppy_screensaver/
   screensaver/                   - PeppyMeter runtime (after install)
     peppymeter/                  - PeppyMeter module
     spectrum/                    - PeppySpectrum module
-    volumio_peppymeter.py        - Main screensaver script
+    volumio_peppymeter.py        - Main coordinator and entry point
+    volumio_basic.py             - Basic skin handler (meters, static art)
+    volumio_turntable.py         - Turntable skin handler (vinyl, tonearm)
+    volumio_cassette.py          - Cassette skin handler (rotating reels)
     volumio_spectrum.py          - Spectrum analyzer integration
     volumio_configfileparser.py  - Volumio config extensions
     volumio_indicators.py        - Playback indicator support
@@ -577,6 +580,69 @@ peppy_screensaver/
   UIConfig.json                  - Plugin settings UI definition
   index.js                       - Volumio plugin controller
 ```
+
+## Architecture Overview
+
+The plugin uses a coordinator pattern with specialized handlers for different skin types.
+The main coordinator (`volumio_peppymeter.py`) detects the skin type and delegates
+rendering to the appropriate handler.
+
+### Skin Type Detection
+
+Skin type is automatically detected from the meter configuration:
+
+| Skin Type | Detection Criteria | Handler |
+|-----------|-------------------|---------|
+| **Cassette** | Has `reel.left.center` OR `reel.right.center`, WITHOUT tonearm or vinyl | `volumio_cassette.py` |
+| **Turntable** | Has `vinyl.center` OR `tonearm.*` OR `albumart.rotation = True` | `volumio_turntable.py` |
+| **Basic** | Everything else (meters only, static album art) | `volumio_basic.py` |
+
+### Handler Responsibilities
+
+Each handler is self-contained and manages its own render loop:
+
+**BasicHandler** - Simplest rendering path, no backing buffer conflicts:
+- Static album art
+- Scrolling text fields
+- Playback indicators
+- No animated mechanical elements
+
+**TurntableHandler** - Vinyl turntable skins:
+- Rotating vinyl disc
+- Rotating album art (coupled to vinyl)
+- Animated tonearm with drop/lift/tracking states
+- Backing buffer management for overlapping elements
+
+**CassetteHandler** - Cassette deck skins:
+- Left and right rotating reels
+- Backing buffer management for reel overlap zones
+- Force-redraw logic for text in reel areas
+
+### Render Z-Order
+
+All handlers follow a layered render order:
+
+1. Background (static, already on screen)
+2. Backing restoration (for animated elements)
+3. Meters (needle animation)
+4. Animated elements (vinyl, reels, tonearm)
+5. Album art
+6. Text fields (artist, title, album)
+7. Indicators (volume, mute, shuffle, repeat, progress)
+8. Time remaining
+9. Sample rate / format icon
+10. Foreground mask
+
+### Performance Implications
+
+| Skin Type | Relative CPU | Notes |
+|-----------|-------------|-------|
+| Basic | Lowest | No rotation calculations or backing management |
+| Turntable | Medium | Pre-computed rotation frames, FPS-gated updates |
+| Cassette | Medium-High | Dual reel rotation, force-redraw for overlap zones |
+
+Template authors can reduce CPU usage by choosing simpler skin types when
+animated mechanical elements are not needed.
 
 ## Build Information
 
@@ -625,5 +691,5 @@ MIT
 - PeppyMeter/PeppySpectrum: [project-owner](https://github.com/project-owner)
 - Original Volumio plugin: [2aCD](https://github.com/2aCD-creator)
 - Volumio 4 refactoring: [foonerd](https://github.com/foonerd)
-- Volumio 4 pythonising: [Wheaten](https://github.com/WheatenSudo)
+- Volumio 4 Python development: [Wheaten](https://github.com/WheatenSudo)
 - Plugin Q&A testing: Wheaten
