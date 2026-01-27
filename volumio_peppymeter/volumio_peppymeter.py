@@ -308,6 +308,7 @@ DEBUG_LEVEL_CURRENT = "off"
 # Keys match the config key suffix (e.g., "meters" for debug.trace.meters)
 DEBUG_TRACE = {
     "meters": False,
+    "spectrum": False,
     "vinyl": False,
     "reel.left": False,
     "reel.right": False,
@@ -379,8 +380,8 @@ def init_debug_config(meter_config_volumio):
         DEBUG_TRACE_METERS: "meters",
         DEBUG_TRACE_SPECTRUM: "spectrum",
         DEBUG_TRACE_VINYL: "vinyl",
-        DEBUG_TRACE_REEL_LEFT: "reel_left",
-        DEBUG_TRACE_REEL_RIGHT: "reel_right",
+        DEBUG_TRACE_REEL_LEFT: "reel.left",
+        DEBUG_TRACE_REEL_RIGHT: "reel.right",
         DEBUG_TRACE_TONEARM: "tonearm",
         DEBUG_TRACE_ALBUMART: "albumart",
         DEBUG_TRACE_SCROLLING: "scrolling",
@@ -1167,7 +1168,7 @@ class ReelRenderer:
         
         # Trace identification
         self._trace_name = name.replace("_", " ").title()  # "reel_left" -> "Reel Left"
-        self._trace_component = name.replace(".", "_")  # "reel.left" -> "reel_left"
+        self._trace_component = name.replace("_", ".")  # "reel_left" -> "reel.left"
         
         # Runtime state
         self._original_surf = None

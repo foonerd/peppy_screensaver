@@ -761,6 +761,24 @@ class ReelRenderer:
         
         return pg.Rect(ext_x, ext_y, diag, diag)
     
+    def get_visual_rect(self):
+        """Get visual bounding rectangle (actual image extent, not rotation-safe).
+        
+        Used to calculate meter exclusion zones - the visual rect shows where
+        the reel image actually appears (before rotation extends it).
+        """
+        if not self._original_surf or not self.center:
+            return None
+        
+        w = self._original_surf.get_width()
+        h = self._original_surf.get_height()
+        
+        # Visual rect centered on rotation pivot
+        x = self.center[0] - w // 2
+        y = self.center[1] - h // 2
+        
+        return pg.Rect(x, y, w, h)
+    
     def render(self, screen, status, now_ticks, volatile=False):
         """Render the reel (rotated if playing).
         Returns dirty rect if drawn, None if skipped."""
@@ -866,6 +884,7 @@ class CassetteHandler:
         self.reel_right = None
         self.album_renderer = None
         self.indicator_renderer = None
+        self.meter_exclusion_zone = None  # Protects meters from reel backing wipe
         
         # Scrollers
         self.artist_scroller = None
@@ -1173,6 +1192,30 @@ class CassetteHandler:
                 capture_rect("reel_right", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
             log_debug(f"  ReelRenderer RIGHT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer RIGHT created (no backing)", "verbose")
         
+        # Calculate meter exclusion zone (area between reels where meters are drawn)
+        # This prevents reel backing restore from wiping meter bars
+        meter_exclusion_x_start = 0
+        meter_exclusion_x_end = self.SCREEN_WIDTH
+        
+        if self.reel_left:
+            visual_rect = self.reel_left.get_visual_rect()
+            if visual_rect:
+                meter_exclusion_x_start = visual_rect.right
+                log_debug(f"  Meter exclusion: left boundary at x={meter_exclusion_x_start}", "verbose")
+        
+        if self.reel_right:
+            visual_rect = self.reel_right.get_visual_rect()
+            if visual_rect:
+                meter_exclusion_x_end = visual_rect.left
+                log_debug(f"  Meter exclusion: right boundary at x={meter_exclusion_x_end}", "verbose")
+        
+        if meter_exclusion_x_start < meter_exclusion_x_end:
+            self.meter_exclusion_zone = pg.Rect(meter_exclusion_x_start, 0,
+                                                meter_exclusion_x_end - meter_exclusion_x_start, self.SCREEN_HEIGHT)
+            log_debug(f"  Meter exclusion zone: x={self.meter_exclusion_zone.x} to {self.meter_exclusion_zone.right}", "verbose")
+        else:
+            self.meter_exclusion_zone = None
+        
         # Create indicator renderer
         self.indicator_renderer = None
         try:
@@ -1421,14 +1464,33 @@ class CassetteHandler:
         # PHASE 1: RESTORE BACKINGS
         # =================================================================
         
-        # Reel backings (only if will draw)
+        # Get meter exclusion zone (area to protect from reel backing wipe)
+        meter_excl = self.meter_exclusion_zone
+        
+        # Reel backings (only if will draw) - CLIP to exclude meter zone
         if left_will_blit and "reel_left" in bd:
             r, b = bd["reel_left"]
-            self.screen.blit(b, r.topleft)
+            if meter_excl and r.colliderect(meter_excl):
+                # Clip backing restore to exclude meter zone
+                # For left reel, only restore area to the LEFT of meter zone
+                clip_width = meter_excl.left - r.left
+                if clip_width > 0:
+                    clip_rect = pg.Rect(0, 0, clip_width, b.get_height())
+                    self.screen.blit(b, r.topleft, clip_rect)
+            else:
+                self.screen.blit(b, r.topleft)
         
         if right_will_blit and "reel_right" in bd:
             r, b = bd["reel_right"]
-            self.screen.blit(b, r.topleft)
+            if meter_excl and r.colliderect(meter_excl):
+                # Clip backing restore to exclude meter zone
+                # For right reel, only restore area to the RIGHT of meter zone
+                clip_x = meter_excl.right - r.left
+                if clip_x < b.get_width():
+                    clip_rect = pg.Rect(clip_x, 0, b.get_width() - clip_x, b.get_height())
+                    self.screen.blit(b, (r.left + clip_x, r.top), clip_rect)
+            else:
+                self.screen.blit(b, r.topleft)
         
         # Art backing (only if reels animate or URL changed)
         if (force_flag or album_url_changed) and "art" in bd:
