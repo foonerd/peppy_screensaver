@@ -26,6 +26,7 @@ except ImportError:
 # =============================================================================
 # Debug logging support (shared from main module)
 # =============================================================================
+DEBUG_LOG_FILE = '/tmp/peppy_debug.log'
 _DEBUG_LEVEL = "off"
 _DEBUG_TRACE = {}
 
@@ -40,29 +41,42 @@ def init_indicator_debug(level, trace_dict):
     _DEBUG_TRACE = trace_dict
 
 def _log_debug(msg, level="basic", component=None):
-    """Log debug message if level is enabled.
+    """Write debug message to log file based on debug level and component switches.
+    
+    Debug Levels:
+    - off: No logging
+    - basic: Startup, errors, key state changes
+    - verbose: Configuration details (includes basic)
+    - trace: Component-specific logging (includes verbose, requires component switch)
     
     :param msg: Message to log
-    :param level: Required level ("basic", "verbose", "trace")
-    :param component: For trace level, the component name to check
+    :param level: Required level - 'basic', 'verbose', or 'trace'
+    :param component: For trace level, which component (e.g., 'tonearm', 'meters')
+                     Must match a key in DEBUG_TRACE dict
     """
     if _DEBUG_LEVEL == "off":
         return
     
-    level_order = {"off": 0, "basic": 1, "verbose": 2, "trace": 3}
-    current_level = level_order.get(_DEBUG_LEVEL, 0)
-    required_level = level_order.get(level, 1)
-    
-    if current_level < required_level:
-        return
-    
-    # For trace level, check component switch
-    if level == "trace" and component:
-        if not _DEBUG_TRACE.get(component, False):
+    if level == "basic":
+        # basic logs at basic, verbose, or trace
+        pass
+    elif level == "verbose":
+        # verbose logs at verbose or trace only
+        if _DEBUG_LEVEL == "basic":
+            return
+    elif level == "trace":
+        # trace logs only at trace level AND component switch must be on
+        if _DEBUG_LEVEL != "trace":
+            return
+        if component and not _DEBUG_TRACE.get(component, False):
             return
     
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"[{timestamp}] {msg}")
+    try:
+        ts = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        with open(DEBUG_LOG_FILE, 'a') as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
 
 
 # =============================================================================
@@ -1335,7 +1349,7 @@ class IndicatorRenderer:
                     dirty_rects.append(rect)
                     # TRACE: Log volume output
                     if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("volume", False):
-                        _log_debug(f"[Volume] OUTPUT: rect={rect}, type={self._volume._render_type}", "trace", "volume")
+                        _log_debug(f"[Volume] OUTPUT: rect={rect}, style={self._volume.style}", "trace", "volume")
                 self._prev_volume = volume
         
         # Mute (3 states: off=0, on=1, zero=2)
