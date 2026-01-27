@@ -1958,8 +1958,8 @@ class TurntableHandler:
         
         # Interpolate seek based on elapsed time when playing
         # Use _seek_raw to avoid accumulation error from previous frames
-        # Skip interpolation during volatile (track change) - seek values may be stale
-        if is_playing and duration > 0 and not volatile:
+        # Webradio excluded by duration=0 check
+        if is_playing and duration > 0:
             if seek_update_time > 0:
                 elapsed_ms = (time.time() - seek_update_time) * 1000
                 seek = min(duration * 1000, seek_raw + elapsed_ms)

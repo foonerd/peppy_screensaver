@@ -951,8 +951,8 @@ class ProgressBar:
         self.border_width = max(0, int(border_width))
         self.border_color = border_color if border_color else (100, 100, 100)
         
-        # State tracking
-        self._current_progress = -1
+        # State tracking - use pixel width for change detection
+        self._current_fill_w = -1
         self._needs_redraw = True
         
         # Backing
@@ -995,25 +995,24 @@ class ProgressBar:
         if not self.pos or not self.dim:
             return None
         
-        # Quantize to 1% steps to reduce redraws
-        progress_int = max(0, min(100, int(progress_pct)))
-        
-        # Check if changed
-        if progress_int == self._current_progress and not self._needs_redraw:
-            return None
-        
-        self._current_progress = progress_int
-        self._needs_redraw = False
-        
         x, y = self.pos
         w, h = self.dim
+        
+        # Calculate fill width in pixels - this is the visual change metric
+        fill_w = int((progress_pct / 100.0) * w)
+        
+        # Check if pixel width changed (smooth visual updates)
+        if fill_w == self._current_fill_w and not self._needs_redraw:
+            return None
+        
+        self._current_fill_w = fill_w
+        self._needs_redraw = False
         
         # Background
         if self.bg_color:
             pg.draw.rect(screen, self.bg_color, (x, y, w, h))
         
         # Foreground fill based on progress
-        fill_w = int((progress_pct / 100.0) * w)
         if fill_w > 0:
             pg.draw.rect(screen, self.color, (x, y, fill_w, h))
         
@@ -1026,6 +1025,20 @@ class ProgressBar:
     def force_redraw(self):
         """Force redraw on next render call."""
         self._needs_redraw = True
+    
+    def needs_render(self, progress_pct):
+        """Check if render is needed based on pixel change.
+        
+        :param progress_pct: 0.0-100.0 percentage
+        :return: True if render would produce visual change
+        """
+        if self._needs_redraw:
+            return True
+        if not self.pos or not self.dim:
+            return False
+        w = self.dim[0]
+        fill_w = int((progress_pct / 100.0) * w)
+        return fill_w != self._current_fill_w
 
 
 # =============================================================================
@@ -1069,7 +1082,6 @@ class IndicatorRenderer:
         self._prev_repeat = None
         self._prev_repeat_single = None
         self._prev_status = None
-        self._prev_progress = None
         
         # Initialize indicators from config
         self._init_volume()
@@ -1486,7 +1498,7 @@ class IndicatorRenderer:
                         _log_debug(f"[Playstate] OUTPUT: state={state_idx}, rect={rect}", "trace", "playstate")
                 self._prev_status = status
         
-        # Progress bar
+        # Progress bar - pixel-based change detection for smooth updates
         if self._progress:
             duration = metadata.get("duration", 0) or 0
             seek = metadata.get("seek", 0) or 0
@@ -1495,20 +1507,16 @@ class IndicatorRenderer:
             else:
                 progress_pct = 0.0
             
-            # Quantize to 1% steps to reduce redraws
-            progress_quantized = int(progress_pct)
-            will_render = force or progress_quantized != self._prev_progress
+            # Check if render needed BEFORE restoring backing
+            if force:
+                self._progress.force_redraw()
+            will_render = self._progress.needs_render(progress_pct)
             
             # TRACE: Log progress input and decision
             if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("progress", False):
-                _log_debug(f"[Progress] INPUT: seek={seek}ms, duration={duration}s, pct={progress_pct:.1f}%", "trace", "progress")
-                if will_render:
-                    reason = "forced" if force else "changed"
-                    _log_debug(f"[Progress] DECISION: render=True ({reason}), quantized={progress_quantized}%", "trace", "progress")
+                _log_debug(f"[Progress] INPUT: seek={seek}ms, duration={duration}s, pct={progress_pct:.1f}%, will_render={will_render}", "trace", "progress")
             
             if will_render:
-                if force:
-                    self._progress.force_redraw()
                 self._progress.restore_backing(screen)
                 rect = self._progress.render(screen, progress_pct)
                 if rect:
@@ -1516,4 +1524,3 @@ class IndicatorRenderer:
                     # TRACE: Log progress output
                     if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("progress", False):
                         _log_debug(f"[Progress] OUTPUT: pct={progress_pct:.1f}%, rect={rect}", "trace", "progress")
-                self._prev_progress = progress_quantized
