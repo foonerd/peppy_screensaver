@@ -26,6 +26,12 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
+try:
+    import cairosvg
+    CAIROSVG_AVAILABLE = True
+except ImportError:
+    CAIROSVG_AVAILABLE = False
+
 # =============================================================================
 # Configuration Constants (cassette-specific subset)
 # =============================================================================
@@ -36,12 +42,13 @@ from configfileparser import (
 
 from volumio_configfileparser import (
     EXTENDED_CONF,
-    ROTATION_QUALITY, ROTATION_FPS,
+    ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
     REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
+    ALBUMART_ROT, ALBUMART_ROT_SPEED,
     PLAY_TXT_CENTER, PLAY_CENTER, PLAY_MAX,
-    SCROLLING_SPEED_ARTIST, SCROLLING_SPEED_TITLE, SCROLLING_SPEED_ALBUM,
+    SCROLLING_SPEED, SCROLLING_SPEED_ARTIST, SCROLLING_SPEED_TITLE, SCROLLING_SPEED_ALBUM,
     PLAY_TITLE_POS, PLAY_TITLE_COLOR, PLAY_TITLE_MAX, PLAY_TITLE_STYLE,
     PLAY_ARTIST_POS, PLAY_ARTIST_COLOR, PLAY_ARTIST_MAX, PLAY_ARTIST_STYLE,
     PLAY_ALBUM_POS, PLAY_ALBUM_COLOR, PLAY_ALBUM_MAX, PLAY_ALBUM_STYLE,
@@ -92,13 +99,13 @@ DEBUG_LOG_FILE = '/tmp/peppy_debug.log'
 DEBUG_LEVEL_CURRENT = "off"
 
 # Debug trace switches - dict mapping component name to enabled state
-# Keys match the config key suffix (e.g., "meters" for debug.trace.meters)
+# Keys use DOT notation to match config key suffix (e.g., "reel.left" for debug.trace.reel.left)
 DEBUG_TRACE = {
     "meters": False,
     "spectrum": False,
     "vinyl": False,
-    "reel_left": False,
-    "reel_right": False,
+    "reel.left": False,
+    "reel.right": False,
     "tonearm": False,
     "albumart": False,
     "scrolling": False,
@@ -215,6 +222,44 @@ def as_float(val, default=0.0):
         return default
 
 
+def set_color(surface, color):
+    """Colorize a surface with given color (preserving alpha). Modifies surface in place."""
+    # Check if numpy is available (required for surfarray)
+    numpy_available = False
+    try:
+        import numpy
+        numpy_available = True
+    except ImportError:
+        pass
+    
+    if numpy_available:
+        try:
+            r, g, b = color.r, color.g, color.b
+            # Get pixel array for direct manipulation (requires numpy)
+            arr = pg.surfarray.pixels3d(surface)
+            alpha = pg.surfarray.pixels_alpha(surface)
+            # Replace all non-transparent pixel colors with target color
+            mask = alpha > 0
+            arr[mask] = [r, g, b]
+            del arr
+            del alpha
+            return
+        except Exception:
+            pass
+    
+    # Fallback: pixel-by-pixel (slow but works without numpy)
+    try:
+        r, g, b = color.r, color.g, color.b
+        w, h = surface.get_size()
+        for x in range(w):
+            for y in range(h):
+                px = surface.get_at((x, y))
+                if px.a > 0:
+                    surface.set_at((x, y), (r, g, b, px.a))
+    except Exception:
+        pass
+
+
 # Rotation quality presets (FPS, step_degrees)
 ROTATION_PRESETS = {
     "low":    (4, 12),
@@ -328,14 +373,20 @@ class ScrollingLabel:
             self._backing = pg.Surface((self._backing_rect.width, self._backing_rect.height))
             self._backing.fill((0, 0, 0))
         
+        # TRACE: Log backing capture
         if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
-            log_debug(f"[Scrolling] CAPTURE: pos={self.pos}, box_w={self.box_width}", "trace", "scrolling")
+            log_debug(f"[Scrolling] CAPTURE: pos={self.pos}, box_w={self.box_width}, rect={self._backing_rect}", "trace", "scrolling")
 
     def update_text(self, new_text):
         """Update text content, reset scroll position if changed."""
         new_text = new_text or ""
         if new_text == self.text and self.surf is not None:
             return False
+        
+        # TRACE: Log text update
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] UPDATE: old='{self.text[:20]}', new='{new_text[:20]}'", "trace", "scrolling")
+        
         self.text = new_text
         self.surf = self.font.render(self.text, True, self.color)
         self.text_w, self.text_h = self.surf.get_size()
@@ -351,6 +402,10 @@ class ScrollingLabel:
         """Force redraw on next draw() call."""
         self._needs_redraw = True
         self._last_draw_offset = -1
+        
+        # TRACE: Log force redraw
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] FORCE: text='{self.text[:20]}...'", "trace", "scrolling")
 
     def draw(self, surface):
         """Draw label, handling scroll animation with self-backing.
@@ -366,6 +421,10 @@ class ScrollingLabel:
             if not self._needs_redraw:
                 return None
             
+            # TRACE: Log static text draw
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+                log_debug(f"[Scrolling] STATIC: text='{self.text[:20]}...', forced={self._needs_redraw}", "trace", "scrolling")
+            
             if self._backing and self._backing_rect:
                 surface.blit(self._backing, self._backing_rect.topleft)
             
@@ -376,13 +435,20 @@ class ScrollingLabel:
                 surface.blit(self.surf, (box_rect.x, box_rect.y))
             self._needs_redraw = False
             
-            return self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+            dirty = self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+            
+            # TRACE: Log static draw output
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+                log_debug(f"[Scrolling] OUTPUT: static, dirty_rect={dirty}", "trace", "scrolling")
+            
+            return dirty
         
-        # Scrolling text
+        # Scrolling text - check if offset changed enough to warrant redraw
         now = pg.time.get_ticks()
         dt = (now - self._last_time) / 1000.0
         self._last_time = now
         
+        # Calculate new offset
         if now >= self._pause_until:
             limit = max(0, self.text_w - self.box_width)
             self.offset += self.direction * self.speed * dt
@@ -396,13 +462,20 @@ class ScrollingLabel:
                 self.direction = -1
                 self._pause_until = now + self.pause_ms
         
+        # OPTIMIZATION: Only redraw if offset changed by at least 1 pixel
         current_offset_int = int(self.offset)
         if current_offset_int == self._last_draw_offset and not self._needs_redraw:
             return None
         
+        # TRACE: Log scrolling text draw
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] SCROLL: text='{self.text[:20]}...', offset={current_offset_int}, forced={self._needs_redraw}, backing={self._backing_rect}", "trace", "scrolling")
+        
+        # Restore backing before drawing (prevents artifacts)
         if self._backing and self._backing_rect:
             surface.blit(self._backing, self._backing_rect.topleft)
         
+        # Draw scrolling text
         prev_clip = surface.get_clip()
         surface.set_clip(box_rect)
         draw_x = box_rect.x - current_offset_int
@@ -412,7 +485,13 @@ class ScrollingLabel:
         self._last_draw_offset = current_offset_int
         self._needs_redraw = False
         
-        return self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+        dirty = self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+        
+        # TRACE: Log draw output
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] OUTPUT: dirty_rect={dirty}", "trace", "scrolling")
+        
+        return dirty
 
 
 # =============================================================================
@@ -443,6 +522,10 @@ class AlbumArtRenderer:
         self._scaled_surf = None
         self._needs_redraw = True
         self._need_first_blit = False
+        
+        # Backing surface tracking (for compatibility)
+        self._backing_rect = None
+        self._backing_surf = None
 
         # Mask path
         self._mask_path = None
@@ -523,6 +606,10 @@ class AlbumArtRenderer:
         except Exception:
             pass
 
+    def check_pending_load(self):
+        """Compatibility stub - sync loading has no pending loads."""
+        return False
+
     def get_backing_rect(self):
         """Get backing rect for this renderer."""
         if not self.art_pos or not self.art_dim:
@@ -586,8 +673,9 @@ class ReelRenderer:
         self.rotation_step = int(rotation_step)
         self.direction_mult = 1 if direction == "cw" else -1
         
+        # Trace component name uses DOT notation to match DEBUG_TRACE keys
         self._trace_name = name.replace("_", " ").title()
-        self._trace_component = name.replace(".", "_")
+        self._trace_component = name.replace("_", ".")  # "reel_left" -> "reel.left"
         
         self._original_surf = None
         self._rot_frames = None
@@ -641,12 +729,23 @@ class ReelRenderer:
         """Check if blit is needed (FPS gating)."""
         if not self._loaded or not self._original_surf:
             return False
+        
+        # TRACE: Log first blit check
         if self._need_first_blit:
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+                log_debug(f"[{self._trace_name}] FIRST_BLIT: will return True", "trace", self._trace_component)
             return True
+        
         if not self.center or self.rotate_rpm <= 0.0:
             return self._needs_redraw
         
-        return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        result = (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
+        
+        # TRACE: Log will_blit decision (only when true to reduce noise)
+        if result and DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+            log_debug(f"[{self._trace_name}] DECISION: will_blit=True, angle={self._current_angle:.1f}, interval={self._blit_interval_ms}ms", "trace", self._trace_component)
+        
+        return result
     
     def get_backing_rect(self):
         """Get bounding rectangle for backing surface (extended for rotation)."""
@@ -671,7 +770,9 @@ class ReelRenderer:
         if not self.will_blit(now_ticks):
             return None
         
-        log_debug(f"[{self._trace_name}] RENDER: status={status}, angle={self._current_angle:.1f}", "trace", self._trace_component)
+        # TRACE: Log render input
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+            log_debug(f"[{self._trace_name}] INPUT: status={status}, angle={self._current_angle:.1f}, volatile={volatile}", "trace", self._trace_component)
         
         self._last_blit_tick = now_ticks
         
@@ -679,9 +780,13 @@ class ReelRenderer:
             screen.blit(self._original_surf, self.pos)
             self._needs_redraw = False
             self._need_first_blit = False
-            return pg.Rect(self.pos[0], self.pos[1], 
+            rect = pg.Rect(self.pos[0], self.pos[1], 
                           self._original_surf.get_width(), 
                           self._original_surf.get_height())
+            # TRACE: Log static render output
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+                log_debug(f"[{self._trace_name}] OUTPUT: static (no rotation), rect={rect}", "trace", self._trace_component)
+            return rect
         
         self._update_angle(status, now_ticks, volatile=volatile)
         
@@ -699,7 +804,14 @@ class ReelRenderer:
         self._needs_redraw = False
         self._need_first_blit = False
         
-        return self.get_backing_rect()
+        backing_rect = self.get_backing_rect()
+        
+        # TRACE: Log rotated render output
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
+            frame_info = f"frame_idx={idx}" if self._rot_frames else "realtime"
+            log_debug(f"[{self._trace_name}] OUTPUT: {frame_info}, angle={self._current_angle:.1f}, backing={backing_rect}", "trace", self._trace_component)
+        
+        return backing_rect
 
 
 # =============================================================================
@@ -709,11 +821,11 @@ class CassetteHandler:
     """
     Handler for cassette skin type.
     
-    RENDER Z-ORDER:
+    RENDER Z-ORDER (bottom to top):
     1. bgr (static background - already on screen)
-    2. meters (meter.run())
-    3. reels (left and right, animated)
-    4. album art (static)
+    2. reels (left and right, animated)
+    3. album art (static)
+    4. meters (meter.run() - draws needles ON TOP of reels/art)
     5. text fields (force redraw when reels animate)
     6. indicators (force redraw when reels animate)
     7. time remaining (force redraw when reels animate)
@@ -733,13 +845,13 @@ class CassetteHandler:
         :param meter: PeppyMeter meter instance
         :param config: Parsed config (cfg dict from main)
         :param meter_config: Meter-specific config (mc_vol dict)
-        :param meter_config_volumio: Global volumio config
+        :param meter_config_volumio: Global volumio config (from config.txt)
         """
         self.screen = screen
         self.meter = meter
         self.config = config
         self.mc_vol = meter_config
-        self.global_config = meter_config_volumio
+        self.meter_config_volumio = meter_config_volumio  # Renamed for clarity
         
         self.SCREEN_WIDTH = config[SCREEN_INFO][WIDTH]
         self.SCREEN_HEIGHT = config[SCREEN_INFO][HEIGHT]
@@ -798,10 +910,11 @@ class CassetteHandler:
     def init_for_meter(self, meter_name):
         """Initialize handler for a specific meter."""
         mc = self.config.get(meter_name, {}) if meter_name else {}
-        mc_vol = self.global_config.get(meter_name, {}) if meter_name else {}
+        mc_vol = self.meter_config_volumio.get(meter_name, {}) if meter_name else {}
         self.mc_vol = mc_vol
         
         log_debug(f"=== CassetteHandler: Initializing meter: {meter_name} ===", "basic")
+        log_debug(f"  config.extend = {mc_vol.get(EXTENDED_CONF, False)}", "verbose")
         
         # Reset caches
         self.last_time_str = ""
@@ -834,10 +947,25 @@ class CassetteHandler:
         self.center_flag = bool(mc_vol.get(PLAY_CENTER, mc_vol.get(PLAY_TXT_CENTER, False)))
         global_max = as_int(mc_vol.get(PLAY_MAX), 0)
         
-        # Scrolling speeds
-        scroll_speed_artist = mc_vol.get(SCROLLING_SPEED_ARTIST, 40)
-        scroll_speed_title = mc_vol.get(SCROLLING_SPEED_TITLE, 40)
-        scroll_speed_album = mc_vol.get(SCROLLING_SPEED_ALBUM, 40)
+        # Scrolling speed logic based on mode (from global config)
+        scrolling_mode = self.meter_config_volumio.get("scrolling.mode", "skin")
+        if scrolling_mode == "default":
+            # System default: always 40
+            scroll_speed_artist = 40
+            scroll_speed_title = 40
+            scroll_speed_album = 40
+        elif scrolling_mode == "custom":
+            # Custom: use UI-specified values from global config
+            scroll_speed_artist = self.meter_config_volumio.get("scrolling.speed.artist", 40)
+            scroll_speed_title = self.meter_config_volumio.get("scrolling.speed.title", 40)
+            scroll_speed_album = self.meter_config_volumio.get("scrolling.speed.album", 40)
+        else:
+            # Skin mode: per-field from skin -> global from skin -> 40
+            scroll_speed_artist = mc_vol.get(SCROLLING_SPEED_ARTIST, 40)
+            scroll_speed_title = mc_vol.get(SCROLLING_SPEED_TITLE, 40)
+            scroll_speed_album = mc_vol.get(SCROLLING_SPEED_ALBUM, 40)
+        
+        log_debug(f"Scrolling: mode={scrolling_mode}, artist={scroll_speed_artist}, title={scroll_speed_title}, album={scroll_speed_album}")
         
         artist_pos = mc_vol.get(PLAY_ARTIST_POS)
         title_pos = mc_vol.get(PLAY_TITLE_POS)
@@ -848,6 +976,17 @@ class CassetteHandler:
         type_dim = mc_vol.get(PLAY_TYPE_DIM)
         art_pos = mc_vol.get(ALBUMART_POS)
         art_dim = mc_vol.get(ALBUMART_DIM)
+        
+        log_debug("--- Playinfo Config ---", "verbose")
+        log_debug(f"  playinfo.artist.pos = {artist_pos}", "verbose")
+        log_debug(f"  playinfo.title.pos = {title_pos}", "verbose")
+        log_debug(f"  playinfo.album.pos = {album_pos}", "verbose")
+        log_debug(f"  time.remaining.pos = {self.time_pos}", "verbose")
+        log_debug(f"  playinfo.samplerate.pos = {self.sample_pos}", "verbose")
+        log_debug(f"  playinfo.type.pos = {self.type_pos}", "verbose")
+        log_debug(f"  playinfo.type.dimension = {type_dim}", "verbose")
+        log_debug(f"  albumart.pos = {art_pos}", "verbose")
+        log_debug(f"  albumart.dimension = {art_dim}", "verbose")
         
         # Styles
         artist_style = mc_vol.get(PLAY_ARTIST_STYLE, FONT_STYLE_L)
@@ -916,11 +1055,14 @@ class CassetteHandler:
                     try:
                         surf = self.screen.subsurface(clipped).copy()
                         self.backing_dict[name] = (clipped, surf)
+                        log_debug(f"  Backing captured: {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
                     except Exception:
                         s = pg.Surface((clipped.width, clipped.height))
                         s.fill((0, 0, 0))
                         self.backing_dict[name] = (clipped, s)
+                        log_debug(f"  Backing captured (fallback): {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
         
+        log_debug("--- Backing Captures ---", "verbose")
         if artist_pos:
             capture_rect("artist", artist_pos, artist_box, artist_font.get_linesize())
         if title_pos:
@@ -940,6 +1082,13 @@ class CassetteHandler:
         self.album_renderer = None
         if art_pos and art_dim:
             screen_size = (self.SCREEN_WIDTH, self.SCREEN_HEIGHT)
+            
+            log_debug("--- Album Art Config ---", "verbose")
+            log_debug(f"  albumart.pos = {art_pos}", "verbose")
+            log_debug(f"  albumart.dimension = {art_dim}", "verbose")
+            log_debug(f"  albumart.mask = {mc_vol.get(ALBUMART_MSK)}", "verbose")
+            log_debug(f"  albumart.border = {mc_vol.get(ALBUMBORDER)}", "verbose")
+            
             self.album_renderer = AlbumArtRenderer(
                 base_path=self.config.get(BASE_PATH),
                 meter_folder=self.config.get(SCREEN_INFO)[METER_FOLDER],
@@ -965,14 +1114,24 @@ class CassetteHandler:
         reel_right_center = mc_vol.get(REEL_RIGHT_CENTER)
         reel_rpm = as_float(mc_vol.get(REEL_ROTATION_SPEED), 0.0)
         
-        rot_quality = self.global_config.get(ROTATION_QUALITY, "medium")
-        rot_custom_fps = self.global_config.get(ROTATION_FPS, 8)
+        rot_quality = self.meter_config_volumio.get(ROTATION_QUALITY, "medium")
+        rot_custom_fps = self.meter_config_volumio.get(ROTATION_FPS, 8)
         rot_fps, rot_step = get_rotation_params(rot_quality, rot_custom_fps)
-        spool_left_mult = self.global_config.get(SPOOL_LEFT_SPEED, 1.0)
-        spool_right_mult = self.global_config.get(SPOOL_RIGHT_SPEED, 1.0)
-        reel_direction = mc_vol.get(REEL_DIRECTION) or self.global_config.get(REEL_DIRECTION, "ccw")
+        spool_left_mult = self.meter_config_volumio.get(SPOOL_LEFT_SPEED, 1.0)
+        spool_right_mult = self.meter_config_volumio.get(SPOOL_RIGHT_SPEED, 1.0)
+        reel_direction = mc_vol.get(REEL_DIRECTION) or self.meter_config_volumio.get(REEL_DIRECTION, "ccw")
         
-        log_debug(f"  Reel config: left={reel_left_file}, right={reel_right_file}, rpm={reel_rpm}", "verbose")
+        log_debug("--- Reel Config ---", "verbose")
+        log_debug(f"  reel.left.filename = {reel_left_file}", "verbose")
+        log_debug(f"  reel.left.pos = {reel_left_pos}", "verbose")
+        log_debug(f"  reel.left.center = {reel_left_center}", "verbose")
+        log_debug(f"  reel.right.filename = {reel_right_file}", "verbose")
+        log_debug(f"  reel.right.pos = {reel_right_pos}", "verbose")
+        log_debug(f"  reel.right.center = {reel_right_center}", "verbose")
+        log_debug(f"  reel.rotation.speed = {reel_rpm}", "verbose")
+        log_debug(f"  reel.direction = {reel_direction} (per-meter: {mc_vol.get(REEL_DIRECTION)}, global: {self.meter_config_volumio.get(REEL_DIRECTION, 'ccw')})", "verbose")
+        log_debug(f"  Computed: rot_quality={rot_quality}, rot_custom_fps={rot_custom_fps} -> rot_fps={rot_fps}, rot_step={rot_step}", "verbose")
+        log_debug(f"  Computed: spool_left_mult={spool_left_mult}, spool_right_mult={spool_right_mult}", "verbose")
         
         if reel_left_file and reel_left_center:
             self.reel_left = ReelRenderer(
@@ -992,7 +1151,7 @@ class CassetteHandler:
             backing_rect = self.reel_left.get_backing_rect()
             if backing_rect:
                 capture_rect("reel_left", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
-            log_debug(f"  ReelRenderer LEFT created", "verbose")
+            log_debug(f"  ReelRenderer LEFT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer LEFT created (no backing)", "verbose")
         
         if reel_right_file and reel_right_center:
             self.reel_right = ReelRenderer(
@@ -1012,7 +1171,7 @@ class CassetteHandler:
             backing_rect = self.reel_right.get_backing_rect()
             if backing_rect:
                 capture_rect("reel_right", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
-            log_debug(f"  ReelRenderer RIGHT created", "verbose")
+            log_debug(f"  ReelRenderer RIGHT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer RIGHT created (no backing)", "verbose")
         
         # Create indicator renderer
         self.indicator_renderer = None
@@ -1033,14 +1192,14 @@ class CassetteHandler:
                 }
                 self.indicator_renderer = IndicatorRenderer(
                     config=mc_vol,
-                    meter_config=self.global_config,
+                    meter_config=self.meter_config_volumio,
                     base_path=self.config.get(BASE_PATH),
                     meter_folder=self.config.get(SCREEN_INFO)[METER_FOLDER],
                     fonts=fonts_dict
                 )
-                log_debug(f"  IndicatorRenderer created", "verbose")
+                log_debug(f"[CassetteHandler] IndicatorRenderer created: has_indicators={self.indicator_renderer.has_indicators()}", "trace", "init")
         except ImportError as e:
-            log_debug(f"  IndicatorRenderer not available: {e}", "verbose")
+            log_debug(f"[CassetteHandler] IndicatorRenderer not available: {e}", "trace", "init")
         except Exception as e:
             print(f"[CassetteHandler] Failed to create IndicatorRenderer: {e}")
         
@@ -1060,6 +1219,7 @@ class CassetteHandler:
         # Capture backing for indicators
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
             self.indicator_renderer.capture_backings(self.screen)
+            log_debug("[CassetteHandler] Indicator backings captured", "trace", "init")
         
         # Now run meter to show initial needle positions
         self.meter.run()
@@ -1081,41 +1241,59 @@ class CassetteHandler:
                 self.fgr_surf = pg.image.load(fgr_path).convert_alpha()
                 self.fgr_regions = compute_foreground_regions(self.fgr_surf)
                 self.fgr_pos = (meter_x, meter_y)
+                if self.fgr_regions:
+                    log_debug(f"Foreground has {len(self.fgr_regions)} opaque regions for selective blit")
+                    for i, r in enumerate(self.fgr_regions):
+                        log_debug(f"  fgr region {i}: x={r.x}, y={r.y}, w={r.width}, h={r.height}")
         except Exception as e:
             print(f"[CassetteHandler] Failed to load fgr '{fgr_name}': {e}")
         
         # Store album position for artist combination logic
         self.album_pos = album_pos
         
-        log_debug("=== CassetteHandler: Initialization complete ===", "basic")
+        log_debug("--- Initialization Complete ---", "verbose")
+        log_debug(f"  Renderers: album_art={'YES' if self.album_renderer else 'NO'}, reel_left={'YES' if self.reel_left else 'NO'}, reel_right={'YES' if self.reel_right else 'NO'}, indicators={'YES' if self.indicator_renderer and self.indicator_renderer.has_indicators() else 'NO'}", "verbose")
+        log_debug(f"  Backings captured: {len(self.backing_dict)} ({', '.join(self.backing_dict.keys())})", "verbose")
+        log_debug(f"  Foreground: {'YES' if self.fgr_surf else 'NO'} ({len(self.fgr_regions) if self.fgr_regions else 0} regions)", "verbose")
     
     def _load_fonts(self, mc_vol):
         """Load fonts from config."""
-        font_path = self.global_config.get(FONT_PATH, "")
+        font_path = self.meter_config_volumio.get(FONT_PATH) or ""
         
-        size_light = as_int(mc_vol.get(FONTSIZE_LIGHT), 24)
-        size_regular = as_int(mc_vol.get(FONTSIZE_REGULAR), 24)
-        size_bold = as_int(mc_vol.get(FONTSIZE_BOLD), 24)
-        size_digi = as_int(mc_vol.get(FONTSIZE_DIGI), 24)
+        # FIXED: Defaults match original - 30/35/40/40 not 24/24/24/24
+        size_light = mc_vol.get(FONTSIZE_LIGHT, 30)
+        size_regular = mc_vol.get(FONTSIZE_REGULAR, 35)
+        size_bold = mc_vol.get(FONTSIZE_BOLD, 40)
+        size_digi = mc_vol.get(FONTSIZE_DIGI, 40)
+        
+        log_debug("--- Font Config ---", "verbose")
+        log_debug(f"  font.path = {font_path}", "verbose")
+        log_debug(f"  font.size.light = {size_light}", "verbose")
+        log_debug(f"  font.size.regular = {size_regular}", "verbose")
+        log_debug(f"  font.size.bold = {size_bold}", "verbose")
+        log_debug(f"  font.size.digi = {size_digi}", "verbose")
         
         # Light font
-        light_file = self.global_config.get(FONT_LIGHT)
+        light_file = self.meter_config_volumio.get(FONT_LIGHT)
         if light_file and os.path.exists(font_path + light_file):
             self.fontL = pg.font.Font(font_path + light_file, size_light)
+            log_debug(f"  Font light: loaded {font_path + light_file}", "verbose")
         else:
             self.fontL = pg.font.SysFont("DejaVuSans", size_light)
         
         # Regular font
-        regular_file = self.global_config.get(FONT_REGULAR)
+        regular_file = self.meter_config_volumio.get(FONT_REGULAR)
         if regular_file and os.path.exists(font_path + regular_file):
             self.fontR = pg.font.Font(font_path + regular_file, size_regular)
+            log_debug(f"  Font regular: loaded {font_path + regular_file}", "verbose")
         else:
             self.fontR = pg.font.SysFont("DejaVuSans", size_regular)
         
         # Bold font
-        bold_file = self.global_config.get(FONT_BOLD)
+        bold_file = self.meter_config_volumio.get(FONT_BOLD)
         if bold_file and os.path.exists(font_path + bold_file):
             self.fontB = pg.font.Font(font_path + bold_file, size_bold)
+            log_debug(f"  Font bold: loaded {font_path + bold_file}", "verbose")
         else:
             self.fontB = pg.font.SysFont("DejaVuSans", size_bold, bold=True)
         
@@ -1123,6 +1301,7 @@ class CassetteHandler:
         digi_path = os.path.join(os.path.dirname(__file__), 'fonts', 'DSEG7Classic-Italic.ttf')
         if os.path.exists(digi_path):
             self.fontDigi = pg.font.Font(digi_path, size_digi)
+            log_debug(f"  Font digi: loaded {digi_path}", "verbose")
         else:
             self.fontDigi = pg.font.SysFont("DejaVuSans", size_digi)
     
@@ -1137,23 +1316,39 @@ class CassetteHandler:
     
     def _draw_static_assets(self, mc):
         """Draw static background."""
+        base_path = self.config.get(BASE_PATH)
+        meter_dir = self.config.get(SCREEN_INFO)[METER_FOLDER]
+        meter_path = os.path.join(base_path, meter_dir)
+        
+        # FIXED: Support screen.bgr (full screen background)
+        screen_bgr_name = mc.get('screen.bgr')
         bgr_name = mc.get(BGR_FILENAME)
         meter_x = mc.get('meter.x', 0)
         meter_y = mc.get('meter.y', 0)
-        try:
-            if bgr_name:
-                meter_path = os.path.join(self.config.get(BASE_PATH), self.config.get(SCREEN_INFO)[METER_FOLDER])
+        
+        # Draw full screen background first
+        if screen_bgr_name:
+            try:
+                img_path = os.path.join(meter_path, screen_bgr_name)
+                img = pg.image.load(img_path).convert()
+                self.screen.blit(img, (0, 0))
+            except Exception as e:
+                print(f"[CassetteHandler] Failed to load screen.bgr '{screen_bgr_name}': {e}")
+        
+        # Draw meter background at meter position (FIXED: convert_alpha for PNG transparency)
+        if bgr_name:
+            try:
                 bgr_path = os.path.join(meter_path, bgr_name)
-                bgr_surf = pg.image.load(bgr_path).convert()
+                bgr_surf = pg.image.load(bgr_path).convert_alpha()
                 self.screen.blit(bgr_surf, (meter_x, meter_y))
-        except Exception as e:
-            print(f"[CassetteHandler] Failed to load bgr: {e}")
+            except Exception as e:
+                print(f"[CassetteHandler] Failed to load bgr: {e}")
     
     def render(self, meta, now_ticks):
         """
         Render one frame.
         
-        CASSETTE RENDER Z-ORDER:
+        CASSETTE RENDER Z-ORDER (bottom to top):
         1. Restore reel backings (if reels will animate)
         2. Restore art backing (if reels will animate)
         3. Render reels
@@ -1381,6 +1576,7 @@ class CassetteHandler:
                     icon_path = f"/volumio/http/www3/app/assets-common/format-icons/{fmt}.svg"
                 
                 if not os.path.exists(icon_path):
+                    # Render text fallback
                     if self.sample_font:
                         txt_surf = self.sample_font.render(fmt[:4], True, self.type_color)
                         self.screen.blit(txt_surf, (self.type_rect.x, self.type_rect.y))
@@ -1388,21 +1584,41 @@ class CassetteHandler:
                 else:
                     try:
                         if pg.version.ver.startswith("2"):
-                            icon_surf = pg.image.load(icon_path)
-                        else:
+                            # Pygame 2 native SVG
+                            img = pg.image.load(icon_path)
+                            w, h = img.get_width(), img.get_height()
+                            sc = min(self.type_rect.width / float(w), self.type_rect.height / float(h))
+                            new_size = (max(1, int(w * sc)), max(1, int(h * sc)))
                             try:
-                                import cairosvg
-                                png_data = cairosvg.svg2png(url=icon_path)
-                                icon_surf = pg.image.load(io.BytesIO(png_data))
+                                img = pg.transform.smoothscale(img, new_size)
                             except Exception:
-                                icon_surf = None
-                        
-                        if icon_surf:
-                            scaled = pg.transform.smoothscale(icon_surf, (self.type_rect.width, self.type_rect.height))
-                            self.screen.blit(scaled, self.type_rect.topleft)
-                            self.last_format_icon_surf = scaled
-                    except Exception:
-                        pass
+                                img = pg.transform.scale(img, new_size)
+                            # Convert to format suitable for pixel manipulation
+                            img = img.convert_alpha()
+                            # FIXED: Colorize icon to match skin theme
+                            set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
+                            # FIXED: Center icon in type_rect
+                            dx = self.type_rect.x + (self.type_rect.width - img.get_width()) // 2
+                            dy = self.type_rect.y + (self.type_rect.height - img.get_height()) // 2
+                            self.screen.blit(img, (dx, dy))
+                            self.last_format_icon_surf = img
+                        elif CAIROSVG_AVAILABLE and PIL_AVAILABLE:
+                            # Pygame 1.x with cairosvg - FIXED: proper conversion path
+                            png_bytes = cairosvg.svg2png(url=icon_path, 
+                                                          output_width=self.type_rect.width,
+                                                          output_height=self.type_rect.height)
+                            pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                            img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
+                            img = img.convert_alpha()
+                            # FIXED: Colorize icon
+                            set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
+                            # FIXED: Center icon
+                            dx = self.type_rect.x + (self.type_rect.width - img.get_width()) // 2
+                            dy = self.type_rect.y + (self.type_rect.height - img.get_height()) // 2
+                            self.screen.blit(img, (dx, dy))
+                            self.last_format_icon_surf = img
+                    except Exception as e:
+                        print(f"[FormatIcon] error: {e}")
                 
                 dirty_rects.append(self.type_rect.copy())
         
