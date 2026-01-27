@@ -308,7 +308,6 @@ DEBUG_LEVEL_CURRENT = "off"
 # Keys match the config key suffix (e.g., "meters" for debug.trace.meters)
 DEBUG_TRACE = {
     "meters": False,
-    "spectrum": False,
     "vinyl": False,
     "reel.left": False,
     "reel.right": False,
@@ -380,8 +379,8 @@ def init_debug_config(meter_config_volumio):
         DEBUG_TRACE_METERS: "meters",
         DEBUG_TRACE_SPECTRUM: "spectrum",
         DEBUG_TRACE_VINYL: "vinyl",
-        DEBUG_TRACE_REEL_LEFT: "reel.left",
-        DEBUG_TRACE_REEL_RIGHT: "reel.right",
+        DEBUG_TRACE_REEL_LEFT: "reel_left",
+        DEBUG_TRACE_REEL_RIGHT: "reel_right",
         DEBUG_TRACE_TONEARM: "tonearm",
         DEBUG_TRACE_ALBUMART: "albumart",
         DEBUG_TRACE_SCROLLING: "scrolling",
@@ -412,6 +411,44 @@ def init_debug_config(meter_config_volumio):
 PeppyRunning = '/tmp/peppyrunning'
 CurDir = os.getcwd()
 PeppyPath = CurDir + '/screensaver/peppymeter'
+
+# Skin type constants for handler delegation
+SKIN_TYPE_CASSETTE = "cassette"
+SKIN_TYPE_TURNTABLE = "turntable"
+SKIN_TYPE_BASIC = "basic"
+
+
+def detect_skin_type(mc_vol):
+    """
+    Detect skin type from meter config for handler delegation.
+    
+    Priority order:
+    1. CASSETTE: Has reels (reel.left.center OR reel.right.center) WITHOUT tonearm
+    2. TURNTABLE: Has vinyl.center OR tonearm OR rotating album art, OR single reel + tonearm
+    3. BASIC: Everything else (meters only)
+    
+    :param mc_vol: Volumio meter config dict for current meter
+    :return: SKIN_TYPE_CASSETTE, SKIN_TYPE_TURNTABLE, or SKIN_TYPE_BASIC
+    """
+    has_reel_left = bool(mc_vol.get(REEL_LEFT_CENTER))
+    has_reel_right = bool(mc_vol.get(REEL_RIGHT_CENTER))
+    has_reels = has_reel_left or has_reel_right
+    has_vinyl = bool(mc_vol.get(VINYL_CENTER))
+    has_tonearm = bool(mc_vol.get(TONEARM_FILE) and 
+                       mc_vol.get(TONEARM_PIVOT_SCREEN) and 
+                       mc_vol.get(TONEARM_PIVOT_IMAGE))
+    has_rotating_albumart = bool(mc_vol.get(ALBUMART_ROT, False))
+    
+    # CASSETTE: reels without tonearm or vinyl
+    if has_reels and not has_tonearm and not has_vinyl:
+        return SKIN_TYPE_CASSETTE
+    
+    # TURNTABLE: vinyl or tonearm or rotating album art (including edge case: single reel + tonearm)
+    if has_vinyl or has_tonearm or has_rotating_albumart:
+        return SKIN_TYPE_TURNTABLE
+    
+    # BASIC: everything else
+    return SKIN_TYPE_BASIC
 
 
 # =============================================================================
@@ -1130,7 +1167,7 @@ class ReelRenderer:
         
         # Trace identification
         self._trace_name = name.replace("_", " ").title()  # "reel_left" -> "Reel Left"
-        self._trace_component = name.replace("_", ".")  # "reel_left" -> "reel.left"
+        self._trace_component = name.replace(".", "_")  # "reel.left" -> "reel_left"
         
         # Runtime state
         self._original_surf = None
@@ -2714,498 +2751,41 @@ def start_display_output(pm, callback, meter_config_volumio):
             pg.display.update()
             return
         
-        # Load fonts
-        fontL, fontR, fontB, fontDigi = load_fonts(mc_vol)
+        # Detect skin type and load handler
+        skin_type = detect_skin_type(mc_vol)
+        log_debug(f"  Skin type detected: {skin_type}", "verbose")
         
-        # Draw static assets (background only, no needles yet)
+        if skin_type == SKIN_TYPE_CASSETTE:
+            from volumio_cassette import CassetteHandler, init_cassette_debug
+            init_cassette_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
+            handler = CassetteHandler(screen, pm.meter, cfg, mc_vol, meter_config_volumio)
+        elif skin_type == SKIN_TYPE_TURNTABLE:
+            from volumio_turntable import TurntableHandler, init_turntable_debug
+            init_turntable_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
+            handler = TurntableHandler(screen, pm.meter, cfg, mc_vol, meter_config_volumio)
+        else:
+            from volumio_basic import BasicHandler, init_basic_debug
+            init_basic_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
+            handler = BasicHandler(screen, pm.meter, cfg, mc_vol, meter_config_volumio)
+        
+        log_debug(f"  Handler loaded: {skin_type}", "verbose")
+        
+        # Initialize handler for this meter
+        handler.init_for_meter(meter_name)
+        
+        # Draw static assets and initial meter state
         draw_static_assets(mc)
-        
-        # NOTE: Do NOT run meter.run() here - backings must be captured without needles
-        # to prevent ghosting. Meter will be drawn after all backing captures.
-        
-        # Positions and colors
-        center_flag = bool(mc_vol.get(PLAY_CENTER, mc_vol.get(PLAY_TXT_CENTER, False)))
-        global_max = as_int(mc_vol.get(PLAY_MAX), 0)
-        
-        # Scrolling speed logic based on mode
-        scrolling_mode = meter_config_volumio.get("scrolling.mode", "skin")
-        if scrolling_mode == "default":
-            # System default: always 40
-            scroll_speed_artist = 40
-            scroll_speed_title = 40
-            scroll_speed_album = 40
-        elif scrolling_mode == "custom":
-            # Custom: use UI-specified values
-            scroll_speed_artist = meter_config_volumio.get("scrolling.speed.artist", 40)
-            scroll_speed_title = meter_config_volumio.get("scrolling.speed.title", 40)
-            scroll_speed_album = meter_config_volumio.get("scrolling.speed.album", 40)
-        else:
-            # Skin mode: per-field from skin -> global from skin -> 40
-            scroll_speed_artist = mc_vol.get(SCROLLING_SPEED_ARTIST, 40)
-            scroll_speed_title = mc_vol.get(SCROLLING_SPEED_TITLE, 40)
-            scroll_speed_album = mc_vol.get(SCROLLING_SPEED_ALBUM, 40)
-        
-        log_debug(f"Scrolling: mode={scrolling_mode}, artist={scroll_speed_artist}, title={scroll_speed_title}, album={scroll_speed_album}")
-        
-        artist_pos = mc_vol.get(PLAY_ARTIST_POS)
-        title_pos = mc_vol.get(PLAY_TITLE_POS)
-        album_pos = mc_vol.get(PLAY_ALBUM_POS)
-        time_pos = mc_vol.get(TIME_REMAINING_POS)
-        sample_pos = mc_vol.get(PLAY_SAMPLE_POS)
-        type_pos = mc_vol.get(PLAY_TYPE_POS)
-        type_dim = mc_vol.get(PLAY_TYPE_DIM)
-        art_pos = mc_vol.get(ALBUMART_POS)
-        art_dim = mc_vol.get(ALBUMART_DIM)
-        
-        log_debug("--- Playinfo Config ---", "verbose")
-        log_debug(f"  playinfo.artist.pos = {artist_pos}", "verbose")
-        log_debug(f"  playinfo.title.pos = {title_pos}", "verbose")
-        log_debug(f"  playinfo.album.pos = {album_pos}", "verbose")
-        log_debug(f"  time.remaining.pos = {time_pos}", "verbose")
-        log_debug(f"  playinfo.samplerate.pos = {sample_pos}", "verbose")
-        log_debug(f"  playinfo.type.pos = {type_pos}", "verbose")
-        log_debug(f"  playinfo.type.dimension = {type_dim}", "verbose")
-        log_debug(f"  albumart.pos = {art_pos}", "verbose")
-        log_debug(f"  albumart.dimension = {art_dim}", "verbose")
-        
-        # Styles
-        artist_style = mc_vol.get(PLAY_ARTIST_STYLE, FONT_STYLE_L)
-        title_style = mc_vol.get(PLAY_TITLE_STYLE, FONT_STYLE_B)
-        album_style = mc_vol.get(PLAY_ALBUM_STYLE, FONT_STYLE_L)
-        sample_style = mc_vol.get(PLAY_SAMPLE_STYLE, FONT_STYLE_L)
-        
-        # Fonts per field
-        artist_font = font_for_style(artist_style, fontL, fontR, fontB)
-        title_font = font_for_style(title_style, fontL, fontR, fontB)
-        album_font = font_for_style(album_style, fontL, fontR, fontB)
-        sample_font = font_for_style(sample_style, fontL, fontR, fontB)
-        
-        # Colors
-        font_color = sanitize_color(mc_vol.get(FONTCOLOR), (255, 255, 255))
-        artist_color = sanitize_color(mc_vol.get(PLAY_ARTIST_COLOR), font_color)
-        title_color = sanitize_color(mc_vol.get(PLAY_TITLE_COLOR), font_color)
-        album_color = sanitize_color(mc_vol.get(PLAY_ALBUM_COLOR), font_color)
-        time_color = sanitize_color(mc_vol.get(TIMECOLOR), font_color)
-        type_color = sanitize_color(mc_vol.get(PLAY_TYPE_COLOR), font_color)
-        
-        # Max widths
-        artist_max = as_int(mc_vol.get(PLAY_ARTIST_MAX), 0)
-        title_max = as_int(mc_vol.get(PLAY_TITLE_MAX), 0)
-        album_max = as_int(mc_vol.get(PLAY_ALBUM_MAX), 0)
-        sample_max = as_int(mc_vol.get(PLAY_SAMPLE_MAX), 0)
-        
-        # Calculate box widths
-        RIGHT_MARGIN = 20
-        
-        def auto_box_width(pos):
-            if not pos:
-                return 0
-            if center_flag:
-                return int(SCREEN_WIDTH * 0.6)
-            return max(0, SCREEN_WIDTH - pos[0] - RIGHT_MARGIN)
-        
-        def get_box_width(pos, field_max):
-            if field_max:
-                return field_max
-            if global_max:
-                return global_max
-            return auto_box_width(pos)
-        
-        artist_box = get_box_width(artist_pos, artist_max)
-        title_box = get_box_width(title_pos, title_max)
-        album_box = get_box_width(album_pos, album_max)
-        # Sample box: use sample_max if set, else calculate from text width (NOT global_max)
-        # Original code uses rendered text width for "-44.1 kHz 24 bit-"
-        if sample_pos and (global_max or sample_max):
-            if sample_max:
-                sample_box = sample_max
-            else:
-                # Calculate from typical sample rate text
-                sample_box = sample_font.size('-44.1 kHz 24 bit-')[0]
-        else:
-            sample_box = 0
-        
-        # Capture backing surfaces
-        backing = []
-        backing_dict = {}  # OPTIMIZATION: Dict for quick lookup
-        screen_rect = screen.get_rect()  # Screen bounds for clipping
-        
-        def capture_rect(name, pos, width, height):
-            if pos and width and height:
-                r = pg.Rect(pos[0], pos[1], int(width), int(height))
-                # Clip to screen bounds to avoid subsurface failure
-                clipped = r.clip(screen_rect)
-                if clipped.width > 0 and clipped.height > 0:
-                    try:
-                        surf = screen.subsurface(clipped).copy()
-                        backing.append((clipped, surf))
-                        backing_dict[name] = (clipped, surf)
-                        log_debug(f"  Backing captured: {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
-                    except Exception:
-                        # Fallback: create black surface
-                        s = pg.Surface((clipped.width, clipped.height))
-                        s.fill((0, 0, 0))
-                        backing.append((clipped, s))
-                        backing_dict[name] = (clipped, s)
-                        log_debug(f"  Backing captured (fallback): {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
-        
-        log_debug("--- Backing Captures ---", "verbose")
-        if artist_pos:
-            capture_rect("artist", artist_pos, artist_box, artist_font.get_linesize())
-        if title_pos:
-            capture_rect("title", title_pos, title_box, title_font.get_linesize())
-        if album_pos:
-            capture_rect("album", album_pos, album_box, album_font.get_linesize())
-        if time_pos:
-            capture_rect("time", time_pos, fontDigi.size('00:00')[0] + 10, fontDigi.get_linesize())
-        if sample_pos and sample_box:
-            capture_rect("sample", sample_pos, sample_box, sample_font.get_linesize())
-        if type_pos and type_dim:
-            capture_rect("type", type_pos, type_dim[0], type_dim[1])
-        if art_pos and art_dim:
-            capture_rect("art", art_pos, art_dim[0], art_dim[1])
-        
-        # Create album art renderer (handles rotation if enabled)
-        album_renderer = None
-        if art_pos and art_dim:
-            rotate_enabled = mc_vol.get(ALBUMART_ROT, False)
-            rotate_rpm = as_float(mc_vol.get(ALBUMART_ROT_SPEED), 0.0)
-            screen_size = (cfg[SCREEN_INFO][WIDTH], cfg[SCREEN_INFO][HEIGHT])
-            
-            # Get rotation quality settings from global config
-            rot_quality = meter_config_volumio.get(ROTATION_QUALITY, "medium")
-            rot_custom_fps = meter_config_volumio.get(ROTATION_FPS, 8)
-            rot_fps, rot_step = get_rotation_params(rot_quality, rot_custom_fps)
-            rot_speed_mult = meter_config_volumio.get(ROTATION_SPEED, 1.0)
-            
-            log_debug("--- Album Art Config ---", "verbose")
-            log_debug(f"  albumart.pos = {art_pos}", "verbose")
-            log_debug(f"  albumart.dimension = {art_dim}", "verbose")
-            log_debug(f"  albumart.rotation = {rotate_enabled}", "verbose")
-            log_debug(f"  albumart.rotation.speed = {rotate_rpm}", "verbose")
-            log_debug(f"  albumart.mask = {mc_vol.get(ALBUMART_MSK)}", "verbose")
-            log_debug(f"  albumart.border = {mc_vol.get(ALBUMBORDER)}", "verbose")
-            log_debug(f"  Computed: rot_quality={rot_quality}, rot_custom_fps={rot_custom_fps} -> rot_fps={rot_fps}, rot_step={rot_step}", "verbose")
-            log_debug(f"  Computed: rot_speed_mult={rot_speed_mult}", "verbose")
-            
-            album_renderer = AlbumArtRenderer(
-                base_path=cfg.get(BASE_PATH),
-                meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
-                art_pos=art_pos,
-                art_dim=art_dim,
-                screen_size=screen_size,
-                font_color=font_color,
-                border_width=mc_vol.get(ALBUMBORDER) or 0,
-                mask_filename=mc_vol.get(ALBUMART_MSK),
-                rotate_enabled=rotate_enabled,
-                rotate_rpm=rotate_rpm,
-                angle_step_deg=0.5,
-                spindle_radius=5,
-                ring_radius=max(3, min(art_dim[0], art_dim[1]) // 10),
-                circle=rotate_enabled,  # Only circular when rotation enabled
-                rotation_fps=rot_fps,
-                rotation_step=rot_step,
-                speed_multiplier=rot_speed_mult
-            )
-            log_debug("  AlbumArtRenderer created", "verbose")
-        
-        # Create reel renderers (for cassette skins)
-        reel_left_renderer = None
-        reel_right_renderer = None
-        
-        reel_left_file = mc_vol.get(REEL_LEFT_FILE)
-        reel_left_pos = mc_vol.get(REEL_LEFT_POS)
-        reel_left_center = mc_vol.get(REEL_LEFT_CENTER)
-        reel_right_file = mc_vol.get(REEL_RIGHT_FILE)
-        reel_right_pos = mc_vol.get(REEL_RIGHT_POS)
-        reel_right_center = mc_vol.get(REEL_RIGHT_CENTER)
-        reel_rpm = as_float(mc_vol.get(REEL_ROTATION_SPEED), 0.0)
-        
-        # Get rotation quality settings from global config (shared with album art)
-        rot_quality = meter_config_volumio.get(ROTATION_QUALITY, "medium")
-        rot_custom_fps = meter_config_volumio.get(ROTATION_FPS, 8)
-        rot_fps, rot_step = get_rotation_params(rot_quality, rot_custom_fps)
-        spool_left_mult = meter_config_volumio.get(SPOOL_LEFT_SPEED, 1.0)
-        spool_right_mult = meter_config_volumio.get(SPOOL_RIGHT_SPEED, 1.0)
-        # Per-meter reel direction (meters.txt) takes priority over global config
-        reel_direction = mc_vol.get(REEL_DIRECTION) or meter_config_volumio.get(REEL_DIRECTION, "ccw")
-        
-        log_debug("--- Reel Config ---", "verbose")
-        log_debug(f"  reel.left.filename = {reel_left_file}", "verbose")
-        log_debug(f"  reel.left.pos = {reel_left_pos}", "verbose")
-        log_debug(f"  reel.left.center = {reel_left_center}", "verbose")
-        log_debug(f"  reel.right.filename = {reel_right_file}", "verbose")
-        log_debug(f"  reel.right.pos = {reel_right_pos}", "verbose")
-        log_debug(f"  reel.right.center = {reel_right_center}", "verbose")
-        log_debug(f"  reel.rotation.speed = {reel_rpm}", "verbose")
-        log_debug(f"  reel.direction = {reel_direction} (per-meter: {mc_vol.get(REEL_DIRECTION)}, global: {meter_config_volumio.get(REEL_DIRECTION, 'ccw')})", "verbose")
-        log_debug(f"  Computed: rot_quality={rot_quality}, rot_custom_fps={rot_custom_fps} -> rot_fps={rot_fps}, rot_step={rot_step}", "verbose")
-        log_debug(f"  Computed: spool_left_mult={spool_left_mult}, spool_right_mult={spool_right_mult}", "verbose")
-        
-        if reel_left_file and reel_left_center:
-            reel_left_renderer = ReelRenderer(
-                base_path=cfg.get(BASE_PATH),
-                meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
-                filename=reel_left_file,
-                pos=reel_left_pos,
-                center=reel_left_center,
-                rotate_rpm=reel_rpm,
-                angle_step_deg=1.0,
-                rotation_fps=rot_fps,
-                rotation_step=rot_step,
-                speed_multiplier=spool_left_mult,
-                direction=reel_direction,
-                name="reel_left"
-            )
-            # Capture backing for left reel
-            backing_rect = reel_left_renderer.get_backing_rect()
-            if backing_rect:
-                capture_rect("reel_left", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
-                log_debug(f"  ReelRenderer LEFT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}", "verbose")
-        
-        if reel_right_file and reel_right_center:
-            reel_right_renderer = ReelRenderer(
-                base_path=cfg.get(BASE_PATH),
-                meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
-                filename=reel_right_file,
-                pos=reel_right_pos,
-                center=reel_right_center,
-                rotate_rpm=reel_rpm,
-                angle_step_deg=1.0,
-                rotation_fps=rot_fps,
-                rotation_step=rot_step,
-                speed_multiplier=spool_right_mult,
-                direction=reel_direction,
-                name="reel_right"
-            )
-            # Capture backing for right reel
-            backing_rect = reel_right_renderer.get_backing_rect()
-            if backing_rect:
-                capture_rect("reel_right", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
-                log_debug(f"  ReelRenderer RIGHT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}", "verbose")
-        
-        # Create vinyl renderer (for turntable skins)
-        vinyl_renderer = None
-        
-        vinyl_file = mc_vol.get(VINYL_FILE)
-        vinyl_pos = mc_vol.get(VINYL_POS)
-        vinyl_center = mc_vol.get(VINYL_CENTER)
-        vinyl_direction = mc_vol.get(VINYL_DIRECTION) or meter_config_volumio.get(REEL_DIRECTION, "cw")
-        
-        # Vinyl uses albumart.rotation.speed for unified speed
-        vinyl_rpm = as_float(mc_vol.get(ALBUMART_ROT_SPEED), 0.0)
-        
-        # Get rotation speed multiplier (may not exist if album art not configured)
-        try:
-            _ = rot_speed_mult
-        except NameError:
-            rot_speed_mult = meter_config_volumio.get(ROTATION_SPEED, 1.0)
-        
-        log_debug("--- Vinyl Config ---", "verbose")
-        log_debug(f"  vinyl.filename = {vinyl_file}", "verbose")
-        log_debug(f"  vinyl.pos = {vinyl_pos}", "verbose")
-        log_debug(f"  vinyl.center = {vinyl_center}", "verbose")
-        log_debug(f"  vinyl.direction = {vinyl_direction}", "verbose")
-        log_debug(f"  vinyl.rotation.speed (from albumart) = {vinyl_rpm}", "verbose")
-        
-        if vinyl_file and vinyl_center:
-            vinyl_renderer = VinylRenderer(
-                base_path=cfg.get(BASE_PATH),
-                meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
-                filename=vinyl_file,
-                pos=vinyl_pos,
-                center=vinyl_center,
-                rotate_rpm=vinyl_rpm,
-                rotation_fps=rot_fps,
-                rotation_step=rot_step,
-                speed_multiplier=rot_speed_mult,
-                direction=vinyl_direction
-            )
-            # Capture backing for vinyl
-            backing_rect = vinyl_renderer.get_backing_rect()
-            if backing_rect:
-                capture_rect("vinyl", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
-                log_debug(f"  VinylRenderer created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}", "verbose")
-            
-            # Couple album art to vinyl if album rotation is enabled
-            if album_renderer and album_renderer.rotate_enabled:
-                album_renderer.vinyl_renderer = vinyl_renderer
-                log_debug("  Album art coupled to vinyl rotation", "verbose")
-        
-        # Create tonearm renderer (for turntable skins)
-        tonearm_renderer = None
-        
-        tonearm_file = mc_vol.get(TONEARM_FILE)
-        tonearm_pivot_screen = mc_vol.get(TONEARM_PIVOT_SCREEN)
-        tonearm_pivot_image = mc_vol.get(TONEARM_PIVOT_IMAGE)
-        
-        log_debug("--- Tonearm Config ---", "verbose")
-        log_debug(f"  tonearm.filename = {tonearm_file}", "verbose")
-        log_debug(f"  tonearm.pivot.screen = {tonearm_pivot_screen}", "verbose")
-        log_debug(f"  tonearm.pivot.image = {tonearm_pivot_image}", "verbose")
-        log_debug(f"  tonearm.angle.rest = {mc_vol.get(TONEARM_ANGLE_REST, -30.0)}", "verbose")
-        log_debug(f"  tonearm.angle.start = {mc_vol.get(TONEARM_ANGLE_START, 0.0)}", "verbose")
-        log_debug(f"  tonearm.angle.end = {mc_vol.get(TONEARM_ANGLE_END, 25.0)}", "verbose")
-        log_debug(f"  tonearm.drop.duration = {mc_vol.get(TONEARM_DROP_DURATION, 1.5)}", "verbose")
-        log_debug(f"  tonearm.lift.duration = {mc_vol.get(TONEARM_LIFT_DURATION, 1.0)}", "verbose")
-        
-        if tonearm_file and tonearm_pivot_screen and tonearm_pivot_image:
-            tonearm_renderer = TonearmRenderer(
-                base_path=cfg.get(BASE_PATH),
-                meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
-                filename=tonearm_file,
-                pivot_screen=tonearm_pivot_screen,
-                pivot_image=tonearm_pivot_image,
-                angle_rest=mc_vol.get(TONEARM_ANGLE_REST, -30.0),
-                angle_start=mc_vol.get(TONEARM_ANGLE_START, 0.0),
-                angle_end=mc_vol.get(TONEARM_ANGLE_END, 25.0),
-                drop_duration=mc_vol.get(TONEARM_DROP_DURATION, 1.5),
-                lift_duration=mc_vol.get(TONEARM_LIFT_DURATION, 1.0),
-                rotation_fps=rot_fps
-            )
-            # Capture backing for tonearm sweep area
-            backing_rect = tonearm_renderer.get_backing_rect()
-            if backing_rect:
-                capture_rect("tonearm", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
-            log_debug(f"[overlay_init] TonearmRenderer created: {tonearm_file}", "trace", "init")
-        
-        # Create indicator renderer (for volume, mute, shuffle, repeat, playstate, progress)
-        indicator_renderer = None
-        try:
-            from volumio_indicators import IndicatorRenderer, init_indicator_debug
-            # Initialize indicator debug settings from main module
-            init_indicator_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
-            # Check if any indicator is configured
-            has_indicators = (
-                mc_vol.get(VOLUME_POS) or mc_vol.get(MUTE_POS) or
-                mc_vol.get(SHUFFLE_POS) or mc_vol.get(REPEAT_POS) or
-                mc_vol.get(PLAYSTATE_POS) or mc_vol.get(PROGRESS_POS)
-            )
-            if has_indicators:
-                fonts_dict = {
-                    "light": fontL,
-                    "regular": fontR,
-                    "bold": fontB,
-                    "digi": fontDigi
-                }
-                indicator_renderer = IndicatorRenderer(
-                    config=mc_vol,
-                    meter_config=meter_config_volumio,
-                    base_path=cfg.get(BASE_PATH),
-                    meter_folder=cfg.get(SCREEN_INFO)[METER_FOLDER],
-                    fonts=fonts_dict
-                )
-                log_debug(f"[overlay_init] IndicatorRenderer created: has_indicators={indicator_renderer.has_indicators()}", "trace", "init")
-        except ImportError as e:
-            log_debug(f"[overlay_init] IndicatorRenderer not available: {e}", "trace", "init")
-        except Exception as e:
-            print(f"[overlay_init] Failed to create IndicatorRenderer: {e}")
-        
-        # Create scrollers with per-field speeds
-        artist_scroller = ScrollingLabel(artist_font, artist_color, artist_pos, artist_box, center=center_flag, speed_px_per_sec=scroll_speed_artist) if artist_pos else None
-        title_scroller = ScrollingLabel(title_font, title_color, title_pos, title_box, center=center_flag, speed_px_per_sec=scroll_speed_title) if title_pos else None
-        album_scroller = ScrollingLabel(album_font, album_color, album_pos, album_box, center=center_flag, speed_px_per_sec=scroll_speed_album) if album_pos else None
-        
-        # Capture backing for scrollers (after static assets drawn)
-        if artist_scroller:
-            artist_scroller.capture_backing(screen)
-        if title_scroller:
-            title_scroller.capture_backing(screen)
-        if album_scroller:
-            album_scroller.capture_backing(screen)
-        
-        # Capture backing for indicators (after static assets drawn)
-        if indicator_renderer and indicator_renderer.has_indicators():
-            indicator_renderer.capture_backings(screen)
-            log_debug("[overlay_init] Indicator backings captured", "trace", "init")
-        
-        # Now run meter to show initial needle positions (after backings captured clean)
         pm.meter.run()
         pg.display.update()
         
-        # Type rect
-        type_rect = pg.Rect(type_pos[0], type_pos[1], type_dim[0], type_dim[1]) if (type_pos and type_dim) else None
-        
-        # Set tonearm exclusion zones (scroller backing rects) to prevent
-        # restoring stale content in text areas during DROP/LIFT animations
-        if tonearm_renderer:
-            exclusion_zones = []
-            if artist_scroller and artist_scroller._backing_rect:
-                exclusion_zones.append(artist_scroller._backing_rect)
-            if title_scroller and title_scroller._backing_rect:
-                exclusion_zones.append(title_scroller._backing_rect)
-            if album_scroller and album_scroller._backing_rect:
-                exclusion_zones.append(album_scroller._backing_rect)
-            if exclusion_zones:
-                tonearm_renderer.set_exclusion_zones(exclusion_zones)
-                log_debug(f"[overlay_init] Tonearm exclusion zones set: {len(exclusion_zones)} scroller areas", "verbose")
-        
-        # Reset cover
-        last_cover_url = None
-        cover_img = None
-
-        # Load meter foreground (fgr) to draw last, above rotating cover
-        fgr_surf = None
-        fgr_regions = []  # OPTIMIZATION: Pre-computed opaque regions for selective blitting
-        fgr_name = mc.get(FGR_FILENAME)
-        meter_x = mc.get('meter.x', 0)
-        meter_y = mc.get('meter.y', 0)
-        try:
-            if fgr_name:
-                meter_path = os.path.join(cfg.get(BASE_PATH), cfg.get(SCREEN_INFO)[METER_FOLDER])
-                fgr_path = os.path.join(meter_path, fgr_name)
-                fgr_surf = pg.image.load(fgr_path).convert_alpha()
-                # OPTIMIZATION: Compute opaque regions for selective blitting
-                # This typically reduces foreground blit area by 80-90%
-                fgr_regions = compute_foreground_regions(fgr_surf)
-                if fgr_regions:
-                    log_debug(f"Foreground has {len(fgr_regions)} opaque regions for selective blit")
-                    for i, r in enumerate(fgr_regions):
-                        log_debug(f"  fgr region {i}: x={r.x}, y={r.y}, w={r.width}, h={r.height}")
-        except Exception as e:
-            print(f"[overlay_init] Failed to load fgr '{fgr_name}': {e}")
-        
-        # Store state
+        # Store handler in overlay state
         overlay_state = {
             "enabled": True,
+            "handler": handler,
             "mc_vol": mc_vol,
-            "center_flag": center_flag,
-            "backing": backing,
-            "backing_dict": backing_dict,
-            "fontL": fontL,
-            "fontR": fontR,
-            "fontB": fontB,
-            "fontDigi": fontDigi,
-            "artist_scroller": artist_scroller,
-            "title_scroller": title_scroller,
-            "album_scroller": album_scroller,
-            "artist_pos": artist_pos,
-            "title_pos": title_pos,
-            "album_pos": album_pos,
-            "time_pos": time_pos,
-            "sample_pos": sample_pos,
-            "type_pos": type_pos,
-            "type_rect": type_rect,
-            "sample_font": sample_font,
-            "sample_box": sample_box,
-            "font_color": font_color,
-            "time_color": time_color,
-            "type_color": type_color,
-            "album_renderer": album_renderer,
-            "reel_left_renderer": reel_left_renderer,
-            "reel_right_renderer": reel_right_renderer,
-            "vinyl_renderer": vinyl_renderer,
-            "tonearm_renderer": tonearm_renderer,
-            "indicator_renderer": indicator_renderer,
-            "fgr_surf": fgr_surf,
-            "fgr_pos": (meter_x, meter_y),
-            "fgr_regions": fgr_regions,  # OPTIMIZATION: Opaque regions for selective blitting
         }
-        
-        log_debug("--- Initialization Complete ---", "verbose")
-        log_debug(f"  Renderers: album_art={'YES' if album_renderer else 'NO'}, reel_left={'YES' if reel_left_renderer else 'NO'}, reel_right={'YES' if reel_right_renderer else 'NO'}, vinyl={'YES' if vinyl_renderer else 'NO'}, tonearm={'YES' if tonearm_renderer else 'NO'}, indicators={'YES' if indicator_renderer and indicator_renderer.has_indicators() else 'NO'}", "verbose")
-        log_debug(f"  Backings captured: {len(backing_dict)} ({', '.join(backing_dict.keys())})", "verbose")
-        log_debug(f"  Foreground: {'YES' if fgr_surf else 'NO'} ({len(fgr_regions) if fgr_regions else 0} regions)", "verbose")
+        log_debug(f"  Handler initialized successfully", "verbose")
+        return
     
     # -------------------------------------------------------------------------
     # Render format icon - OPTIMIZED with caching
@@ -3379,508 +2959,42 @@ def start_display_output(pm, callback, meter_config_volumio):
             else:
                 pg.display.update()
         else:
-            # Read metadata FIRST (needed for tonearm backing restore before meter.run)
-            meta = last_metadata
-            artist = meta.get("artist", "")
-            title = meta.get("title", "")
-            album = meta.get("album", "")
-            albumart = meta.get("albumart", "")
-            samplerate = meta.get("samplerate", "")
-            bitdepth = meta.get("bitdepth", "")
-            track_type = meta.get("trackType", "")
-            bitrate = meta.get("bitrate", "")
-            status = meta.get("status", "")
-            volatile = meta.get("volatile", False)
-            is_playing = status == "play"
-            bd = ov.get("backing_dict", {})
-            
-            # Pre-calculate seek interpolation (used by tonearm and progress bar)
-            duration = meta.get("duration", 0) or 0
-            # CRITICAL: Don't use 'or' fallback - 0 is a valid seek position!
-            # The old code: seek_raw = meta.get("_seek_raw", 0) or meta.get("seek", 0) or 0
-            # treated 0 as falsy and fell back to interpolated meta["seek"], causing runaway
-            seek_raw = meta.get("_seek_raw")
-            if seek_raw is None:
-                seek_raw = meta.get("seek", 0) or 0
-            seek = seek_raw
-            seek_update_time = meta.get("_seek_update", 0)
-            elapsed_ms = 0
-            
-            # Interpolate seek based on elapsed time when playing
-            # Use _seek_raw to avoid accumulation error from previous frames
-            # Skip interpolation during volatile (track change) - seek values may be stale
-            if is_playing and duration > 0 and not volatile:
-                if seek_update_time > 0:
-                    elapsed_ms = (current_time - seek_update_time) * 1000
-                    seek = min(duration * 1000, seek_raw + elapsed_ms)
-                    meta["seek"] = seek  # Update for indicators (progress bar)
-            
-            # TRACE: Increment frame counter
-            _dbg_frame_count += 1
-            
-            # TRACE: Log status/volatile changes (frame component)
-            if status != _dbg_last_status:
-                log_debug(f"[Render #{_dbg_frame_count}] STATUS CHANGE: '{_dbg_last_status}' -> '{status}'", "trace", "frame")
-                _dbg_last_status = status
-            if volatile != _dbg_last_volatile:
-                log_debug(f"[Render #{_dbg_frame_count}] VOLATILE CHANGE: {_dbg_last_volatile} -> {volatile}", "trace", "frame")
-                _dbg_last_volatile = volatile
-            # TRACE: Log significant seek changes (seek component)
-            if abs(seek_raw - _dbg_last_seek_raw) > 1000:  # >1s raw change
-                log_debug(f"[Render #{_dbg_frame_count}] SEEK_RAW CHANGE: {_dbg_last_seek_raw}ms -> {seek_raw}ms", "trace", "seek")
-                _dbg_last_seek_raw = seek_raw
-            if abs(seek - _dbg_last_seek_interp) > 5000:  # >5s interpolated change
-                log_debug(f"[Render #{_dbg_frame_count}] SEEK_INTERP: raw={seek_raw}ms + elapsed={elapsed_ms:.0f}ms = {seek:.0f}ms ({seek/1000:.1f}s)", "trace", "seek")
-                _dbg_last_seek_interp = seek
-            
-            # Pre-calculate tonearm state
-            tonearm = ov.get("tonearm_renderer")
-            tonearm_will_render = False
-            if tonearm:
-                if duration > 0:
-                    progress_pct = min(100.0, (seek / 1000.0 / duration) * 100.0)
-                    # Calculate time remaining for early lift feature
-                    time_remaining_sec = duration - (seek / 1000.0)
-                else:
-                    progress_pct = 0.0
-                    time_remaining_sec = None  # Unknown duration (webradio etc)
+            # Check for handler delegation
+            handler = ov.get("handler")
+            if handler:
+                # Handler-based rendering (handler calls meter.run() internally)
+                dirty_rects = handler.render(last_metadata, now_ticks)
                 
-                # TRACE: Log significant progress changes (tonearm component)
-                if abs(progress_pct - _dbg_last_progress) > 5.0:  # >5% change
-                    log_debug(f"[Render #{_dbg_frame_count}] PROGRESS: {_dbg_last_progress:.1f}% -> {progress_pct:.1f}% (seek={seek/1000:.1f}s, dur={duration}s)", "trace", "tonearm")
-                    _dbg_last_progress = progress_pct
-                
-                tonearm.update(status, progress_pct, time_remaining_sec)
-                tonearm_will_render = tonearm.will_blit(now_ticks)
-            
-            # Pre-calculate album art state
-            album_renderer = ov.get("album_renderer")
-            album_will_render = False
-            if album_renderer:
-                url_changed = albumart != getattr(album_renderer, "_current_url", None)
-                if url_changed:
-                    album_will_render = True
-                elif album_renderer.rotate_enabled and album_renderer.rotate_rpm > 0.0:
-                    album_should_rotate = is_playing or volatile
-                    album_will_render = album_should_rotate and album_renderer.will_blit(now_ticks)
-            
-            # Pre-calculate reel state
-            reel_left = ov.get("reel_left_renderer")
-            reel_right = ov.get("reel_right_renderer")
-            reel_should_check = is_playing or volatile
-            left_will_blit = reel_left and reel_should_check and reel_left.will_blit(now_ticks)
-            right_will_blit = reel_right and reel_should_check and reel_right.will_blit(now_ticks)
-            
-            # Pre-calculate vinyl state
-            vinyl = ov.get("vinyl_renderer")
-            vinyl_will_blit = vinyl and reel_should_check and vinyl.will_blit(now_ticks)
-            
-            # Determine if ANY moving element needs render (triggers full z-order redraw)
-            any_moving_render = tonearm_will_render or album_will_render or left_will_blit or right_will_blit or vinyl_will_blit
-            
-            # Any animated element drawing may wipe overlapping areas via backing restore
-            any_animated_will_draw = any_moving_render
-            
-            # TRACE: Log will_blit decisions for all animated components
-            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("frame", False):
-                if any_animated_will_draw and _dbg_frame_count % 10 == 0:  # Every 10 frames when animating
-                    blits = []
-                    if tonearm_will_render: blits.append("tonearm")
-                    if album_will_render: blits.append("albumart")
-                    if vinyl_will_blit: blits.append("vinyl")
-                    if left_will_blit: blits.append("reel_L")
-                    if right_will_blit: blits.append("reel_R")
-                    log_debug(f"[Frame #{_dbg_frame_count}] DECISION: will_blit=[{','.join(blits)}]", "trace", "frame")
-            
-            # =================================================================
-            # RENDER Z-ORDER (bottom to top):
-            # 1. bgr (static - already on screen)
-            # 2. reels
-            # 3. vinyl
-            # 4. album art
-            # 5. meters
-            # 6. text fields
-            # 7. indicators (mute, shuffle, repeat, playstate)
-            # 8. time remaining
-            # 9. sample/icon
-            # 10. volume slider
-            # 11. progress bar
-            # 12. tonearm
-            # 13. fgr (static mask)
-            #
-            # TWO-PHASE APPROACH:
-            # Phase 1: Restore all backings (clears to bgr)
-            # Phase 2: Draw all layers bottom to top
-            #
-            # DIRTY TRACKING:
-            # If a higher layer's backing overlaps a lower layer's area,
-            # the lower layer must redraw even if FPS gating would skip it.
-            # =================================================================
-            
-            # Collect backing rects for dirty tracking
-            reel_l_rect = reel_left.get_backing_rect() if reel_left else None
-            reel_r_rect = reel_right.get_backing_rect() if reel_right else None
-            vinyl_rect = vinyl.get_backing_rect() if vinyl else None
-            art_rect = bd["art"][0] if "art" in bd else None
-            
-            # Determine what layers will restore backing this frame
-            reel_should_spin = is_playing or volatile
-            vinyl_should_spin = is_playing or volatile
-            
-            # Check if higher layer backings overlap lower layer areas
-            # This determines if lower layers must redraw even when FPS-gated
-            reel_l_dirty = False
-            reel_r_dirty = False
-            vinyl_dirty = False
-            
-            # Art backing overlaps check (art is above reels/vinyl)
-            album_will_draw = album_will_render or left_will_blit or right_will_blit or vinyl_will_blit
-            if album_renderer and (album_will_draw or albumart != getattr(album_renderer, "_current_url", None)):
-                if art_rect:
-                    if reel_l_rect and art_rect.colliderect(reel_l_rect):
-                        reel_l_dirty = True
-                    if reel_r_rect and art_rect.colliderect(reel_r_rect):
-                        reel_r_dirty = True
-                    if vinyl_rect and art_rect.colliderect(vinyl_rect):
-                        vinyl_dirty = True
-            
-            # =====================
-            # PHASE 1: RESTORE ALL BACKINGS
-            # =====================
-            
-            # Reel backings (only if will draw)
-            if reel_left and (reel_should_spin and left_will_blit or reel_l_dirty):
-                if "reel_left" in bd:
-                    r, b = bd["reel_left"]
-                    screen.blit(b, r.topleft)
-            
-            if reel_right and (reel_should_spin and right_will_blit or reel_r_dirty):
-                if "reel_right" in bd:
-                    r, b = bd["reel_right"]
-                    screen.blit(b, r.topleft)
-            
-            # Vinyl backing (only if will draw)
-            if vinyl and (vinyl_should_spin and vinyl_will_blit or vinyl_dirty):
-                if "vinyl" in bd:
-                    r, b = bd["vinyl"]
-                    screen.blit(b, r.topleft)
-            
-            # Art backing (only if will draw)
-            if album_renderer and (album_will_draw or albumart != getattr(album_renderer, "_current_url", None)):
-                if "art" in bd:
-                    r, b = bd["art"]
-                    screen.blit(b, r.topleft)
-            
-            # Tonearm backing (per-frame backing, handled separately)
-            if tonearm and any_animated_will_draw:
-                rect = tonearm.restore_backing(screen)
-                if rect:
-                    dirty_rects.append(rect)
-            
-            # =====================
-            # PHASE 2: DRAW ALL LAYERS (bottom to top)
-            # =====================
-            
-            # LAYER 2: Reels
-            reel_rendered = False
-            if reel_left and (reel_should_spin and left_will_blit or reel_l_dirty):
-                log_debug(f"[Reel.Left] INPUT: should_spin={reel_should_spin}, will_blit={left_will_blit}, dirty={reel_l_dirty}", "trace", "reel.left")
-                rect = reel_left.render(screen, status, now_ticks, volatile=volatile)
-                if rect:
-                    dirty_rects.append(rect)
-                    reel_rendered = True
-            
-            if reel_right and (reel_should_spin and right_will_blit or reel_r_dirty):
-                log_debug(f"[Reel.Right] INPUT: should_spin={reel_should_spin}, will_blit={right_will_blit}, dirty={reel_r_dirty}", "trace", "reel.right")
-                rect = reel_right.render(screen, status, now_ticks, volatile=volatile)
-                if rect:
-                    dirty_rects.append(rect)
-                    reel_rendered = True
-            
-            # LAYER 3: Vinyl
-            vinyl_rendered = False
-            if vinyl and (vinyl_should_spin and vinyl_will_blit or vinyl_dirty):
-                log_debug(f"[Vinyl] INPUT: should_spin={vinyl_should_spin}, will_blit={vinyl_will_blit}, dirty={vinyl_dirty}", "trace", "vinyl")
-                rect = vinyl.render(screen, status, now_ticks, volatile=volatile)
-                if rect:
-                    dirty_rects.append(rect)
-                    vinyl_rendered = True
-            
-            # LAYER 4: Album art
-            album_rendered = False
-            if album_renderer:
-                url_changed = albumart != getattr(album_renderer, "_current_url", None)
-                if url_changed:
-                    log_debug(f"[AlbumArt] INPUT: url_changed=True", "trace", "albumart")
-                    album_renderer.load_from_url(albumart)
-                    rect = album_renderer.render(screen, status, now_ticks, volatile=volatile)
-                    if rect:
-                        dirty_rects.append(rect)
-                        album_rendered = True
-                elif album_will_draw:
-                    advance = album_will_render
-                    log_debug(f"[AlbumArt] INPUT: will_draw={album_will_draw}, advance={advance}", "trace", "albumart")
-                    rect = album_renderer.render(screen, status, now_ticks, advance_angle=advance, volatile=volatile)
-                    if rect:
-                        dirty_rects.append(rect)
-                        album_rendered = True
-            
-            # LAYER 5: Meters
-            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("meters", False):
-                try:
-                    ds = pm.data_source
-                    if ds:
-                        left = ds.get_current_left_channel_data()
-                        right = ds.get_current_right_channel_data()
-                        mono = ds.get_current_mono_channel_data()
-                        log_debug(f"[Meter] INPUT: left={left}, right={right}, mono={mono}", "trace", "meters")
-                except Exception:
-                    pass
-            
-            meter_rects = pm.meter.run()
-            
-            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("meters", False):
-                if meter_rects:
-                    rect_count = 0
-                    if isinstance(meter_rects, list):
-                        rect_count = sum(1 for item in meter_rects if item)
-                    elif meter_rects:
-                        rect_count = 1
-                    log_debug(f"[Meter] OUTPUT: rendered={rect_count} rects", "trace", "meters")
-                else:
-                    log_debug("[Meter] OUTPUT: no render (unchanged)", "trace", "meters")
-            
-            if meter_rects:
-                if isinstance(meter_rects, list):
-                    for item in meter_rects:
-                        if item:
-                            if isinstance(item, tuple) and len(item) >= 2:
-                                rect = item[1]
-                                if rect:
-                                    dirty_rects.append(rect)
-                            elif hasattr(item, 'x'):
-                                dirty_rects.append(item)
-                elif isinstance(meter_rects, tuple) and len(meter_rects) >= 2:
-                    rect = meter_rects[1]
-                    if rect:
-                        dirty_rects.append(rect)
-                elif hasattr(meter_rects, 'x'):
-                    dirty_rects.append(meter_rects)
-            
-            # LAYER 6: Text fields (scrollers have self-backing)
-            # Tonearm skins: no forcing needed (tonearm doesn't overlap text)
-            # Reel skins: force when reels animate
-            if tonearm:
-                text_dirty = False
-            else:
-                text_dirty = left_will_blit or right_will_blit
-            
-            if ov["artist_scroller"]:
-                display_artist = artist
-                if not ov["album_pos"] and album:
-                    display_artist = f"{artist} - {album}" if artist else album
-                ov["artist_scroller"].update_text(display_artist)
-                if text_dirty:
-                    ov["artist_scroller"].force_redraw()
-                rect = ov["artist_scroller"].draw(screen)
-                if rect:
-                    dirty_rects.append(rect)
-            
-            if ov["title_scroller"]:
-                ov["title_scroller"].update_text(title)
-                if text_dirty:
-                    ov["title_scroller"].force_redraw()
-                rect = ov["title_scroller"].draw(screen)
-                if rect:
-                    dirty_rects.append(rect)
-            
-            if ov["album_scroller"]:
-                ov["album_scroller"].update_text(album)
-                if text_dirty:
-                    ov["album_scroller"].force_redraw()
-                rect = ov["album_scroller"].draw(screen)
-                if rect:
-                    dirty_rects.append(rect)
-            
-            # LAYERS 7-11: Indicators (mute, shuffle, repeat, playstate, volume, progress)
-            # Indicator renderer handles backing internally
-            # Tonearm skins: no forcing needed
-            # Reel skins: force when reels animate
-            indicator_renderer = ov.get("indicator_renderer")
-            if indicator_renderer and indicator_renderer.has_indicators():
-                if tonearm:
-                    indicator_force = False
-                else:
-                    indicator_force = left_will_blit or right_will_blit
-                indicator_renderer.render(screen, meta, dirty_rects, force=indicator_force)
-            
-            # LAYER 8: Time remaining
-            # Tonearm skins: no forcing needed
-            # Reel skins: force when reels animate
-            if tonearm:
-                time_dirty = False
-            else:
-                time_dirty = left_will_blit or right_will_blit
-            
-            if ov["time_pos"]:
-                persist_countdown_sec = None
-                persist_display_mode = "freeze"
-                persist_file = '/tmp/peppy_persist'
-                if not is_playing and os.path.exists(persist_file):
+                # TRACE: Log meter activity (meter.run() called by handler)
+                if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("meters", False):
                     try:
-                        with open(persist_file, 'r') as f:
-                            parts = f.read().strip().split(':')
-                            if len(parts) >= 2:
-                                p_duration = int(parts[0])
-                                start_ts = int(parts[1]) / 1000.0
-                                elapsed_persist = current_time - start_ts
-                                persist_countdown_sec = max(0, p_duration - int(elapsed_persist))
-                            if len(parts) >= 3:
-                                persist_display_mode = parts[2]
+                        ds = pm.data_source
+                        if ds:
+                            left = ds.get_current_left_channel_data()
+                            right = ds.get_current_right_channel_data()
+                            mono = ds.get_current_mono_channel_data()
+                            log_debug(f"[Meter] INPUT: left={left}, right={right}, mono={mono}", "trace", "meters")
                     except Exception:
                         pass
                 
-                time_remain_sec = meta.get("_time_remain", -1)
-                time_last_update = meta.get("_time_update", 0)
-                
-                if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
-                    log_debug(f"[Time] INPUT: remain={time_remain_sec}s, playing={is_playing}, persist_mode={persist_display_mode}, persist_sec={persist_countdown_sec}", "trace", "time")
-                
-                show_persist_countdown = (
-                    persist_display_mode == "countdown" and 
-                    persist_countdown_sec is not None and 
-                    persist_countdown_sec >= 0
-                )
-                
-                if show_persist_countdown:
-                    display_sec = persist_countdown_sec
-                elif time_remain_sec >= 0:
-                    if is_playing:
-                        elapsed = current_time - time_last_update
-                        if elapsed >= 1.0:
-                            time_remain_sec = max(0, time_remain_sec - int(elapsed))
-                    display_sec = time_remain_sec
-                else:
-                    display_sec = -1
-                
-                if display_sec >= 0:
-                    mins = display_sec // 60
-                    secs = display_sec % 60
-                    time_str = f"{mins:02d}:{secs:02d}"
-                    
-                    # Force redraw if time changed OR if time area was wiped by higher layer
-                    needs_redraw = time_str != last_time_str or time_dirty
-                    
-                    if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
-                        if needs_redraw:
-                            reason = "changed" if time_str != last_time_str else "dirty"
-                            log_debug(f"[Time] DECISION: redraw=True ({reason}), str={time_str}, last={last_time_str}", "trace", "time")
-                    
-                    if needs_redraw:
-                        last_time_str = time_str
-                        
-                        # Restore backing then draw
-                        if "time" in bd:
-                            r, b = bd["time"]
-                            screen.blit(b, r.topleft)
-                            dirty_rects.append(r.copy())
-                        
-                        if show_persist_countdown:
-                            t_color = (242, 165, 0)
-                        elif 0 < display_sec <= 10:
-                            t_color = (242, 0, 0)
-                        else:
-                            t_color = ov["time_color"]
-                        
-                        last_time_surf = ov["fontDigi"].render(time_str, True, t_color)
-                        screen.blit(last_time_surf, ov["time_pos"])
-                        
-                        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
-                            log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {ov['time_pos']}, color={t_color}", "trace", "time")
-            
-            # LAYER 9: Sample/icon
-            # Tonearm skins: no forcing needed
-            # Reel skins: force when reels animate
-            if tonearm:
-                sample_dirty = False
-            else:
-                sample_dirty = left_will_blit or right_will_blit
-            
-            icon_rect = render_format_icon(track_type, ov["type_rect"], ov["type_color"], force_redraw=sample_dirty)
-            if icon_rect:
-                dirty_rects.append(icon_rect)
-            
-            if ov["sample_pos"] and ov["sample_box"]:
-                sample_text = f"{samplerate} {bitdepth}".strip()
-                if not sample_text:
-                    sample_text = bitrate.strip() if bitrate else ""
-                
-                # Force redraw if text changed OR if sample area was wiped by higher layer
-                needs_sample_redraw = (sample_text and sample_text != last_sample_text) or sample_dirty
-                if needs_sample_redraw and sample_text:
-                    last_sample_text = sample_text
-                    
-                    # Restore backing then draw
-                    if "sample" in bd:
-                        r, b = bd["sample"]
-                        screen.blit(b, r.topleft)
-                        dirty_rects.append(r.copy())
-                    
-                    last_sample_surf = ov["sample_font"].render(sample_text, True, ov["type_color"])
-                    
-                    if ov["center_flag"] and ov["sample_box"]:
-                        sx = ov["sample_pos"][0] + (ov["sample_box"] - last_sample_surf.get_width()) // 2
-                    else:
-                        sx = ov["sample_pos"][0]
-                    screen.blit(last_sample_surf, (sx, ov["sample_pos"][1]))
-            
-            # LAYER 12: Tonearm
-            # Tonearm backing was already restored in Phase 1
-            # Now just draw the tonearm
-            if tonearm and any_animated_will_draw:
-                force = not tonearm_will_render
-                rect = tonearm.render(screen, now_ticks, force=force)
-                if rect:
-                    dirty_rects.append(rect)
-            
-            # STEP 8: fgr mask (always last - drawn ONCE per frame)
-            # OPTIMIZATION: Only blit foreground regions that overlap dirty areas
-            # This typically reduces foreground blit area by 80-90%
-            fgr_surf = ov.get("fgr_surf")
-            fgr_regions = ov.get("fgr_regions", [])
-            if fgr_surf and dirty_rects:
-                fgr_x, fgr_y = ov["fgr_pos"]
-                if fgr_regions:
-                    # Selective blit - only regions overlapping dirty rects
-                    for region in fgr_regions:
-                        # Translate region to screen coordinates
-                        screen_rect = region.move(fgr_x, fgr_y)
-                        # Check if any dirty rect overlaps this region
-                        for dirty in dirty_rects:
-                            if screen_rect.colliderect(dirty):
-                                # Blit just this region from foreground surface
-                                screen.blit(fgr_surf, screen_rect.topleft, region)
-                                break
-                else:
-                    # Fallback: no regions computed, blit entire foreground
-                    screen.blit(fgr_surf, ov["fgr_pos"])
-            
-            # Spectrum and callbacks - OPTIMIZED: throttle spectrum updates
-            if callback.spectrum_output is not None:
-                # Only update spectrum every N frames to reduce CPU load
-                if frame_counter % SPECTRUM_UPDATE_INTERVAL == 0:
-                    callback.peppy_meter_update()
-            else:
                 callback.peppy_meter_update()
-            
-            # OPTIMIZATION: Update only dirty rectangles
-            if dirty_rects:
-                pg.display.update(dirty_rects)
-                # TRACE: Log frame output summary
-                if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("frame", False):
-                    if _dbg_frame_count % 30 == 0:  # Every 30 frames to reduce noise
-                        log_debug(f"[Frame #{_dbg_frame_count}] OUTPUT: dirty_rects={len(dirty_rects)}", "trace", "frame")
-            # If nothing changed, skip display update entirely
+                
+                # Display update
+                if dirty_rects:
+                    pg.display.update(dirty_rects)
+                else:
+                    pg.display.update()
+                
+                # Handle events
+                for event in pg.event.get():
+                    if event.type == pg.QUIT:
+                        running = False
+                    elif event.type in exit_events:
+                        if cfg.get(EXIT_ON_TOUCH, False) or cfg.get(STOP_DISPLAY_ON_TOUCH, False):
+                            running = False
+                
+                clock.tick(cfg[FRAME_RATE])
+                continue
         
         # Handle events
         for event in pg.event.get():
