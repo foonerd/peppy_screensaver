@@ -1655,10 +1655,37 @@ class CassetteHandler:
         if self.time_pos:
             import time as time_module
             current_time = time_module.time()
+            
+            # Check for persist file (countdown mode for external control)
+            persist_countdown_sec = None
+            persist_display_mode = "freeze"
+            persist_file = '/tmp/peppy_persist'
+            if not is_playing and os.path.exists(persist_file):
+                try:
+                    with open(persist_file, 'r') as f:
+                        parts = f.read().strip().split(':')
+                        if len(parts) >= 2:
+                            p_duration = int(parts[0])
+                            start_ts = int(parts[1]) / 1000.0
+                            elapsed_persist = current_time - start_ts
+                            persist_countdown_sec = max(0, p_duration - int(elapsed_persist))
+                        if len(parts) >= 3:
+                            persist_display_mode = parts[2]
+                except Exception:
+                    pass
+            
             time_remain_sec = meta.get("_time_remain", -1)
             time_last_update = meta.get("_time_update", 0)
             
-            if time_remain_sec >= 0:
+            show_persist_countdown = (
+                persist_display_mode == "countdown" and
+                persist_countdown_sec is not None and
+                persist_countdown_sec >= 0
+            )
+            
+            if show_persist_countdown:
+                display_sec = persist_countdown_sec
+            elif time_remain_sec >= 0:
                 if is_playing:
                     elapsed = current_time - time_last_update
                     if elapsed >= 1.0:
@@ -1682,8 +1709,11 @@ class CassetteHandler:
                         self.screen.blit(self.bgr_surface, self.time_rect.topleft, self.time_rect)
                         dirty_rects.append(self.time_rect.copy())
                     
-                    if 0 < display_sec <= 10:
-                        t_color = (242, 0, 0)
+                    # Color: orange for persist countdown, red for <10s, else skin color
+                    if show_persist_countdown:
+                        t_color = (242, 165, 0)  # Orange
+                    elif 0 < display_sec <= 10:
+                        t_color = (242, 0, 0)  # Red
                     else:
                         t_color = self.time_color
                     
