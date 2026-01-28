@@ -405,6 +405,9 @@ class ScrollingLabel:
         except Exception:
             self._backing = pg.Surface((self._backing_rect.width, self._backing_rect.height))
             self._backing.fill((0, 0, 0))
+        
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] CAPTURE: pos={self.pos}, box_w={self.box_width}, backing_rect={self._backing_rect}", "trace", "scrolling")
 
     def update_text(self, new_text):
         """Update text content, reset scroll position if changed."""
@@ -420,12 +423,16 @@ class ScrollingLabel:
         self._last_time = pg.time.get_ticks()
         self._needs_redraw = True
         self._last_draw_offset = -1
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] UPDATE: text='{new_text[:30]}', text_w={self.text_w}, box_w={self.box_width}, scrolls={self.text_w > self.box_width}", "trace", "scrolling")
         return True
 
     def force_redraw(self):
         """Force redraw on next draw() call."""
         self._needs_redraw = True
         self._last_draw_offset = -1
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] FORCE: text='{self.text[:20]}...', pos={self.pos}", "trace", "scrolling")
 
     def draw(self, surface):
         """Draw label, handling scroll animation with self-backing.
@@ -456,7 +463,10 @@ class ScrollingLabel:
                 surface.blit(self.surf, (box_rect.x, box_rect.y))
             self._needs_redraw = False
             
-            return self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+            dirty = self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+                log_debug(f"[Scrolling] OUTPUT: static, dirty_rect={dirty}", "trace", "scrolling")
+            return dirty
         
         # Scrolling text
         now = pg.time.get_ticks()
@@ -480,6 +490,9 @@ class ScrollingLabel:
         if current_offset_int == self._last_draw_offset and not self._needs_redraw:
             return None
         
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] SCROLL: text='{self.text[:20]}...', offset={current_offset_int}, forced={self._needs_redraw}, backing={self._backing_rect}", "trace", "scrolling")
+        
         # OPTIMIZED: Use small backing (captured from bgr_surface = pure static bg)
         if self._backing and self._backing_rect:
             surface.blit(self._backing, self._backing_rect.topleft)
@@ -493,7 +506,10 @@ class ScrollingLabel:
         self._last_draw_offset = current_offset_int
         self._needs_redraw = False
         
-        return self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+        dirty = self._backing_rect.copy() if self._backing_rect else box_rect.copy()
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
+            log_debug(f"[Scrolling] OUTPUT: dirty_rect={dirty}", "trace", "scrolling")
+        return dirty
 
 
 # =============================================================================
@@ -698,6 +714,10 @@ class AlbumArtRenderer:
         if advance_angle and not self.will_blit(now_ticks):
             return None
 
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("albumart", False):
+            coupled = f"coupled_to_vinyl={self.vinyl_renderer is not None}" if self.rotate_enabled else "static"
+            log_debug(f"[AlbumArt] INPUT: status={status}, angle={self._current_angle:.1f}, advance={advance_angle}, {coupled}", "trace", "albumart")
+
         dirty_rect = None
         if advance_angle:
             self._last_blit_tick = now_ticks
@@ -752,6 +772,10 @@ class AlbumArtRenderer:
                 pg.draw.circle(screen, self.font_color, self.art_center, self.ring_radius, 1)
             except Exception:
                 pass
+
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("albumart", False):
+            mode = "rotating" if (self.rotate_enabled and self.rotate_rpm > 0.0) else "static"
+            log_debug(f"[AlbumArt] OUTPUT: {mode}, angle={self._current_angle:.1f}, rect={dirty_rect}", "trace", "albumart")
 
         return dirty_rect
 
@@ -952,6 +976,9 @@ class TonearmRenderer:
         self._last_blit_rect = None
         self._last_backing = None
         
+        # Layer composition: capture backing from bgr_surface (pure static bg)
+        self._bgr_surface = None
+        
         self._exclusion_zones = []
         self._exclusion_min_x = 9999
         
@@ -966,6 +993,14 @@ class TonearmRenderer:
             self._exclusion_min_x = min(z.left for z in self._exclusion_zones)
         else:
             self._exclusion_min_x = 9999
+    
+    def set_background_surface(self, bgr_surface):
+        """Set background surface for layer composition.
+        
+        When set, backing is captured from this surface (pure static bg)
+        instead of screen, preventing collision with dynamic elements.
+        """
+        self._bgr_surface = bgr_surface
     
     def get_last_blit_rect(self):
         """Return the last blit rect for overlap checking."""
@@ -1352,11 +1387,14 @@ class TonearmRenderer:
         blit_rect = pg.Rect(blit_x, blit_y, rot_w, rot_h)
         
         # Capture backing BEFORE drawing tonearm
-        screen_rect = screen.get_rect()
-        clipped_rect = blit_rect.clip(screen_rect)
+        # LAYER COMPOSITION: Use bgr_surface (pure static bg) to avoid
+        # capturing dynamic elements like meter needles
+        capture_source = self._bgr_surface if self._bgr_surface else screen
+        source_rect = capture_source.get_rect()
+        clipped_rect = blit_rect.clip(source_rect)
         if clipped_rect.width > 0 and clipped_rect.height > 0:
             try:
-                self._last_backing = screen.subsurface(clipped_rect).copy()
+                self._last_backing = capture_source.subsurface(clipped_rect).copy()
                 self._last_blit_rect = clipped_rect
             except Exception:
                 self._last_backing = None
@@ -1492,6 +1530,8 @@ class TurntableHandler:
         self.mc_vol = mc_vol
         
         log_debug(f"=== TurntableHandler: Initializing meter: {meter_name} ===", "basic")
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("init", False):
+            log_debug(f"[Init] TurntableHandler: meter={meter_name}, extended={mc_vol.get(EXTENDED_CONF, False)}", "trace", "init")
         
         # Reset caches
         self.last_time_str = ""
@@ -1820,6 +1860,9 @@ class TurntableHandler:
             if self.album_scroller:
                 self.album_scroller.set_background_surface(self.bgr_surface)
                 self.album_scroller.capture_backing(self.screen)
+            # Tonearm also needs bgr_surface to avoid capturing meter needles
+            if self.tonearm_renderer:
+                self.tonearm_renderer.set_background_surface(self.bgr_surface)
         else:
             # Fallback to old backing capture if no bgr_surface
             if self.artist_scroller:
@@ -2230,6 +2273,9 @@ class TurntableHandler:
             time_remain_sec = meta.get("_time_remain", -1)
             time_last_update = meta.get("_time_update", 0)
             
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
+                log_debug(f"[Time] INPUT: remain={time_remain_sec}s, playing={is_playing}, persist_mode={persist_display_mode}, persist_sec={persist_countdown_sec}", "trace", "time")
+            
             show_persist_countdown = (
                 persist_display_mode == "countdown" and 
                 persist_countdown_sec is not None and 
@@ -2242,6 +2288,8 @@ class TurntableHandler:
                 if is_playing:
                     elapsed = current_time - time_last_update
                     if elapsed >= 1.0:
+                        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("seek", False):
+                            log_debug(f"[Seek] INTERPOLATE: raw={time_remain_sec}s, elapsed={elapsed:.1f}s, result={max(0, time_remain_sec - int(elapsed))}s", "trace", "seek")
                         time_remain_sec = max(0, time_remain_sec - int(elapsed))
                 display_sec = time_remain_sec
             else:
@@ -2276,6 +2324,9 @@ class TurntableHandler:
                     
                     self.last_time_surf = self.fontDigi.render(time_str, True, t_color)
                     self.screen.blit(self.last_time_surf, self.time_pos)
+                    
+                    if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
+                        log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {self.time_pos}, color={t_color}", "trace", "time")
         
         # LAYER: Sample rate / format icon
         # Format icon

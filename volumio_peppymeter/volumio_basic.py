@@ -709,6 +709,8 @@ class BasicHandler:
         
         log_debug(f"=== BasicHandler: Initializing meter: {meter_name} ===", "basic")
         log_debug(f"  config.extend = {mc_vol.get(EXTENDED_CONF, False)}", "verbose")
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("init", False):
+            log_debug(f"[Init] BasicHandler: meter={meter_name}, extended={mc_vol.get(EXTENDED_CONF, False)}", "trace", "init")
         
         # Reset caches
         self.last_time_str = ""
@@ -1223,6 +1225,8 @@ class BasicHandler:
                 if is_playing:
                     elapsed = current_time - time_last_update
                     if elapsed >= 1.0:
+                        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("seek", False):
+                            log_debug(f"[Seek] INTERPOLATE: raw={time_remain_sec}s, elapsed={elapsed:.1f}s, result={max(0, time_remain_sec - int(elapsed))}s", "trace", "seek")
                         time_remain_sec = max(0, time_remain_sec - int(elapsed))
                 display_sec = time_remain_sec
             else:

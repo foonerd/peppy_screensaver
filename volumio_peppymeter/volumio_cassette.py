@@ -976,6 +976,8 @@ class CassetteHandler:
         
         log_debug(f"=== CassetteHandler: Initializing meter: {meter_name} ===", "basic")
         log_debug(f"  config.extend = {mc_vol.get(EXTENDED_CONF, False)}", "verbose")
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("init", False):
+            log_debug(f"[Init] CassetteHandler: meter={meter_name}, extended={mc_vol.get(EXTENDED_CONF, False)}", "trace", "init")
         
         # Reset caches
         self.last_time_str = ""
@@ -1677,6 +1679,9 @@ class CassetteHandler:
             time_remain_sec = meta.get("_time_remain", -1)
             time_last_update = meta.get("_time_update", 0)
             
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
+                log_debug(f"[Time] INPUT: remain={time_remain_sec}s, playing={is_playing}, persist_mode={persist_display_mode}, persist_sec={persist_countdown_sec}", "trace", "time")
+            
             show_persist_countdown = (
                 persist_display_mode == "countdown" and
                 persist_countdown_sec is not None and
@@ -1689,6 +1694,8 @@ class CassetteHandler:
                 if is_playing:
                     elapsed = current_time - time_last_update
                     if elapsed >= 1.0:
+                        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("seek", False):
+                            log_debug(f"[Seek] INTERPOLATE: raw={time_remain_sec}s, elapsed={elapsed:.1f}s, result={max(0, time_remain_sec - int(elapsed))}s", "trace", "seek")
                         time_remain_sec = max(0, time_remain_sec - int(elapsed))
                 display_sec = time_remain_sec
             else:
@@ -1719,6 +1726,9 @@ class CassetteHandler:
                     
                     self.last_time_surf = self.fontDigi.render(time_str, True, t_color)
                     self.screen.blit(self.last_time_surf, self.time_pos)
+                    
+                    if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
+                        log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {self.time_pos}, color={t_color}", "trace", "time")
         
         # LAYER 8: Sample rate / format icon (FORCE when reels animate)
         # Format icon

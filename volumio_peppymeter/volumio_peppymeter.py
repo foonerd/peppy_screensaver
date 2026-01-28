@@ -401,12 +401,6 @@ def init_debug_config(meter_config_volumio):
     
     for config_key, trace_key in trace_key_map.items():
         DEBUG_TRACE[trace_key] = meter_config_volumio.get(config_key, False)
-    
-    log_debug(f"Debug level set to: {DEBUG_LEVEL_CURRENT}", "basic")
-    if DEBUG_LEVEL_CURRENT == "trace":
-        enabled = [k for k, v in DEBUG_TRACE.items() if v]
-        if enabled:
-            log_debug(f"Trace components enabled: {', '.join(enabled)}", "basic")
 
 # Runtime paths
 PeppyRunning = '/tmp/peppyrunning'
@@ -3013,6 +3007,13 @@ def start_display_output(pm, callback, meter_config_volumio):
                             running = False
                 
                 clock.tick(cfg[FRAME_RATE])
+                
+                # Frame timing trace (handler path)
+                if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("frame", False):
+                    frame_time_ms = clock.get_time()
+                    fps_actual = clock.get_fps()
+                    log_debug(f"[Frame] #{frame_counter}: time={frame_time_ms}ms, fps={fps_actual:.1f}, dirty_rects={len(dirty_rects)}", "trace", "frame")
+                
                 continue
         
         # Handle events
@@ -3028,6 +3029,12 @@ def start_display_output(pm, callback, meter_config_volumio):
                     running = False
         
         clock.tick(cfg[FRAME_RATE])
+        
+        # Frame timing trace
+        if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("frame", False):
+            frame_time_ms = clock.get_time()
+            fps_actual = clock.get_fps()
+            log_debug(f"[Frame] #{frame_counter}: time={frame_time_ms}ms, fps={fps_actual:.1f}, dirty_rects={len(dirty_rects)}", "trace", "frame")
     
     # Fade-out transition before cleanup (only if we did fade-in)
     if callback.did_fade_in:
@@ -3091,6 +3098,13 @@ if __name__ == "__main__":
         except Exception:
             pass
     log_debug(f"Debug level set to: {DEBUG_LEVEL_CURRENT}", "basic")
+    
+    # Log enabled trace components (AFTER file clearing)
+    if DEBUG_LEVEL_CURRENT == "trace":
+        enabled = [k for k, v in DEBUG_TRACE.items() if v]
+        if enabled:
+            log_debug(f"Trace components enabled: {', '.join(enabled)}", "basic")
+    
     log_debug("=== PeppyMeter starting ===", "basic")
     log_debug(f"Config file: {os.path.join(os.getcwd(), 'config.txt')}", "basic")
     log_debug(f"Meters file: {parser.meter_config_path}", "basic")
