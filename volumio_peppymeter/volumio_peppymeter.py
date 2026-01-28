@@ -2733,6 +2733,16 @@ def start_display_output(pm, callback, meter_config_volumio):
         log_debug(f"=== Initializing meter: {meter_name} ===", "basic")
         log_debug(f"  config.extend = {mc_vol.get(EXTENDED_CONF, False)}", "verbose")
         
+        # CLEANUP: Release resources from previous handler before creating new one
+        # This prevents zombie handlers when switching between template types
+        old_handler = overlay_state.get("handler") if overlay_state else None
+        if old_handler:
+            log_debug(f"  Cleaning up previous handler", "verbose")
+            try:
+                old_handler.cleanup()
+            except Exception as e:
+                log_debug(f"  Handler cleanup error (non-fatal): {e}", "verbose")
+        
         # Reset caches
         last_time_str = ""
         last_time_surf = None
@@ -2899,6 +2909,14 @@ def start_display_output(pm, callback, meter_config_volumio):
     _dbg_log_time = 0  # Throttle periodic logging
     
     while running:
+        # CHECK STOP SIGNAL: Exit if plugin removed runFlag
+        # This is separate from touch/mouse exit handling to ensure
+        # clean shutdown when plugin requests stop
+        if not os.path.exists(PeppyRunning):
+            log_debug("runFlag removed - initiating shutdown", "basic")
+            running = False
+            break
+        
         current_time = time.time()
         now_ticks = pg.time.get_ticks()  # OPTIMIZATION: For FPS-gated rendering
         dirty_rects = []  # OPTIMIZATION: Collect dirty rectangles
@@ -3029,6 +3047,17 @@ def start_display_output(pm, callback, meter_config_volumio):
         log_debug("screen_fade_out skipped (no fade_in was done)", "trace", "fade")
     
     # Cleanup
+    log_debug("=== Shutting down ===", "basic")
+    
+    # Cleanup handler resources
+    final_handler = overlay_state.get("handler") if overlay_state else None
+    if final_handler:
+        log_debug("  Cleaning up handler", "verbose")
+        try:
+            final_handler.cleanup()
+        except Exception as e:
+            log_debug(f"  Handler cleanup error (non-fatal): {e}", "verbose")
+    
     metadata_watcher.stop()
     
     pm.exit()
