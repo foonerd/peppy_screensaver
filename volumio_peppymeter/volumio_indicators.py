@@ -1331,7 +1331,7 @@ class IndicatorRenderer:
         if self._progress:
             self._progress.force_redraw()
     
-    def render(self, screen, metadata, dirty_rects, force=False):
+    def render(self, screen, metadata, dirty_rects, force=False, skip_restore=False):
         """Render all configured indicators.
         
         :param screen: pygame screen surface
@@ -1339,6 +1339,9 @@ class IndicatorRenderer:
                          repeatSingle, status, seek, duration
         :param dirty_rects: list to append dirty rects
         :param force: if True, redraw all indicators regardless of value change
+        :param skip_restore: if True, skip restore_backing calls (for BasicHandler
+                             where meters redraw every frame and procedural
+                             indicators self-clear)
         """
         # Volume
         if self._volume:
@@ -1355,7 +1358,8 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._volume.force_redraw()
-                self._volume.restore_backing(screen)
+                if not skip_restore:
+                    self._volume.restore_backing(screen)
                 rect = self._volume.render(screen, volume)
                 if rect:
                     dirty_rects.append(rect)
@@ -1389,7 +1393,8 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._mute.force_redraw()
-                self._mute.restore_backing(screen)
+                if not skip_restore:
+                    self._mute.restore_backing(screen)
                 rect = self._mute.render(screen, mute_state)
                 if rect:
                     dirty_rects.append(rect)
@@ -1423,7 +1428,8 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._shuffle.force_redraw()
-                self._shuffle.restore_backing(screen)
+                if not skip_restore:
+                    self._shuffle.restore_backing(screen)
                 rect = self._shuffle.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
@@ -1457,7 +1463,8 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._repeat.force_redraw()
-                self._repeat.restore_backing(screen)
+                if not skip_restore:
+                    self._repeat.restore_backing(screen)
                 rect = self._repeat.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
@@ -1489,7 +1496,8 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._playstate.force_redraw()
-                self._playstate.restore_backing(screen)
+                if not skip_restore:
+                    self._playstate.restore_backing(screen)
                 rect = self._playstate.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
@@ -1517,7 +1525,8 @@ class IndicatorRenderer:
                 _log_debug(f"[Progress] INPUT: seek={seek}ms, duration={duration}s, pct={progress_pct:.1f}%, will_render={will_render}", "trace", "progress")
             
             if will_render:
-                self._progress.restore_backing(screen)
+                if not skip_restore:
+                    self._progress.restore_backing(screen)
                 rect = self._progress.render(screen, progress_pct)
                 if rect:
                     dirty_rects.append(rect)

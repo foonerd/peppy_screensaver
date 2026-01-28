@@ -1178,9 +1178,9 @@ class BasicHandler:
             if rect:
                 dirty_rects.append(rect)
         
-        # LAYER: Indicators (NO forcing needed)
+        # LAYER: Indicators (skip_restore=True - meters redraw every frame, procedural indicators self-clear)
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
-            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=False)
+            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=False, skip_restore=True)
         
         # LAYER: Time remaining (with persist countdown support)
         if self.time_pos:
