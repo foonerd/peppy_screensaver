@@ -7,7 +7,7 @@
 # SKIN TYPE: TURNTABLE
 # - HAS: vinyl (required), tonearm (optional), rotating album art
 # - NO: reel_left, reel_right (cassette elements)
-# - FORCING: None needed (tonearm does not overlap text areas)
+# - ARCHITECTURE: Layer composition (no backing restore collisions)
 #
 # EDGE CASE: Single reel + tonearm = treat reel as vinyl
 # (Early skin developers mistakenly used reel parameters for turntable vinyl)
@@ -376,8 +376,13 @@ class ScrollingLabel:
         self._pause_until = 0
         self._backing = None
         self._backing_rect = None
+        self._bgr_surface = None  # Layer composition: use bgr for clearing
         self._needs_redraw = True
         self._last_draw_offset = -1
+    
+    def set_background_surface(self, bgr_surface):
+        """Set background surface for layer composition clearing."""
+        self._bgr_surface = bgr_surface
 
     def capture_backing(self, surface):
         """Capture backing surface for this label's area."""
@@ -427,7 +432,10 @@ class ScrollingLabel:
             if not self._needs_redraw:
                 return None
             
-            if self._backing and self._backing_rect:
+            # LAYER COMPOSITION: Clear from bgr_surface if available
+            if self._bgr_surface and self._backing_rect:
+                surface.blit(self._bgr_surface, self._backing_rect.topleft, self._backing_rect)
+            elif self._backing and self._backing_rect:
                 surface.blit(self._backing, self._backing_rect.topleft)
             
             if self.center and self.box_width > 0:
@@ -461,7 +469,10 @@ class ScrollingLabel:
         if current_offset_int == self._last_draw_offset and not self._needs_redraw:
             return None
         
-        if self._backing and self._backing_rect:
+        # LAYER COMPOSITION: Clear from bgr_surface if available
+        if self._bgr_surface and self._backing_rect:
+            surface.blit(self._bgr_surface, self._backing_rect.topleft, self._backing_rect)
+        elif self._backing and self._backing_rect:
             surface.blit(self._backing, self._backing_rect.topleft)
         
         prev_clip = surface.get_clip()
@@ -1413,6 +1424,9 @@ class TurntableHandler:
         self.backing_dict = {}
         self.dirty_rects = []
         
+        # Background surface for layer composition
+        self.bgr_surface = None
+        
         # Renderers (turntable-specific)
         self.vinyl_renderer = None
         self.tonearm_renderer = None
@@ -1429,6 +1443,8 @@ class TurntableHandler:
         self.sample_pos = None
         self.type_pos = None
         self.type_rect = None
+        self.time_rect = None
+        self.sample_rect = None
         self.sample_box = 0
         self.center_flag = False
         
@@ -1774,13 +1790,25 @@ class TurntableHandler:
         self.title_scroller = ScrollingLabel(title_font, title_color, title_pos, title_box, center=self.center_flag, speed_px_per_sec=scroll_speed_title) if title_pos else None
         self.album_scroller = ScrollingLabel(album_font, album_color, album_pos, album_box, center=self.center_flag, speed_px_per_sec=scroll_speed_album) if album_pos else None
         
-        # Capture backing for scrollers
-        if self.artist_scroller:
-            self.artist_scroller.capture_backing(self.screen)
-        if self.title_scroller:
-            self.title_scroller.capture_backing(self.screen)
-        if self.album_scroller:
-            self.album_scroller.capture_backing(self.screen)
+        # LAYER COMPOSITION: Set background surface on scrollers for proper clearing
+        if self.bgr_surface:
+            if self.artist_scroller:
+                self.artist_scroller.set_background_surface(self.bgr_surface)
+                self.artist_scroller.capture_backing(self.screen)
+            if self.title_scroller:
+                self.title_scroller.set_background_surface(self.bgr_surface)
+                self.title_scroller.capture_backing(self.screen)
+            if self.album_scroller:
+                self.album_scroller.set_background_surface(self.bgr_surface)
+                self.album_scroller.capture_backing(self.screen)
+        else:
+            # Fallback to old backing capture if no bgr_surface
+            if self.artist_scroller:
+                self.artist_scroller.capture_backing(self.screen)
+            if self.title_scroller:
+                self.title_scroller.capture_backing(self.screen)
+            if self.album_scroller:
+                self.album_scroller.capture_backing(self.screen)
         
         # Capture backing for indicators
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
@@ -1790,8 +1818,24 @@ class TurntableHandler:
         self.meter.run()
         pg.display.update()
         
+        # LAYER COMPOSITION: Create rects for clearing time/type/sample areas
         # Type rect
         self.type_rect = pg.Rect(self.type_pos[0], self.type_pos[1], type_dim[0], type_dim[1]) if (self.type_pos and type_dim) else None
+        
+        # Time rect (for clearing from bgr_surface)
+        if self.time_pos and self.fontDigi:
+            time_width = self.fontDigi.size('00:00')[0] + 10
+            time_height = self.fontDigi.get_linesize()
+            self.time_rect = pg.Rect(self.time_pos[0], self.time_pos[1], time_width, time_height)
+        else:
+            self.time_rect = None
+        
+        # Sample rect (for clearing from bgr_surface)
+        if self.sample_pos and self.sample_box and self.sample_font:
+            sample_height = self.sample_font.get_linesize()
+            self.sample_rect = pg.Rect(self.sample_pos[0], self.sample_pos[1], self.sample_box, sample_height)
+        else:
+            self.sample_rect = None
         
         # Set tonearm exclusion zones (scroller backing rects only)
         # Indicators don't need exclusion - they draw AFTER tonearm with force
@@ -1902,6 +1946,10 @@ class TurntableHandler:
                 self.screen.blit(img, (meter_x, meter_y))
             except Exception as e:
                 print(f"[TurntableHandler] Failed to load bgr '{bgr_name}': {e}")
+        
+        # LAYER COMPOSITION: Store background surface for clearing
+        self.bgr_surface = self.screen.copy()
+        log_debug("  Background surface captured for layer composition", "verbose")
     
     def render(self, meta, now_ticks):
         """
@@ -2090,8 +2138,12 @@ class TurntableHandler:
         
         # LAYER: Indicators (above tonearm)
         # Force redraw when any animated element's backing restored (may overlap indicator areas)
+        # NOTE: skip_restore=True because:
+        # - Procedural indicators (volume bars) self-clear with bg_color
+        # - Icon indicators fully overwrite their area
+        # - This eliminates backing collision artifacts
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
-            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=any_animated_will_draw)
+            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=any_animated_will_draw, skip_restore=True)
         
         # LAYER: Time remaining
         if self.time_pos:
@@ -2148,10 +2200,10 @@ class TurntableHandler:
                 if needs_redraw:
                     self.last_time_str = time_str
                     
-                    if "time" in bd:
-                        r, b = bd["time"]
-                        self.screen.blit(b, r.topleft)
-                        dirty_rects.append(r.copy())
+                    # LAYER COMPOSITION: Clear from bgr_surface
+                    if self.bgr_surface and self.time_rect:
+                        self.screen.blit(self.bgr_surface, self.time_rect.topleft, self.time_rect)
+                        dirty_rects.append(self.time_rect.copy())
                     
                     # Color: orange for persist countdown, red for <10s, else skin color
                     if show_persist_countdown:
@@ -2176,9 +2228,9 @@ class TurntableHandler:
             if needs_redraw:
                 self.last_track_type = fmt
                 
-                if "type" in bd:
-                    r, b = bd["type"]
-                    self.screen.blit(b, r.topleft)
+                # LAYER COMPOSITION: Clear from bgr_surface
+                if self.bgr_surface and self.type_rect:
+                    self.screen.blit(self.bgr_surface, self.type_rect.topleft, self.type_rect)
                 
                 file_path = os.path.dirname(__file__)
                 local_icons = {'tidal', 'cd', 'qobuz'}
@@ -2246,10 +2298,10 @@ class TurntableHandler:
             if sample_text and sample_text != self.last_sample_text:
                 self.last_sample_text = sample_text
                 
-                if "sample" in bd:
-                    r, b = bd["sample"]
-                    self.screen.blit(b, r.topleft)
-                    dirty_rects.append(r.copy())
+                # LAYER COMPOSITION: Clear from bgr_surface
+                if self.bgr_surface and self.sample_rect:
+                    self.screen.blit(self.bgr_surface, self.sample_rect.topleft, self.sample_rect)
+                    dirty_rects.append(self.sample_rect.copy())
                 
                 self.last_sample_surf = self.sample_font.render(sample_text, True, self.type_color)
                 
@@ -2284,3 +2336,4 @@ class TurntableHandler:
         self.artist_scroller = None
         self.title_scroller = None
         self.album_scroller = None
+        self.bgr_surface = None
