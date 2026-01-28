@@ -52,6 +52,7 @@ from configfileparser import (
 from volumio_configfileparser import (
     Volumio_ConfigFileParser, EXTENDED_CONF, METER_VISIBLE, SPECTRUM_VISIBLE,
     COLOR_DEPTH, POSITION_TYPE, POS_X, POS_Y, START_ANIMATION, UPDATE_INTERVAL,
+    FRAME_RATE_VOLUMIO,
     TRANSITION_TYPE, TRANSITION_DURATION, TRANSITION_COLOR, TRANSITION_OPACITY,
     DEBUG_LEVEL, DEBUG_TRACE_SWITCHES,
     DEBUG_TRACE_METERS, DEBUG_TRACE_SPECTRUM, DEBUG_TRACE_VINYL, DEBUG_TRACE_REEL_LEFT, DEBUG_TRACE_REEL_RIGHT,
@@ -2874,7 +2875,10 @@ def start_display_output(pm, callback, meter_config_volumio):
     clock = Clock()
     pm.meter.start()
     
-    log_debug(f"Main loop frame.rate = {cfg[FRAME_RATE]} (from config.txt [screen] section)", "basic")
+    # Read frame.rate from config (set via UI), default to 30
+    # This overrides the peppymeter [screen] section value
+    MAIN_LOOP_FRAME_RATE = meter_config_volumio.get(FRAME_RATE_VOLUMIO, 30)
+    log_debug(f"Main loop frame.rate = {MAIN_LOOP_FRAME_RATE} (from config.txt [current] section via UI)", "basic")
     
     # Initialize overlay for first meter
     overlay_init_for_meter(resolve_active_meter_name())
@@ -2933,7 +2937,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                     elif event.type in exit_events:
                         if cfg.get(EXIT_ON_TOUCH, False) or cfg.get(STOP_DISPLAY_ON_TOUCH, False):
                             running = False
-                clock.tick(cfg[FRAME_RATE])
+                clock.tick(MAIN_LOOP_FRAME_RATE)
                 continue
         
         # Check for random meter change
@@ -3006,7 +3010,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                         if cfg.get(EXIT_ON_TOUCH, False) or cfg.get(STOP_DISPLAY_ON_TOUCH, False):
                             running = False
                 
-                clock.tick(cfg[FRAME_RATE])
+                clock.tick(MAIN_LOOP_FRAME_RATE)
                 
                 # Frame timing trace (handler path)
                 if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("frame", False):
@@ -3028,7 +3032,7 @@ def start_display_output(pm, callback, meter_config_volumio):
                 if cfg.get(EXIT_ON_TOUCH, False) or cfg.get(STOP_DISPLAY_ON_TOUCH, False):
                     running = False
         
-        clock.tick(cfg[FRAME_RATE])
+        clock.tick(MAIN_LOOP_FRAME_RATE)
         
         # Frame timing trace
         if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("frame", False):

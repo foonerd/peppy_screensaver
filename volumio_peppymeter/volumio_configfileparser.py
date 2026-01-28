@@ -25,6 +25,7 @@ POS_X = "position.x"
 POS_Y = "position.y"
 
 UPDATE_INTERVAL = "update.interval"
+FRAME_RATE_VOLUMIO = "frame.rate"
 
 # Debug settings
 DEBUG_LEVEL = "debug.level"
@@ -276,6 +277,11 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[UPDATE_INTERVAL] = c.getint(CURRENT, UPDATE_INTERVAL)
         except:
             self.meter_config_volumio[UPDATE_INTERVAL] = 2
+
+        try:
+            self.meter_config_volumio[FRAME_RATE_VOLUMIO] = c.getint(CURRENT, FRAME_RATE_VOLUMIO)
+        except:
+            self.meter_config_volumio[FRAME_RATE_VOLUMIO] = 30
 
         try:
             self.meter_config_volumio[TRANSITION_TYPE] = c.get(CURRENT, TRANSITION_TYPE)

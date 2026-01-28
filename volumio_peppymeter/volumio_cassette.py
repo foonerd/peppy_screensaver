@@ -1221,7 +1221,9 @@ class CassetteHandler:
                 name="reel_left"
             )
             backing_rect = self.reel_left.get_backing_rect()
-            log_debug(f"  ReelRenderer LEFT created, rect: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer LEFT created (no rect)", "verbose")
+            visual_rect = self.reel_left.get_visual_rect()
+            log_debug(f"  ReelRenderer LEFT created, backing_rect: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer LEFT created (no backing_rect)", "verbose")
+            log_debug(f"  ReelRenderer LEFT visual_rect: x={visual_rect.x}, y={visual_rect.y}, w={visual_rect.width}, h={visual_rect.height}" if visual_rect else "  ReelRenderer LEFT visual_rect: None", "verbose")
         
         if reel_right_file and reel_right_center:
             self.reel_right = ReelRenderer(
@@ -1239,7 +1241,9 @@ class CassetteHandler:
                 name="reel_right"
             )
             backing_rect = self.reel_right.get_backing_rect()
-            log_debug(f"  ReelRenderer RIGHT created, rect: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer RIGHT created (no rect)", "verbose")
+            visual_rect = self.reel_right.get_visual_rect()
+            log_debug(f"  ReelRenderer RIGHT created, backing_rect: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer RIGHT created (no backing_rect)", "verbose")
+            log_debug(f"  ReelRenderer RIGHT visual_rect: x={visual_rect.x}, y={visual_rect.y}, w={visual_rect.width}, h={visual_rect.height}" if visual_rect else "  ReelRenderer RIGHT visual_rect: None", "verbose")
         
         # Create reels layer (Z1) based on actual reel bounding rects
         reel_left_rect = self.reel_left.get_backing_rect() if self.reel_left else None
@@ -1546,13 +1550,16 @@ class CassetteHandler:
         clear_regions = []
         
         # Reel regions need clearing when they animate
+        # Use visual_rect (actual image bounds) instead of backing_rect (rotation-extended)
+        # visual_rect is smaller and likely doesn't overlap meter area in center
+        # Trade-off: minor rotation artifacts at corners vs meter flicker
         if left_will_blit and self.reel_left:
-            rect = self.reel_left.get_backing_rect()
+            rect = self.reel_left.get_visual_rect()
             if rect:
                 clear_regions.append(rect)
         
         if right_will_blit and self.reel_right:
-            rect = self.reel_right.get_backing_rect()
+            rect = self.reel_right.get_visual_rect()
             if rect:
                 clear_regions.append(rect)
         
