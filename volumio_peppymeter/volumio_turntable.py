@@ -385,14 +385,23 @@ class ScrollingLabel:
         self._bgr_surface = bgr_surface
 
     def capture_backing(self, surface):
-        """Capture backing surface for this label's area."""
+        """Capture backing surface for this label's area.
+        
+        OPTIMIZED: When _bgr_surface is set, captures from it instead of screen.
+        This ensures backing contains only static background for fast clearing
+        without collision artifacts.
+        """
         if not self.pos or self.box_width <= 0:
             return
         x, y = self.pos
         height = self.font.get_linesize()
         self._backing_rect = pg.Rect(x, y, self.box_width, height)
+        
+        # Use bgr_surface if available (pure static bg), otherwise use passed surface
+        source = self._bgr_surface if self._bgr_surface else surface
+        
         try:
-            self._backing = surface.subsurface(self._backing_rect).copy()
+            self._backing = source.subsurface(self._backing_rect).copy()
         except Exception:
             self._backing = pg.Surface((self._backing_rect.width, self._backing_rect.height))
             self._backing.fill((0, 0, 0))
@@ -420,7 +429,11 @@ class ScrollingLabel:
 
     def draw(self, surface):
         """Draw label, handling scroll animation with self-backing.
-        Returns dirty rect if drawn, None if skipped."""
+        Returns dirty rect if drawn, None if skipped.
+        
+        OPTIMIZED: Backing is captured from bgr_surface (pure static bg),
+        so we just use the small backing for fast clearing without collision.
+        """
         if not self.surf or not self.pos or self.box_width <= 0:
             return None
         
@@ -432,10 +445,8 @@ class ScrollingLabel:
             if not self._needs_redraw:
                 return None
             
-            # LAYER COMPOSITION: Clear from bgr_surface if available
-            if self._bgr_surface and self._backing_rect:
-                surface.blit(self._bgr_surface, self._backing_rect.topleft, self._backing_rect)
-            elif self._backing and self._backing_rect:
+            # OPTIMIZED: Use small backing (captured from bgr_surface = pure static bg)
+            if self._backing and self._backing_rect:
                 surface.blit(self._backing, self._backing_rect.topleft)
             
             if self.center and self.box_width > 0:
@@ -469,10 +480,8 @@ class ScrollingLabel:
         if current_offset_int == self._last_draw_offset and not self._needs_redraw:
             return None
         
-        # LAYER COMPOSITION: Clear from bgr_surface if available
-        if self._bgr_surface and self._backing_rect:
-            surface.blit(self._bgr_surface, self._backing_rect.topleft, self._backing_rect)
-        elif self._backing and self._backing_rect:
+        # OPTIMIZED: Use small backing (captured from bgr_surface = pure static bg)
+        if self._backing and self._backing_rect:
             surface.blit(self._backing, self._backing_rect.topleft)
         
         prev_clip = surface.get_clip()
@@ -1445,6 +1454,7 @@ class TurntableHandler:
         self.type_rect = None
         self.time_rect = None
         self.sample_rect = None
+        self.art_rect = None  # For overlap detection
         self.sample_box = 0
         self.center_flag = False
         
@@ -1599,9 +1609,14 @@ class TurntableHandler:
         else:
             self.sample_box = 0
         
-        # Capture backing surfaces
+        # Capture backing surfaces from bgr_surface (not screen)
+        # This ensures backings contain only static background, eliminating collision bugs
+        # while maintaining fast small-surface blits
         self.backing_dict = {}
         screen_rect = self.screen.get_rect()
+        
+        # Store art_rect for overlap detection during render
+        self.art_rect = pg.Rect(art_pos[0], art_pos[1], art_dim[0], art_dim[1]) if (art_pos and art_dim) else None
         
         def capture_rect(name, pos, width, height):
             if pos and width and height:
@@ -1609,7 +1624,11 @@ class TurntableHandler:
                 clipped = r.clip(screen_rect)
                 if clipped.width > 0 and clipped.height > 0:
                     try:
-                        surf = self.screen.subsurface(clipped).copy()
+                        # LAYER COMPOSITION: Capture from bgr_surface (pure static bg)
+                        if self.bgr_surface:
+                            surf = self.bgr_surface.subsurface(clipped).copy()
+                        else:
+                            surf = self.screen.subsurface(clipped).copy()
                         self.backing_dict[name] = (clipped, surf)
                     except Exception:
                         s = pg.Surface((clipped.width, clipped.height))
@@ -1951,6 +1970,46 @@ class TurntableHandler:
         self.bgr_surface = self.screen.copy()
         log_debug("  Background surface captured for layer composition", "verbose")
     
+    def _repair_art_overlap(self, clear_rect):
+        """Repair album art in overlap region after backing restore.
+        
+        When a backing is restored (type/sample/time), it clears to static bg.
+        If that region overlapped album art, we need to re-blit that portion.
+        
+        :param clear_rect: pg.Rect that was cleared
+        :return: True if repair was performed
+        """
+        if not self.art_rect or not clear_rect:
+            return False
+        if not self.album_renderer:
+            return False
+        if not clear_rect.colliderect(self.art_rect):
+            return False
+        
+        # Get the scaled surface from album renderer
+        art_surf = getattr(self.album_renderer, '_scaled_surf', None)
+        if art_surf is None:
+            art_surf = getattr(self.album_renderer, '_current_surf', None)
+        if art_surf is None:
+            return False
+        
+        # Calculate overlap region
+        overlap = clear_rect.clip(self.art_rect)
+        
+        # Calculate source rect within art surface
+        src_x = overlap.x - self.art_rect.x
+        src_y = overlap.y - self.art_rect.y
+        src_rect = pg.Rect(src_x, src_y, overlap.width, overlap.height)
+        
+        # Ensure src_rect is within art surface bounds
+        art_w, art_h = art_surf.get_size()
+        if src_x < 0 or src_y < 0 or src_x + overlap.width > art_w or src_y + overlap.height > art_h:
+            return False
+        
+        # Blit the overlapping portion of art
+        self.screen.blit(art_surf, overlap.topleft, src_rect)
+        return True
+    
     def render(self, meta, now_ticks):
         """
         Render one frame.
@@ -2200,10 +2259,12 @@ class TurntableHandler:
                 if needs_redraw:
                     self.last_time_str = time_str
                     
-                    # LAYER COMPOSITION: Clear from bgr_surface
-                    if self.bgr_surface and self.time_rect:
-                        self.screen.blit(self.bgr_surface, self.time_rect.topleft, self.time_rect)
-                        dirty_rects.append(self.time_rect.copy())
+                    # OPTIMIZED: Use small backing (fast) + surgical art repair
+                    if "time" in bd:
+                        r, b = bd["time"]
+                        self.screen.blit(b, r.topleft)
+                        self._repair_art_overlap(r)  # Repair if overlaps art
+                        dirty_rects.append(r.copy())
                     
                     # Color: orange for persist countdown, red for <10s, else skin color
                     if show_persist_countdown:
@@ -2228,9 +2289,11 @@ class TurntableHandler:
             if needs_redraw:
                 self.last_track_type = fmt
                 
-                # LAYER COMPOSITION: Clear from bgr_surface
-                if self.bgr_surface and self.type_rect:
-                    self.screen.blit(self.bgr_surface, self.type_rect.topleft, self.type_rect)
+                # OPTIMIZED: Use small backing (fast) + surgical art repair
+                if "type" in bd:
+                    r, b = bd["type"]
+                    self.screen.blit(b, r.topleft)
+                    self._repair_art_overlap(r)  # Repair if overlaps art
                 
                 file_path = os.path.dirname(__file__)
                 local_icons = {'tidal', 'cd', 'qobuz'}
@@ -2298,10 +2361,12 @@ class TurntableHandler:
             if sample_text and sample_text != self.last_sample_text:
                 self.last_sample_text = sample_text
                 
-                # LAYER COMPOSITION: Clear from bgr_surface
-                if self.bgr_surface and self.sample_rect:
-                    self.screen.blit(self.bgr_surface, self.sample_rect.topleft, self.sample_rect)
-                    dirty_rects.append(self.sample_rect.copy())
+                # OPTIMIZED: Use small backing (fast) + surgical art repair
+                if "sample" in bd:
+                    r, b = bd["sample"]
+                    self.screen.blit(b, r.topleft)
+                    self._repair_art_overlap(r)  # Repair if overlaps art
+                    dirty_rects.append(r.copy())
                 
                 self.last_sample_surf = self.sample_font.render(sample_text, True, self.type_color)
                 
