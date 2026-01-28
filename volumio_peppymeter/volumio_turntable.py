@@ -2247,6 +2247,20 @@ class TurntableHandler:
             elif hasattr(meter_rects, 'x'):
                 dirty_rects.append(meter_rects)
         
+        # TIMING FIX: When album art is static (no rotation), the render loop
+        # completes very fast. This can cause meter.run() to be called before
+        # the audio data source has new samples, resulting in stuck needles.
+        # A small delay gives the audio buffer time to accumulate samples.
+        # Only needed when render is fast (static art on spinning vinyl).
+        # MONITOR: This delay value (10ms) was tuned on Pi5. May need adjustment
+        # for Pi4 or other platforms. If meters are sluggish, reduce delay.
+        # If meters freeze on static art templates, increase delay.
+        if self.album_renderer and not self.album_renderer.rotate_enabled:
+            if not getattr(self, '_static_art_delay_logged', False):
+                log_debug("Static album art detected - adding 10ms delay after meter.run() to allow audio data source to update", "basic")
+                self._static_art_delay_logged = True
+            time.sleep(0.010)  # 10ms delay for audio data source
+        
         # =================================================================
         # SURGICAL OVERLAP DETECTION
         # =================================================================
