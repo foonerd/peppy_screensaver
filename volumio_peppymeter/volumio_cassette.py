@@ -1516,6 +1516,8 @@ class CassetteHandler:
         if self.album_renderer:
             if album_url_changed:
                 self.album_renderer.load_from_url(albumart)
+            if force_flag:
+                self.album_renderer.force_redraw()
             if album_url_changed or force_flag:
                 rect = self.album_renderer.render(self.screen)
                 if rect:
