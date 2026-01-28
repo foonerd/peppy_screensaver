@@ -702,6 +702,16 @@ class AlbumArtRenderer:
         else:
             return pg.Rect(self.art_pos[0], self.art_pos[1], self.art_dim[0], self.art_dim[1])
 
+    def get_visual_rect(self):
+        """Get visual bounding rectangle (actual image extent, not rotation-extended).
+        
+        LAYER COMPOSITION: Used for clearing - returns actual art dimensions
+        regardless of rotation state.
+        """
+        if not self.art_pos or not self.art_dim:
+            return None
+        return pg.Rect(self.art_pos[0], self.art_pos[1], self.art_dim[0], self.art_dim[1])
+
     def render(self, screen, status, now_ticks, advance_angle=True, volatile=False):
         """Render album art (rotated if enabled) plus border and LP center markers.
         
@@ -842,17 +852,21 @@ class VinylRenderer:
         except Exception as e:
             print(f"[VinylRenderer] Failed to load '{self.filename}': {e}")
     
-    def _update_angle(self, status, now_ticks, volatile=False):
-        """Update rotation angle based on RPM, direction, and playback status."""
+    def _update_angle(self, status, now_ticks, volatile=False, decel_factor=1.0):
+        """Update rotation angle based on RPM, direction, and playback status.
+        
+        :param decel_factor: 1.0 = full speed, 0.0 = stopped (for deceleration)
+        """
         if self.rotate_rpm <= 0.0:
             return
         
         status = (status or "").lower()
         if volatile and status in ("stop", "pause"):
             status = "play"
-        if status == "play":
+        if status == "play" or decel_factor > 0.0:
             dt = self._blit_interval_ms / 1000.0
-            self._current_angle = (self._current_angle + self.rotate_rpm * 6.0 * dt * self.direction_mult) % 360.0
+            effective_rpm = self.rotate_rpm * decel_factor
+            self._current_angle = (self._current_angle + effective_rpm * 6.0 * dt * self.direction_mult) % 360.0
     
     def get_current_angle(self):
         """Return current rotation angle (for album art coupling)."""
@@ -883,16 +897,37 @@ class VinylRenderer:
         
         return pg.Rect(ext_x, ext_y, diag, diag)
     
-    def render(self, screen, status, now_ticks, volatile=False):
+    def get_visual_rect(self):
+        """Get visual bounding rectangle (actual image extent, not rotation-extended).
+        
+        LAYER COMPOSITION: Used for clearing - smaller than backing_rect,
+        avoids wiping meter areas that live between rotating elements.
+        """
+        if not self._original_surf or not self.center:
+            return None
+        
+        w = self._original_surf.get_width()
+        h = self._original_surf.get_height()
+        
+        # Visual rect centered on rotation pivot
+        x = self.center[0] - w // 2
+        y = self.center[1] - h // 2
+        
+        return pg.Rect(x, y, w, h)
+    
+    def render(self, screen, status, now_ticks, volatile=False, force=False, decel_factor=1.0):
         """Render the vinyl disc (rotated if playing).
+        
+        :param force: If True, bypass will_blit timing check
+        :param decel_factor: 1.0 = full speed, 0.0 = stopped (for deceleration)
         Returns dirty rect if drawn, None if skipped."""
         if not self._loaded or not self._original_surf:
             return None
         
-        if not self.will_blit(now_ticks):
+        if not force and not self.will_blit(now_ticks):
             return None
         
-        log_debug(f"[Vinyl] RENDER: status={status}, angle={self._current_angle:.1f}", "trace", "vinyl")
+        log_debug(f"[Vinyl] RENDER: status={status}, angle={self._current_angle:.1f}, decel={decel_factor:.2f}", "trace", "vinyl")
         
         self._last_blit_tick = now_ticks
         
@@ -904,7 +939,7 @@ class VinylRenderer:
                           self._original_surf.get_width(),
                           self._original_surf.get_height())
         
-        self._update_angle(status, now_ticks, volatile=volatile)
+        self._update_angle(status, now_ticks, volatile=volatile, decel_factor=decel_factor)
         
         if self._rot_frames:
             idx = int(self._current_angle // self.rotation_step) % len(self._rot_frames)
@@ -1468,11 +1503,16 @@ class TurntableHandler:
         
         # State tracking
         self.enabled = False
-        self.backing_dict = {}
         self.dirty_rects = []
         
         # Background surface for layer composition
         self.bgr_surface = None
+        
+        # Deceleration/spindown state - vinyl slows down during tonearm lift
+        self._decel_start = None  # Timestamp when deceleration started (tonearm lift began)
+        self._decel_duration = 1.5  # Default - will be set from tonearm lift_duration
+        self._was_playing = False  # Track playback state changes
+        self._was_tonearm_animating = False  # Track tonearm animation state changes
         
         # Renderers (turntable-specific)
         self.vinyl_renderer = None
@@ -1649,46 +1689,10 @@ class TurntableHandler:
         else:
             self.sample_box = 0
         
-        # Capture backing surfaces from bgr_surface (not screen)
-        # This ensures backings contain only static background, eliminating collision bugs
-        # while maintaining fast small-surface blits
-        self.backing_dict = {}
-        screen_rect = self.screen.get_rect()
+        # LAYER COMPOSITION: No backing capture needed - all clearing uses bgr_surface
         
-        # Store art_rect for overlap detection during render
+        # Store art_rect for reference
         self.art_rect = pg.Rect(art_pos[0], art_pos[1], art_dim[0], art_dim[1]) if (art_pos and art_dim) else None
-        
-        def capture_rect(name, pos, width, height):
-            if pos and width and height:
-                r = pg.Rect(pos[0], pos[1], int(width), int(height))
-                clipped = r.clip(screen_rect)
-                if clipped.width > 0 and clipped.height > 0:
-                    try:
-                        # LAYER COMPOSITION: Capture from bgr_surface (pure static bg)
-                        if self.bgr_surface:
-                            surf = self.bgr_surface.subsurface(clipped).copy()
-                        else:
-                            surf = self.screen.subsurface(clipped).copy()
-                        self.backing_dict[name] = (clipped, surf)
-                    except Exception:
-                        s = pg.Surface((clipped.width, clipped.height))
-                        s.fill((0, 0, 0))
-                        self.backing_dict[name] = (clipped, s)
-        
-        if artist_pos:
-            capture_rect("artist", artist_pos, artist_box, artist_font.get_linesize())
-        if title_pos:
-            capture_rect("title", title_pos, title_box, title_font.get_linesize())
-        if album_pos:
-            capture_rect("album", album_pos, album_box, album_font.get_linesize())
-        if self.time_pos:
-            capture_rect("time", self.time_pos, self.fontDigi.size('00:00')[0] + 10, self.fontDigi.get_linesize())
-        if self.sample_pos and self.sample_box:
-            capture_rect("sample", self.sample_pos, self.sample_box, self.sample_font.get_linesize())
-        if self.type_pos and type_dim:
-            capture_rect("type", self.type_pos, type_dim[0], type_dim[1])
-        if art_pos and art_dim:
-            capture_rect("art", art_pos, art_dim[0], art_dim[1])
         
         # Get rotation parameters
         rot_quality = self.global_config.get(ROTATION_QUALITY, "medium")
@@ -1751,9 +1755,6 @@ class TurntableHandler:
                 speed_multiplier=rot_speed_mult,
                 direction=vinyl_direction
             )
-            backing_rect = self.vinyl_renderer.get_backing_rect()
-            if backing_rect:
-                capture_rect("vinyl", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
             log_debug(f"  VinylRenderer created", "verbose")
         
         # Create album art renderer (with rotation support)
@@ -1809,9 +1810,6 @@ class TurntableHandler:
                 lift_duration=mc_vol.get(TONEARM_LIFT_DURATION, 1.0),
                 rotation_fps=rot_fps
             )
-            backing_rect = self.tonearm_renderer.get_backing_rect()
-            if backing_rect:
-                capture_rect("tonearm", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
             log_debug(f"  TonearmRenderer created", "verbose")
         
         # Create indicator renderer
@@ -1863,6 +1861,10 @@ class TurntableHandler:
             # Tonearm also needs bgr_surface to avoid capturing meter needles
             if self.tonearm_renderer:
                 self.tonearm_renderer.set_background_surface(self.bgr_surface)
+            # LAYER COMPOSITION: Indicators capture backing from bgr_surface (pure static bg)
+            # This ensures restore_backing doesn't restore stale meter/tonearm positions
+            if self.indicator_renderer and self.indicator_renderer.has_indicators():
+                self.indicator_renderer.capture_backings(self.bgr_surface)
         else:
             # Fallback to old backing capture if no bgr_surface
             if self.artist_scroller:
@@ -1871,10 +1873,9 @@ class TurntableHandler:
                 self.title_scroller.capture_backing(self.screen)
             if self.album_scroller:
                 self.album_scroller.capture_backing(self.screen)
-        
-        # Capture backing for indicators
-        if self.indicator_renderer and self.indicator_renderer.has_indicators():
-            self.indicator_renderer.capture_backings(self.screen)
+            # Indicators fallback
+            if self.indicator_renderer and self.indicator_renderer.has_indicators():
+                self.indicator_renderer.capture_backings(self.screen)
         
         # Now run meter to show initial needle positions
         self.meter.run()
@@ -1899,19 +1900,8 @@ class TurntableHandler:
         else:
             self.sample_rect = None
         
-        # Set tonearm exclusion zones (scroller backing rects only)
-        # Indicators don't need exclusion - they draw AFTER tonearm with force
-        if self.tonearm_renderer:
-            exclusion_zones = []
-            if self.artist_scroller and self.artist_scroller._backing_rect:
-                exclusion_zones.append(self.artist_scroller._backing_rect)
-            if self.title_scroller and self.title_scroller._backing_rect:
-                exclusion_zones.append(self.title_scroller._backing_rect)
-            if self.album_scroller and self.album_scroller._backing_rect:
-                exclusion_zones.append(self.album_scroller._backing_rect)
-            if exclusion_zones:
-                self.tonearm_renderer.set_exclusion_zones(exclusion_zones)
-                log_debug(f"  Tonearm exclusion zones set: {len(exclusion_zones)}", "verbose")
+        # ANTI-COLLISION: No exclusion zones - layer composition handles all overlaps
+        # via bgr_surface clearing and z-order rendering
         
         # Load foreground
         self.fgr_surf = None
@@ -2013,63 +2003,25 @@ class TurntableHandler:
         self.bgr_surface = self.screen.copy()
         log_debug("  Background surface captured for layer composition", "verbose")
     
-    def _repair_art_overlap(self, clear_rect):
-        """Repair album art in overlap region after backing restore.
-        
-        When a backing is restored (type/sample/time), it clears to static bg.
-        If that region overlapped album art, we need to re-blit that portion.
-        
-        :param clear_rect: pg.Rect that was cleared
-        :return: True if repair was performed
-        """
-        if not self.art_rect or not clear_rect:
-            return False
-        if not self.album_renderer:
-            return False
-        if not clear_rect.colliderect(self.art_rect):
-            return False
-        
-        # Get the scaled surface from album renderer
-        art_surf = getattr(self.album_renderer, '_scaled_surf', None)
-        if art_surf is None:
-            art_surf = getattr(self.album_renderer, '_current_surf', None)
-        if art_surf is None:
-            return False
-        
-        # Calculate overlap region
-        overlap = clear_rect.clip(self.art_rect)
-        
-        # Calculate source rect within art surface
-        src_x = overlap.x - self.art_rect.x
-        src_y = overlap.y - self.art_rect.y
-        src_rect = pg.Rect(src_x, src_y, overlap.width, overlap.height)
-        
-        # Ensure src_rect is within art surface bounds
-        art_w, art_h = art_surf.get_size()
-        if src_x < 0 or src_y < 0 or src_x + overlap.width > art_w or src_y + overlap.height > art_h:
-            return False
-        
-        # Blit the overlapping portion of art
-        self.screen.blit(art_surf, overlap.topleft, src_rect)
-        return True
-    
     def render(self, meta, now_ticks):
         """
-        Render one frame.
+        Render one frame using LAYER COMPOSITION (anti-collision).
         
-        TURNTABLE RENDER Z-ORDER:
-        1. Restore vinyl backing (if vinyl will blit)
-        2. Restore art backing (if vinyl/album will blit)
-        3. Restore tonearm backing
-        4. Render vinyl
-        5. Render album art
-        6. meter.run() - draws needles ON TOP of vinyl/art
-        7. Render text (NO forcing)
-        8. Render tonearm
-        9. Render indicators (NO forcing)
-        10. Render time
-        11. Render sample/icon
-        12. Render fgr (topmost layer)
+        LAYER COMPOSITION PATTERN:
+        1. Determine what needs updating (vinyl, art, tonearm, etc.)
+        2. Clear dirty regions from bgr_surface (NOT backing restore)
+        3. Render ALL components in z-order:
+           - Vinyl (bottom)
+           - Album art
+           - Meters (run by peppymeter library)
+           - Text scrollers
+           - Tonearm
+           - Indicators
+           - Time/Sample/Type
+           - Foreground (top)
+        
+        ANTI-COLLISION: Uses visual_rect for clearing (smaller than backing_rect)
+        to avoid wiping meter areas. No exclusion zones needed.
         
         :param meta: Metadata dict
         :param now_ticks: pygame.time.get_ticks() value
@@ -2082,7 +2034,6 @@ class TurntableHandler:
             return []
         
         dirty_rects = []
-        bd = self.backing_dict
         
         # Extract metadata
         artist = meta.get("artist", "")
@@ -2117,6 +2068,7 @@ class TurntableHandler:
         
         # Pre-calculate tonearm state
         tonearm_will_render = False
+        tonearm_is_animating = False
         if self.tonearm_renderer:
             if duration > 0:
                 progress_pct = min(100.0, (seek / 1000.0 / duration) * 100.0)
@@ -2127,9 +2079,53 @@ class TurntableHandler:
             
             self.tonearm_renderer.update(status, progress_pct, time_remaining_sec)
             tonearm_will_render = self.tonearm_renderer.will_blit(now_ticks)
+            tonearm_is_animating = self.tonearm_renderer.is_animating()
+        
+        # =================================================================
+        # DECELERATION: Vinyl slows down gradually when playback stops
+        # =================================================================
+        # Detect playback state change
+        just_stopped = self._was_playing and not is_playing
+        just_started = not self._was_playing and is_playing
+        self._was_playing = is_playing
+        
+        # Start deceleration when playback stops
+        if just_stopped:
+            self._decel_start = time.time()
+            # Get lift duration from tonearm for matching deceleration
+            if self.tonearm_renderer:
+                self._decel_duration = getattr(self.tonearm_renderer, 'lift_duration', 1.5)
+            else:
+                self._decel_duration = 1.5
+        
+        # Clear deceleration when playback resumes
+        if just_started:
+            self._decel_start = None
+        
+        # Detect when tonearm transitions from animating to rest (for final clear)
+        just_reached_rest = self._was_tonearm_animating and not tonearm_is_animating
+        self._was_tonearm_animating = tonearm_is_animating
+        
+        # Calculate deceleration factor
+        decel_factor = 1.0
+        in_deceleration = False
+        if self._decel_start is not None:
+            elapsed = time.time() - self._decel_start
+            if elapsed < self._decel_duration:
+                # Smooth deceleration curve (ease out)
+                progress = elapsed / self._decel_duration
+                decel_factor = max(0.0, 1.0 - progress * progress)  # Quadratic ease out
+                in_deceleration = True
+            else:
+                # Deceleration complete
+                decel_factor = 0.0
+                # Only clear decel_start when tonearm also at rest
+                if not tonearm_is_animating:
+                    self._decel_start = None
         
         # Pre-calculate vinyl state
-        vinyl_should_spin = is_playing or volatile
+        # Spin when: playing, volatile, or in deceleration
+        vinyl_should_spin = is_playing or volatile or in_deceleration or tonearm_is_animating
         vinyl_will_blit = self.vinyl_renderer and vinyl_should_spin and self.vinyl_renderer.will_blit(now_ticks)
         
         # Pre-calculate album art state
@@ -2140,56 +2136,77 @@ class TurntableHandler:
             if album_url_changed:
                 album_will_render = True
             elif self.album_renderer.rotate_enabled and self.album_renderer.rotate_rpm > 0.0:
-                album_should_rotate = is_playing or volatile
+                # Rotating art follows same deceleration logic as vinyl
+                album_should_rotate = is_playing or volatile or in_deceleration or tonearm_is_animating
                 album_will_render = album_should_rotate and self.album_renderer.will_blit(now_ticks)
         
-        # Any animated element needs full z-order redraw
-        any_animated_will_draw = tonearm_will_render or album_will_render or vinyl_will_blit
+        # =================================================================
+        # FORCE FLAG: When animated elements change, force overlapping 
+        # components to redraw (anti-collision pattern from CassetteHandler)
+        # =================================================================
+        # Include: tonearm animating, just_reached_rest (transition frame needs final clear)
+        force_flag = vinyl_will_blit or album_will_render or tonearm_will_render or tonearm_is_animating or just_reached_rest
         
         # =================================================================
-        # PHASE 1: RESTORE BACKINGS
+        # PHASE 1: LAYER COMPOSITION - Clear dirty regions from bgr_surface
         # =================================================================
+        # ANTI-COLLISION: Use visual_rect (actual image bounds) not backing_rect
+        # (diagonal-extended). This prevents wiping meter areas.
         
-        # Vinyl backing
-        if vinyl_will_blit and "vinyl" in bd:
-            r, b = bd["vinyl"]
-            self.screen.blit(b, r.topleft)
+        clear_regions = []
         
-        # Art backing (only when vinyl or album will redraw)
-        if (album_will_render or vinyl_will_blit) and "art" in bd:
-            r, b = bd["art"]
-            self.screen.blit(b, r.topleft)
+        # Vinyl region - clear when spinning OR when force_flag (will render with force)
+        if (vinyl_will_blit or force_flag) and self.vinyl_renderer:
+            rect = self.vinyl_renderer.get_visual_rect()
+            if rect:
+                clear_regions.append(rect)
         
-        # Tonearm backing (per-frame backing)
-        if self.tonearm_renderer and any_animated_will_draw:
-            rect = self.tonearm_renderer.restore_backing(self.screen)
+        # Art region - use visual_rect
+        if (album_will_render or album_url_changed or force_flag) and self.album_renderer:
+            rect = self.album_renderer.get_visual_rect()
+            if rect:
+                clear_regions.append(rect)
+        
+        # Tonearm region - clear LAST position from bgr_surface (not restore_backing)
+        # This clears to pure static background, then overlapping components redraw
+        if self.tonearm_renderer:
+            last_rect = getattr(self.tonearm_renderer, '_last_blit_rect', None)
+            if last_rect and force_flag:
+                clear_regions.append(last_rect)
+        
+        # Clear all dirty regions from background
+        if clear_regions and self.bgr_surface:
+            for region in clear_regions:
+                self.screen.blit(self.bgr_surface, region.topleft, region)
+                dirty_rects.append(region.copy())
+        
+        # =================================================================
+        # PHASE 2: RENDER ALL LAYERS IN Z-ORDER
+        # =================================================================
+        # After clearing, render everything that overlaps in proper z-order
+        # Force overlapping components when animated elements change
+        
+        # Z1: Vinyl (draw BEFORE meters so meters appear on top)
+        # Force render when tonearm is animating (tonearm clearing may overlap vinyl)
+        if self.vinyl_renderer and (vinyl_will_blit or force_flag):
+            rect = self.vinyl_renderer.render(self.screen, status, now_ticks, volatile=volatile, force=force_flag, decel_factor=decel_factor)
             if rect:
                 dirty_rects.append(rect)
         
-        # =================================================================
-        # PHASE 2: RENDER LAYERS
-        # =================================================================
-        
-        # LAYER: Vinyl (draw BEFORE meters so meters appear on top)
-        if self.vinyl_renderer and vinyl_will_blit:
-            rect = self.vinyl_renderer.render(self.screen, status, now_ticks, volatile=volatile)
-            if rect:
-                dirty_rects.append(rect)
-        
-        # LAYER: Album art (draw BEFORE meters so meters appear on top)
+        # Z2: Album art (draw BEFORE meters so meters appear on top)
         if self.album_renderer:
             if album_url_changed:
                 self.album_renderer.load_from_url(albumart)
-                rect = self.album_renderer.render(self.screen, status, now_ticks, volatile=volatile)
-                if rect:
-                    dirty_rects.append(rect)
-            elif album_will_render or vinyl_will_blit:
+            # Force redraw when vinyl animates (may overlap art area)
+            if force_flag and not album_url_changed:
+                self.album_renderer._needs_redraw = True
+            if album_url_changed or album_will_render or (force_flag and self.album_renderer._scaled_surf):
                 advance = album_will_render
                 rect = self.album_renderer.render(self.screen, status, now_ticks, advance_angle=advance, volatile=volatile)
                 if rect:
                     dirty_rects.append(rect)
         
-        # LAYER: Meters (draw AFTER vinyl/art so needles are visible)
+        # Z3: Meters (draw AFTER vinyl/art so needles are visible)
         meter_rects = self.meter.run()
         if meter_rects:
             if isinstance(meter_rects, list):
@@ -2208,7 +2225,15 @@ class TurntableHandler:
             elif hasattr(meter_rects, 'x'):
                 dirty_rects.append(meter_rects)
         
-        # LAYER: Text fields (NO forcing for turntable)
+        # Z4: Text fields (FORCE when animated elements change)
+        if force_flag:
+            if self.artist_scroller:
+                self.artist_scroller.force_redraw()
+            if self.title_scroller:
+                self.title_scroller.force_redraw()
+            if self.album_scroller:
+                self.album_scroller.force_redraw()
+        
         if self.artist_scroller:
             display_artist = artist
             if not self.album_pos and album:
@@ -2230,24 +2255,19 @@ class TurntableHandler:
             if rect:
                 dirty_rects.append(rect)
         
-        # LAYER: Tonearm (render AFTER scrollers so backing has fresh content)
-        # Tonearm draws ON TOP of text in overlap zone
-        if self.tonearm_renderer and any_animated_will_draw:
-            force = not tonearm_will_render
-            rect = self.tonearm_renderer.render(self.screen, now_ticks, force=force)
+        # Z5: Tonearm (render AFTER scrollers)
+        if self.tonearm_renderer and force_flag:
+            rect = self.tonearm_renderer.render(self.screen, now_ticks, force=True)
             if rect:
                 dirty_rects.append(rect)
         
-        # LAYER: Indicators (above tonearm)
-        # Force redraw when any animated element's backing restored (may overlap indicator areas)
-        # NOTE: skip_restore=True because:
-        # - Procedural indicators (volume bars) self-clear with bg_color
-        # - Icon indicators fully overwrite their area
-        # - This eliminates backing collision artifacts
+        # Z6: Indicators
+        # Indicators captured backing from bgr_surface (clean static background)
+        # Use skip_restore=False to restore backing before drawing (clears old positions)
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
-            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=any_animated_will_draw, skip_restore=True)
+            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=force_flag, skip_restore=False)
         
-        # LAYER: Time remaining
+        # Z7: Time remaining (FORCE when animated elements change)
         if self.time_pos:
             import time as time_module
             current_time = time_module.time()
@@ -2300,19 +2320,17 @@ class TurntableHandler:
                 secs = display_sec % 60
                 time_str = f"{mins:02d}:{secs:02d}"
                 
-                # Force redraw if vinyl backing was restored (may overlap time area)
+                # Force redraw when animated elements change (may overlap time area)
                 # or if time string changed
-                needs_redraw = time_str != self.last_time_str or vinyl_will_blit
+                needs_redraw = time_str != self.last_time_str or force_flag
                 
                 if needs_redraw:
                     self.last_time_str = time_str
                     
-                    # OPTIMIZED: Use small backing (fast) + surgical art repair
-                    if "time" in bd:
-                        r, b = bd["time"]
-                        self.screen.blit(b, r.topleft)
-                        self._repair_art_overlap(r)  # Repair if overlaps art
-                        dirty_rects.append(r.copy())
+                    # LAYER COMPOSITION: Clear from bgr_surface
+                    if self.bgr_surface and self.time_rect:
+                        self.screen.blit(self.bgr_surface, self.time_rect.topleft, self.time_rect)
+                        dirty_rects.append(self.time_rect.copy())
                     
                     # Color: orange for persist countdown, red for <10s, else skin color
                     if show_persist_countdown:
@@ -2328,23 +2346,21 @@ class TurntableHandler:
                     if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
                         log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {self.time_pos}, color={t_color}", "trace", "time")
         
-        # LAYER: Sample rate / format icon
+        # LAYER: Sample rate / format icon (FORCE when animated elements change)
         # Format icon
         if self.type_rect:
             fmt = (track_type or "").strip().lower().replace(" ", "_")
             if fmt == "dsf":
                 fmt = "dsd"
             
-            needs_redraw = fmt != self.last_track_type
+            needs_redraw = fmt != self.last_track_type or force_flag
             
             if needs_redraw:
                 self.last_track_type = fmt
                 
-                # OPTIMIZED: Use small backing (fast) + surgical art repair
-                if "type" in bd:
-                    r, b = bd["type"]
-                    self.screen.blit(b, r.topleft)
-                    self._repair_art_overlap(r)  # Repair if overlaps art
+                # LAYER COMPOSITION: Clear from bgr_surface
+                if self.bgr_surface and self.type_rect:
+                    self.screen.blit(self.bgr_surface, self.type_rect.topleft, self.type_rect)
                 
                 file_path = os.path.dirname(__file__)
                 local_icons = {'tidal', 'cd', 'qobuz'}
@@ -2403,21 +2419,21 @@ class TurntableHandler:
                 
                 dirty_rects.append(self.type_rect.copy())
         
-        # Sample rate
+        # Sample rate (FORCE when animated elements change)
         if self.sample_pos and self.sample_box:
             sample_text = f"{samplerate} {bitdepth}".strip()
             if not sample_text:
                 sample_text = bitrate.strip() if bitrate else ""
             
-            if sample_text and sample_text != self.last_sample_text:
+            needs_redraw = (sample_text and sample_text != self.last_sample_text) or force_flag
+            
+            if needs_redraw and sample_text:
                 self.last_sample_text = sample_text
                 
-                # OPTIMIZED: Use small backing (fast) + surgical art repair
-                if "sample" in bd:
-                    r, b = bd["sample"]
-                    self.screen.blit(b, r.topleft)
-                    self._repair_art_overlap(r)  # Repair if overlaps art
-                    dirty_rects.append(r.copy())
+                # LAYER COMPOSITION: Clear from bgr_surface
+                if self.bgr_surface and self.sample_rect:
+                    self.screen.blit(self.bgr_surface, self.sample_rect.topleft, self.sample_rect)
+                    dirty_rects.append(self.sample_rect.copy())
                 
                 self.last_sample_surf = self.sample_font.render(sample_text, True, self.type_color)
                 

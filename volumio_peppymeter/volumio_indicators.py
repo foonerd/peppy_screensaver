@@ -721,7 +721,7 @@ class VolumeIndicator:
         """Get bounding rectangle for this indicator.
         
         For image-based sliders, expands to include full tip travel area
-        accounting for tip size and offset to prevent ghosting artifacts.
+        accounting for tip size, offset, AND travel range to prevent ghosting.
         """
         if not self.pos:
             return None
@@ -730,31 +730,37 @@ class VolumeIndicator:
             # Estimate text size
             return pg.Rect(self.pos[0], self.pos[1], self.dim[0], self.font_size)
         elif self.style == self.STYLE_SLIDER and self._slider_is_image_based and self._slider_tip_image:
-            # Expand rect to cover full tip travel area including offset
+            # Expand rect to cover full tip travel area including offset AND travel range
             x, y = self.pos
             w, h = self.dim
             tip_w = self._slider_tip_image.get_width()
             tip_h = self._slider_tip_image.get_height()
             off_x, off_y = self.slider_tip_offset
+            travel_start, travel_end = self.slider_travel
             
             if self.slider_orientation == "vertical":
-                # Tip moves vertically, centered horizontally with offset
-                # Calculate leftmost and rightmost tip positions
+                # Tip moves vertically
+                # Tip x position (centered horizontally with offset)
                 tip_center_x = x + (w - tip_w) // 2 + off_x
                 left = min(x, tip_center_x)
                 right = max(x + w, tip_center_x + tip_w)
-                # Vertical travel
-                top = y + off_y
-                bottom = y + h + off_y
+                
+                # Vertical travel: tip_y ranges from (y + travel_start + off_y) to (y + travel_end + off_y)
+                # Plus tip height at the bottom position
+                top = y + travel_start + off_y
+                bottom = y + travel_end + off_y + tip_h
                 return pg.Rect(left, top, right - left, bottom - top)
             else:
-                # Tip moves horizontally, centered vertically with offset
+                # Tip moves horizontally
+                # Tip y position (centered vertically with offset)
                 tip_center_y = y + (h - tip_h) // 2 + off_y
                 top = min(y, tip_center_y)
                 bottom = max(y + h, tip_center_y + tip_h)
-                # Horizontal travel
-                left = x + off_x
-                right = x + w + off_x
+                
+                # Horizontal travel: tip_x ranges from (x + travel_start + off_x) to (x + travel_end + off_x)
+                # Plus tip width at the right position
+                left = x + travel_start + off_x
+                right = x + travel_end + off_x + tip_w
                 return pg.Rect(left, top, right - left, bottom - top)
         else:
             return pg.Rect(self.pos[0], self.pos[1], self.dim[0], self.dim[1])
@@ -1533,3 +1539,38 @@ class IndicatorRenderer:
                     # TRACE: Log progress output
                     if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("progress", False):
                         _log_debug(f"[Progress] OUTPUT: pct={progress_pct:.1f}%, rect={rect}", "trace", "progress")
+
+    def get_all_rects(self):
+        """Get bounding rectangles for all configured indicators.
+        
+        Used by handlers for layer composition - clearing indicator areas
+        from bgr_surface before rendering.
+        
+        :return: list of pygame.Rect objects
+        """
+        rects = []
+        if self._volume:
+            rect = self._volume.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._mute:
+            rect = self._mute.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._shuffle:
+            rect = self._shuffle.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._repeat:
+            rect = self._repeat.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._playstate:
+            rect = self._playstate.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._progress:
+            rect = self._progress.get_rect()
+            if rect:
+                rects.append(rect)
+        return rects
