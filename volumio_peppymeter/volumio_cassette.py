@@ -7,8 +7,7 @@
 # SKIN TYPE: CASSETTE
 # - HAS: reel_left, reel_right, static album art
 # - NO: vinyl, tonearm
-# - FORCING: text/time/sample/indicators force redraw when reels animate
-#   (reel backing restore may wipe overlapping text areas)
+# - ARCHITECTURE: Layer composition (no backing restore collisions)
 #
 # This module is intentionally self-contained with duplicated components
 # to eliminate dead code paths and reduce CPU overhead.
@@ -19,6 +18,9 @@ import math
 import time
 import requests
 import pygame as pg
+
+# Layer composition system
+from volumio_compositor import LayerCompositor
 
 try:
     from PIL import Image, ImageOps, ImageDraw
@@ -357,11 +359,24 @@ class ScrollingLabel:
         self._pause_until = 0
         self._backing = None
         self._backing_rect = None
+        self._bgr_surface = None  # Layer composition: use bgr for clearing
         self._needs_redraw = True
         self._last_draw_offset = -1
+    
+    def set_background_surface(self, bgr_surface):
+        """Set background surface for layer composition clearing.
+        
+        When set, draw() will clear from this surface instead of captured backing.
+        This eliminates backing collision artifacts.
+        """
+        self._bgr_surface = bgr_surface
 
     def capture_backing(self, surface):
-        """Capture backing surface for this label's area."""
+        """Capture backing surface for this label's area.
+        
+        NOTE: With layer composition, this is only used as fallback.
+        Prefer set_background_surface() for proper z-order handling.
+        """
         if not self.pos or self.box_width <= 0:
             return
         x, y = self.pos
@@ -409,7 +424,12 @@ class ScrollingLabel:
 
     def draw(self, surface):
         """Draw label, handling scroll animation with self-backing.
-        Returns dirty rect if drawn, None if skipped."""
+        Returns dirty rect if drawn, None if skipped.
+        
+        LAYER COMPOSITION: When _bgr_surface is set, clears from background
+        instead of captured backing. This prevents collision artifacts when
+        text overlaps other dynamic content.
+        """
         if not self.surf or not self.pos or self.box_width <= 0:
             return None
         
@@ -425,7 +445,10 @@ class ScrollingLabel:
             if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
                 log_debug(f"[Scrolling] STATIC: text='{self.text[:20]}...', forced={self._needs_redraw}", "trace", "scrolling")
             
-            if self._backing and self._backing_rect:
+            # LAYER COMPOSITION: Clear from bgr_surface if available
+            if self._bgr_surface and self._backing_rect:
+                surface.blit(self._bgr_surface, self._backing_rect.topleft, self._backing_rect)
+            elif self._backing and self._backing_rect:
                 surface.blit(self._backing, self._backing_rect.topleft)
             
             if self.center and self.box_width > 0:
@@ -471,8 +494,10 @@ class ScrollingLabel:
         if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
             log_debug(f"[Scrolling] SCROLL: text='{self.text[:20]}...', offset={current_offset_int}, forced={self._needs_redraw}, backing={self._backing_rect}", "trace", "scrolling")
         
-        # Restore backing before drawing (prevents artifacts)
-        if self._backing and self._backing_rect:
+        # LAYER COMPOSITION: Clear from bgr_surface if available
+        if self._bgr_surface and self._backing_rect:
+            surface.blit(self._bgr_surface, self._backing_rect.topleft, self._backing_rect)
+        elif self._backing and self._backing_rect:
             surface.blit(self._backing, self._backing_rect.topleft)
         
         # Draw scrolling text
@@ -839,20 +864,31 @@ class CassetteHandler:
     """
     Handler for cassette skin type.
     
-    RENDER Z-ORDER (bottom to top):
-    1. bgr (static background - already on screen)
-    2. reels (left and right, animated)
-    3. album art (static)
-    4. meters (meter.run() - draws needles ON TOP of reels/art)
-    5. text fields (force redraw when reels animate)
-    6. indicators (force redraw when reels animate)
-    7. time remaining (force redraw when reels animate)
-    8. sample/icon (force redraw when reels animate)
-    9. fgr (foreground mask)
+    LAYER COMPOSITION ARCHITECTURE:
+    Layers (bottom to top):
+      Z0: Background (static, drawn to screen at init)
+      Z1: Reels layer (animated rotation)
+      Z2: Art layer (changes on track)
+      --: Meters (draws to screen via meter.run())
+      Z4: Text layer (scrollers)
+      Z5: Indicators layer (volume, mute, shuffle, repeat, playstate, progress)
+      Z6: Meta layer (time, type icon, sample rate)
+      Z7: Foreground mask (static, drawn to screen at init)
     
-    FORCING BEHAVIOR:
-    - Force text/time/sample/indicators when reels animate
-    - force_flag = left_will_blit or right_will_blit
+    Each component renders to its own layer surface (transparent).
+    Compositor blits layers to screen in z-order.
+    No backing restore needed - no collision possible.
+    
+    COMPOSITE SEQUENCE:
+    1. Reels render to reels layer (if animating)
+    2. Art renders to art layer (if changed)
+    3. Compositor blits Z1-Z2 to screen
+    4. Meters draw to screen (meter.run())
+    5. Text renders to text layer
+    6. Indicators render to indicators layer
+    7. Meta renders to meta layer (time/type/sample)
+    8. Compositor blits Z4-Z6 to screen
+    9. Foreground mask drawn to screen (selective)
     """
     
     def __init__(self, screen, meter, config, meter_config, meter_config_volumio):
@@ -876,15 +912,16 @@ class CassetteHandler:
         
         # State tracking
         self.enabled = False
-        self.backing_dict = {}
         self.dirty_rects = []
+        
+        # Layer compositor (replaces backing_dict)
+        self.compositor = None
         
         # Renderers (cassette-specific)
         self.reel_left = None
         self.reel_right = None
         self.album_renderer = None
         self.indicator_renderer = None
-        self.meter_exclusion_zone = None  # Protects meters from reel backing wipe
         
         # Scrollers
         self.artist_scroller = None
@@ -896,6 +933,8 @@ class CassetteHandler:
         self.sample_pos = None
         self.type_pos = None
         self.type_rect = None
+        self.time_rect = None
+        self.sample_rect = None
         self.sample_box = 0
         self.center_flag = False
         
@@ -915,6 +954,9 @@ class CassetteHandler:
         self.fgr_surf = None
         self.fgr_pos = (0, 0)
         self.fgr_regions = []
+        
+        # Background surface for layer composition clearing
+        self.bgr_surface = None
         
         # Caches
         self.last_time_str = ""
@@ -1062,40 +1104,49 @@ class CassetteHandler:
         else:
             self.sample_box = 0
         
-        # Capture backing surfaces
-        self.backing_dict = {}
-        screen_rect = self.screen.get_rect()
+        # =================================================================
+        # LAYER COMPOSITION SETUP
+        # =================================================================
+        # Create compositor and layers (replaces backing captures)
+        screen_size = (self.SCREEN_WIDTH, self.SCREEN_HEIGHT)
+        self.compositor = LayerCompositor(self.screen, screen_size)
         
-        def capture_rect(name, pos, width, height):
-            if pos and width and height:
-                r = pg.Rect(pos[0], pos[1], int(width), int(height))
-                clipped = r.clip(screen_rect)
-                if clipped.width > 0 and clipped.height > 0:
-                    try:
-                        surf = self.screen.subsurface(clipped).copy()
-                        self.backing_dict[name] = (clipped, surf)
-                        log_debug(f"  Backing captured: {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
-                    except Exception:
-                        s = pg.Surface((clipped.width, clipped.height))
-                        s.fill((0, 0, 0))
-                        self.backing_dict[name] = (clipped, s)
-                        log_debug(f"  Backing captured (fallback): {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
-        
-        log_debug("--- Backing Captures ---", "verbose")
-        if artist_pos:
-            capture_rect("artist", artist_pos, artist_box, artist_font.get_linesize())
-        if title_pos:
-            capture_rect("title", title_pos, title_box, title_font.get_linesize())
-        if album_pos:
-            capture_rect("album", album_pos, album_box, album_font.get_linesize())
-        if self.time_pos:
-            capture_rect("time", self.time_pos, self.fontDigi.size('00:00')[0] + 10, self.fontDigi.get_linesize())
-        if self.sample_pos and self.sample_box:
-            capture_rect("sample", self.sample_pos, self.sample_box, self.sample_font.get_linesize())
-        if self.type_pos and type_dim:
-            capture_rect("type", self.type_pos, type_dim[0], type_dim[1])
+        # Determine art region for layer optimization
+        art_region = None
         if art_pos and art_dim:
-            capture_rect("art", art_pos, art_dim[0], art_dim[1])
+            art_region = pg.Rect(art_pos[0], art_pos[1], art_dim[0], art_dim[1])
+        
+        log_debug("--- Layer Composition Setup ---", "verbose")
+        
+        # Z1: Reels layer (will be sized after reel renderers created)
+        # Created later once we know reel backing rects
+        
+        # Z2: Art layer (region-optimized)
+        if art_region:
+            self.compositor.add_layer("art", z_index=2, region=art_region)
+            log_debug(f"  Layer 'art': z=2, region={art_region}", "verbose")
+        else:
+            self.compositor.add_layer("art", z_index=2)
+            log_debug(f"  Layer 'art': z=2, fullscreen", "verbose")
+        
+        # Z4: Text layer (fullscreen for flexible positioning)
+        self.compositor.add_layer("text", z_index=4)
+        log_debug(f"  Layer 'text': z=4, fullscreen", "verbose")
+        
+        # Z5: Indicators layer
+        self.compositor.add_layer("indicators", z_index=5)
+        log_debug(f"  Layer 'indicators': z=5, fullscreen", "verbose")
+        
+        # Z6: Meta layer (time, type, sample)
+        self.compositor.add_layer("meta", z_index=6)
+        log_debug(f"  Layer 'meta': z=6, fullscreen", "verbose")
+        
+        # Store art position for layer-local coordinates
+        self.art_layer_offset = art_pos if art_pos else (0, 0)
+        
+        # =================================================================
+        # COMPONENT INITIALIZATION
+        # =================================================================
         
         # Create album art renderer (static for cassette)
         self.album_renderer = None
@@ -1168,9 +1219,7 @@ class CassetteHandler:
                 name="reel_left"
             )
             backing_rect = self.reel_left.get_backing_rect()
-            if backing_rect:
-                capture_rect("reel_left", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
-            log_debug(f"  ReelRenderer LEFT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer LEFT created (no backing)", "verbose")
+            log_debug(f"  ReelRenderer LEFT created, rect: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer LEFT created (no rect)", "verbose")
         
         if reel_right_file and reel_right_center:
             self.reel_right = ReelRenderer(
@@ -1188,33 +1237,29 @@ class CassetteHandler:
                 name="reel_right"
             )
             backing_rect = self.reel_right.get_backing_rect()
-            if backing_rect:
-                capture_rect("reel_right", (backing_rect.x, backing_rect.y), backing_rect.width, backing_rect.height)
-            log_debug(f"  ReelRenderer RIGHT created, backing: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer RIGHT created (no backing)", "verbose")
+            log_debug(f"  ReelRenderer RIGHT created, rect: x={backing_rect.x}, y={backing_rect.y}, w={backing_rect.width}, h={backing_rect.height}" if backing_rect else "  ReelRenderer RIGHT created (no rect)", "verbose")
         
-        # Calculate meter exclusion zone (area between reels where meters are drawn)
-        # This prevents reel backing restore from wiping meter bars
-        meter_exclusion_x_start = 0
-        meter_exclusion_x_end = self.SCREEN_WIDTH
+        # Create reels layer (Z1) based on actual reel bounding rects
+        reel_left_rect = self.reel_left.get_backing_rect() if self.reel_left else None
+        reel_right_rect = self.reel_right.get_backing_rect() if self.reel_right else None
         
-        if self.reel_left:
-            visual_rect = self.reel_left.get_visual_rect()
-            if visual_rect:
-                meter_exclusion_x_start = visual_rect.right
-                log_debug(f"  Meter exclusion: left boundary at x={meter_exclusion_x_start}", "verbose")
-        
-        if self.reel_right:
-            visual_rect = self.reel_right.get_visual_rect()
-            if visual_rect:
-                meter_exclusion_x_end = visual_rect.left
-                log_debug(f"  Meter exclusion: right boundary at x={meter_exclusion_x_end}", "verbose")
-        
-        if meter_exclusion_x_start < meter_exclusion_x_end:
-            self.meter_exclusion_zone = pg.Rect(meter_exclusion_x_start, 0,
-                                                meter_exclusion_x_end - meter_exclusion_x_start, self.SCREEN_HEIGHT)
-            log_debug(f"  Meter exclusion zone: x={self.meter_exclusion_zone.x} to {self.meter_exclusion_zone.right}", "verbose")
+        if reel_left_rect or reel_right_rect:
+            if reel_left_rect and reel_right_rect:
+                reels_region = reel_left_rect.union(reel_right_rect)
+            else:
+                reels_region = reel_left_rect or reel_right_rect
+            self.compositor.add_layer("reels", z_index=1, region=reels_region)
+            log_debug(f"  Layer 'reels': z=1, region={reels_region}", "verbose")
         else:
-            self.meter_exclusion_zone = None
+            self.compositor.add_layer("reels", z_index=1)
+            log_debug(f"  Layer 'reels': z=1, fullscreen (no reels defined)", "verbose")
+        
+        # Store reel layer offset for coordinate conversion
+        reels_layer = self.compositor.get_layer("reels")
+        self.reels_layer_offset = reels_layer.pos if reels_layer else (0, 0)
+        
+        # NOTE: Meter exclusion zone no longer needed with layer composition
+        # Layers prevent backing restore collisions entirely
         
         # Create indicator renderer
         self.indicator_renderer = None
@@ -1246,30 +1291,49 @@ class CassetteHandler:
         except Exception as e:
             print(f"[CassetteHandler] Failed to create IndicatorRenderer: {e}")
         
-        # Create scrollers
+        # Create scrollers (no backing capture needed - layer composition handles overlaps)
         self.artist_scroller = ScrollingLabel(artist_font, artist_color, artist_pos, artist_box, center=self.center_flag, speed_px_per_sec=scroll_speed_artist) if artist_pos else None
         self.title_scroller = ScrollingLabel(title_font, title_color, title_pos, title_box, center=self.center_flag, speed_px_per_sec=scroll_speed_title) if title_pos else None
         self.album_scroller = ScrollingLabel(album_font, album_color, album_pos, album_box, center=self.center_flag, speed_px_per_sec=scroll_speed_album) if album_pos else None
         
-        # Capture backing for scrollers
-        if self.artist_scroller:
-            self.artist_scroller.capture_backing(self.screen)
-        if self.title_scroller:
-            self.title_scroller.capture_backing(self.screen)
-        if self.album_scroller:
-            self.album_scroller.capture_backing(self.screen)
+        # LAYER COMPOSITION: Set background surface on scrollers for proper clearing
+        # This eliminates backing collision artifacts when text overlaps other content
+        if self.bgr_surface:
+            if self.artist_scroller:
+                self.artist_scroller.set_background_surface(self.bgr_surface)
+                self.artist_scroller.capture_backing(self.screen)  # Still capture rect for clearing bounds
+            if self.title_scroller:
+                self.title_scroller.set_background_surface(self.bgr_surface)
+                self.title_scroller.capture_backing(self.screen)
+            if self.album_scroller:
+                self.album_scroller.set_background_surface(self.bgr_surface)
+                self.album_scroller.capture_backing(self.screen)
         
-        # Capture backing for indicators
-        if self.indicator_renderer and self.indicator_renderer.has_indicators():
-            self.indicator_renderer.capture_backings(self.screen)
-            log_debug("[CassetteHandler] Indicator backings captured", "trace", "init")
+        # NOTE: No backing captures needed for scrollers/indicators
+        # Layer composition prevents all backing restore collisions
         
         # Now run meter to show initial needle positions
         self.meter.run()
         pg.display.update()
         
+        # LAYER COMPOSITION: Create rects for clearing time/type/sample areas
         # Type rect
         self.type_rect = pg.Rect(self.type_pos[0], self.type_pos[1], type_dim[0], type_dim[1]) if (self.type_pos and type_dim) else None
+        
+        # Time rect (for clearing from bgr_surface)
+        if self.time_pos and self.fontDigi:
+            time_width = self.fontDigi.size('00:00')[0] + 10
+            time_height = self.fontDigi.get_linesize()
+            self.time_rect = pg.Rect(self.time_pos[0], self.time_pos[1], time_width, time_height)
+        else:
+            self.time_rect = None
+        
+        # Sample rect (for clearing from bgr_surface)
+        if self.sample_pos and self.sample_box and self.sample_font:
+            sample_height = self.sample_font.get_linesize()
+            self.sample_rect = pg.Rect(self.sample_pos[0], self.sample_pos[1], self.sample_box, sample_height)
+        else:
+            self.sample_rect = None
         
         # Load foreground
         self.fgr_surf = None
@@ -1296,7 +1360,7 @@ class CassetteHandler:
         
         log_debug("--- Initialization Complete ---", "verbose")
         log_debug(f"  Renderers: album_art={'YES' if self.album_renderer else 'NO'}, reel_left={'YES' if self.reel_left else 'NO'}, reel_right={'YES' if self.reel_right else 'NO'}, indicators={'YES' if self.indicator_renderer and self.indicator_renderer.has_indicators() else 'NO'}", "verbose")
-        log_debug(f"  Backings captured: {len(self.backing_dict)} ({', '.join(self.backing_dict.keys())})", "verbose")
+        log_debug(f"  Layers: {len(self.compositor.layers)} ({', '.join(self.compositor.layers.keys())})", "verbose")
         log_debug(f"  Foreground: {'YES' if self.fgr_surf else 'NO'} ({len(self.fgr_regions) if self.fgr_regions else 0} regions)", "verbose")
     
     def _load_fonts(self, mc_vol):
@@ -1386,22 +1450,31 @@ class CassetteHandler:
                 self.screen.blit(bgr_surf, (meter_x, meter_y))
             except Exception as e:
                 print(f"[CassetteHandler] Failed to load bgr: {e}")
+        
+        # LAYER COMPOSITION: Store background surface for clearing
+        # This is the composited background AFTER screen.bgr + bgr are drawn
+        self.bgr_surface = self.screen.copy()
+        log_debug("  Background surface captured for layer composition", "verbose")
     
     def render(self, meta, now_ticks):
         """
-        Render one frame.
+        Render one frame using layer composition.
         
-        CASSETTE RENDER Z-ORDER (bottom to top):
-        1. Restore reel backings (if reels will animate)
-        2. Restore art backing (if reels will animate)
-        3. Render reels
-        4. Render album art
-        5. meter.run() - draws needles ON TOP of reels/art
-        6. Render text (FORCE when reels animate)
-        7. Render indicators (FORCE when reels animate)
-        8. Render time (FORCE when reels animate)
-        9. Render sample/icon (FORCE when reels animate)
-        10. Render fgr (topmost layer)
+        LAYER COMPOSITION ARCHITECTURE:
+        1. Components render to layer surfaces (transparent)
+        2. Compositor clears dirty areas from background
+        3. Compositor blits layer surfaces in z-order
+        4. No backing restore = no collision possible
+        
+        RENDER Z-ORDER:
+        Z0: Background (static on screen, used for clearing)
+        Z1: Reels layer
+        Z2: Art layer
+        --: Meters (direct to screen via meter.run())
+        Z4: Text layer
+        Z5: Indicators layer
+        Z6: Meta layer (time/type/sample)
+        Z7: Foreground mask (direct to screen)
         
         :param meta: Metadata dict
         :param now_ticks: pygame.time.get_ticks() value
@@ -1414,7 +1487,6 @@ class CassetteHandler:
             return []
         
         dirty_rects = []
-        bd = self.backing_dict
         
         # Extract metadata
         artist = meta.get("artist", "")
@@ -1461,47 +1533,46 @@ class CassetteHandler:
             album_url_changed = albumart != self.album_renderer._current_url
         
         # =================================================================
-        # PHASE 1: RESTORE BACKINGS
+        # LAYER COMPOSITION: Clear and render in z-order
         # =================================================================
+        # Instead of backing restore (which causes collisions), we:
+        # 1. Clear dirty regions from background surface
+        # 2. Render ALL overlapping content in z-order
+        # This eliminates backing collision artifacts
         
-        # Get meter exclusion zone (area to protect from reel backing wipe)
-        meter_excl = self.meter_exclusion_zone
+        # Collect regions that need clearing
+        clear_regions = []
         
-        # Reel backings (only if will draw) - CLIP to exclude meter zone
-        if left_will_blit and "reel_left" in bd:
-            r, b = bd["reel_left"]
-            if meter_excl and r.colliderect(meter_excl):
-                # Clip backing restore to exclude meter zone
-                # For left reel, only restore area to the LEFT of meter zone
-                clip_width = meter_excl.left - r.left
-                if clip_width > 0:
-                    clip_rect = pg.Rect(0, 0, clip_width, b.get_height())
-                    self.screen.blit(b, r.topleft, clip_rect)
-            else:
-                self.screen.blit(b, r.topleft)
+        # Reel regions need clearing when they animate
+        if left_will_blit and self.reel_left:
+            rect = self.reel_left.get_backing_rect()
+            if rect:
+                clear_regions.append(rect)
         
-        if right_will_blit and "reel_right" in bd:
-            r, b = bd["reel_right"]
-            if meter_excl and r.colliderect(meter_excl):
-                # Clip backing restore to exclude meter zone
-                # For right reel, only restore area to the RIGHT of meter zone
-                clip_x = meter_excl.right - r.left
-                if clip_x < b.get_width():
-                    clip_rect = pg.Rect(clip_x, 0, b.get_width() - clip_x, b.get_height())
-                    self.screen.blit(b, (r.left + clip_x, r.top), clip_rect)
-            else:
-                self.screen.blit(b, r.topleft)
+        if right_will_blit and self.reel_right:
+            rect = self.reel_right.get_backing_rect()
+            if rect:
+                clear_regions.append(rect)
         
-        # Art backing (only if reels animate or URL changed)
-        if (force_flag or album_url_changed) and "art" in bd:
-            r, b = bd["art"]
-            self.screen.blit(b, r.topleft)
+        # Art region needs clearing when URL changes or reels force redraw
+        if (force_flag or album_url_changed) and self.album_renderer:
+            rect = self.album_renderer.get_backing_rect()
+            if rect:
+                clear_regions.append(rect)
+        
+        # Clear all dirty regions from background
+        if clear_regions and self.bgr_surface:
+            for region in clear_regions:
+                # Blit from background surface to clear this region
+                self.screen.blit(self.bgr_surface, region.topleft, region)
         
         # =================================================================
-        # PHASE 2: RENDER LAYERS
+        # RENDER ALL LAYERS IN Z-ORDER
         # =================================================================
+        # After clearing, render everything that overlaps in proper z-order
+        # This ensures no content is wiped by stale backing
         
-        # LAYER 2: Reels (draw BEFORE meters so meters appear on top)
+        # Z1: Reels (draw BEFORE meters so meters appear on top)
         if self.reel_left and left_will_blit:
             rect = self.reel_left.render(self.screen, status, now_ticks, volatile=volatile)
             if rect:
@@ -1573,8 +1644,12 @@ class CassetteHandler:
                 dirty_rects.append(rect)
         
         # LAYER 6: Indicators (FORCE when reels animate)
+        # NOTE: skip_restore=True because:
+        # - Procedural indicators (volume bars) self-clear with bg_color
+        # - Icon indicators fully overwrite their area
+        # - This eliminates backing collision artifacts
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
-            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=force_flag)
+            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=force_flag, skip_restore=True)
         
         # LAYER 7: Time remaining (FORCE when reels animate)
         if self.time_pos:
@@ -1602,10 +1677,10 @@ class CassetteHandler:
                 if needs_redraw:
                     self.last_time_str = time_str
                     
-                    if "time" in bd:
-                        r, b = bd["time"]
-                        self.screen.blit(b, r.topleft)
-                        dirty_rects.append(r.copy())
+                    # LAYER COMPOSITION: Clear from bgr_surface
+                    if self.bgr_surface and self.time_rect:
+                        self.screen.blit(self.bgr_surface, self.time_rect.topleft, self.time_rect)
+                        dirty_rects.append(self.time_rect.copy())
                     
                     if 0 < display_sec <= 10:
                         t_color = (242, 0, 0)
@@ -1627,9 +1702,9 @@ class CassetteHandler:
             if needs_redraw:
                 self.last_track_type = fmt
                 
-                if "type" in bd:
-                    r, b = bd["type"]
-                    self.screen.blit(b, r.topleft)
+                # LAYER COMPOSITION: Clear from bgr_surface
+                if self.bgr_surface and self.type_rect:
+                    self.screen.blit(self.bgr_surface, self.type_rect.topleft, self.type_rect)
                 
                 # Check for icon file
                 file_path = os.path.dirname(__file__)
@@ -1697,10 +1772,10 @@ class CassetteHandler:
             if needs_redraw:
                 self.last_sample_text = sample_text
                 
-                if "sample" in bd:
-                    r, b = bd["sample"]
-                    self.screen.blit(b, r.topleft)
-                    dirty_rects.append(r.copy())
+                # LAYER COMPOSITION: Clear from bgr_surface
+                if self.bgr_surface and self.sample_rect:
+                    self.screen.blit(self.bgr_surface, self.sample_rect.topleft, self.sample_rect)
+                    dirty_rects.append(self.sample_rect.copy())
                 
                 self.last_sample_surf = self.sample_font.render(sample_text, True, self.type_color)
                 
@@ -1735,3 +1810,7 @@ class CassetteHandler:
         self.artist_scroller = None
         self.title_scroller = None
         self.album_scroller = None
+        self.bgr_surface = None
+        if self.compositor:
+            self.compositor.cleanup()
+            self.compositor = None
