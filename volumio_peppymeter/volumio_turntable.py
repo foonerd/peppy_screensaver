@@ -434,6 +434,19 @@ class ScrollingLabel:
         if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
             log_debug(f"[Scrolling] FORCE: text='{self.text[:20]}...', pos={self.pos}", "trace", "scrolling")
 
+    def get_rect(self):
+        """Get bounding rectangle for this scroller.
+        
+        Used for overlap detection in surgical force logic.
+        Returns the backing rect if captured, otherwise computes from position.
+        """
+        if self._backing_rect:
+            return self._backing_rect
+        if self.pos and self.box_width > 0 and self.font:
+            height = self.font.get_linesize()
+            return pg.Rect(self.pos[0], self.pos[1], self.box_width, height)
+        return None
+
     def draw(self, surface):
         """Draw label, handling scroll animation with self-backing.
         Returns dirty rect if drawn, None if skipped.
@@ -2234,13 +2247,34 @@ class TurntableHandler:
             elif hasattr(meter_rects, 'x'):
                 dirty_rects.append(meter_rects)
         
-        # Z4: Text fields (FORCE when animated elements change)
-        if force_flag:
-            if self.artist_scroller:
+        # =================================================================
+        # SURGICAL OVERLAP DETECTION
+        # =================================================================
+        # Only force components that actually overlap cleared regions.
+        # This is anti-collision compliant AND efficient.
+        def overlaps_cleared(component_rect):
+            """Check if component_rect overlaps any cleared region."""
+            if not component_rect or not clear_regions:
+                return False
+            for region in clear_regions:
+                if region and component_rect.colliderect(region):
+                    return True
+            return False
+        
+        # Z4: Text fields - only force if they overlap cleared regions
+        if self.artist_scroller:
+            scroller_rect = self.artist_scroller.get_rect()
+            if overlaps_cleared(scroller_rect):
                 self.artist_scroller.force_redraw()
-            if self.title_scroller:
+        
+        if self.title_scroller:
+            scroller_rect = self.title_scroller.get_rect()
+            if overlaps_cleared(scroller_rect):
                 self.title_scroller.force_redraw()
-            if self.album_scroller:
+        
+        if self.album_scroller:
+            scroller_rect = self.album_scroller.get_rect()
+            if overlaps_cleared(scroller_rect):
                 self.album_scroller.force_redraw()
         
         if self.artist_scroller:
@@ -2265,16 +2299,20 @@ class TurntableHandler:
                 dirty_rects.append(rect)
         
         # Z5: Tonearm (render AFTER scrollers)
+        # Always render when force_flag is set (tonearm is part of animated elements)
         if self.tonearm_renderer and force_flag:
             rect = self.tonearm_renderer.render(self.screen, now_ticks, force=True)
             if rect:
                 dirty_rects.append(rect)
         
-        # Z6: Indicators
-        # Indicators captured backing from bgr_surface (clean static background)
-        # Use skip_restore=False to restore backing before drawing (clears old positions)
+        # Z6: Indicators - only force if they overlap cleared regions
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
-            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=force_flag, skip_restore=False)
+            indicator_force = False
+            for ind_rect in self.indicator_renderer.get_all_rects():
+                if overlaps_cleared(ind_rect):
+                    indicator_force = True
+                    break
+            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=indicator_force, skip_restore=False)
         
         # Z7: Time remaining (FORCE when animated elements change)
         if self.time_pos:
@@ -2329,9 +2367,10 @@ class TurntableHandler:
                 secs = display_sec % 60
                 time_str = f"{mins:02d}:{secs:02d}"
                 
-                # Force redraw when animated elements change (may overlap time area)
+                # Force redraw when animated elements overlap time area
                 # or if time string changed
-                needs_redraw = time_str != self.last_time_str or force_flag
+                time_overlaps = overlaps_cleared(self.time_rect) if self.time_rect else False
+                needs_redraw = time_str != self.last_time_str or time_overlaps
                 
                 if needs_redraw:
                     self.last_time_str = time_str
@@ -2355,14 +2394,15 @@ class TurntableHandler:
                     if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
                         log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {self.time_pos}, color={t_color}", "trace", "time")
         
-        # LAYER: Sample rate / format icon (FORCE when animated elements change)
+        # LAYER: Sample rate / format icon - only force if overlapping cleared regions
         # Format icon
         if self.type_rect:
             fmt = (track_type or "").strip().lower().replace(" ", "_")
             if fmt == "dsf":
                 fmt = "dsd"
             
-            needs_redraw = fmt != self.last_track_type or force_flag
+            type_overlaps = overlaps_cleared(self.type_rect)
+            needs_redraw = fmt != self.last_track_type or type_overlaps
             
             if needs_redraw:
                 self.last_track_type = fmt
@@ -2428,13 +2468,14 @@ class TurntableHandler:
                 
                 dirty_rects.append(self.type_rect.copy())
         
-        # Sample rate (FORCE when animated elements change)
+        # Sample rate - only force if overlapping cleared regions
         if self.sample_pos and self.sample_box:
             sample_text = f"{samplerate} {bitdepth}".strip()
             if not sample_text:
                 sample_text = bitrate.strip() if bitrate else ""
             
-            needs_redraw = (sample_text and sample_text != self.last_sample_text) or force_flag
+            sample_overlaps = overlaps_cleared(self.sample_rect) if self.sample_rect else False
+            needs_redraw = (sample_text and sample_text != self.last_sample_text) or sample_overlaps
             
             if needs_redraw and sample_text:
                 self.last_sample_text = sample_text
