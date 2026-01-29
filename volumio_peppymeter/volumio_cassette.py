@@ -16,6 +16,7 @@ import os
 import io
 import math
 import time
+import time as time_module
 import requests
 import pygame as pg
 
@@ -43,7 +44,7 @@ from configfileparser import (
 )
 
 from volumio_configfileparser import (
-    EXTENDED_CONF,
+    EXTENDED_CONF, METER_DELAY,
     ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
     REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
@@ -967,6 +968,12 @@ class CassetteHandler:
         self.last_format_icon_surf = None
         
         log_debug("CassetteHandler initialized", "basic")
+        
+        # Performance: meter timing delay (configurable, affects CPU usage)
+        # Higher values = lower CPU but meters may feel sluggish
+        # Lower values = higher CPU but more responsive meters
+        self.meter_delay_ms = max(0, min(20, meter_config_volumio.get(METER_DELAY, 10)))
+        self.meter_delay_sec = self.meter_delay_ms / 1000.0
     
     def init_for_meter(self, meter_name):
         """Initialize handler for a specific meter."""
@@ -1575,6 +1582,16 @@ class CassetteHandler:
                 # Blit from background surface to clear this region
                 self.screen.blit(self.bgr_surface, region.topleft, region)
         
+        # PERFORMANCE: Helper to check if component overlaps any cleared region
+        # Only force redraw components that actually need it
+        def overlaps_cleared(component_rect):
+            if not component_rect or not clear_regions:
+                return False
+            for region in clear_regions:
+                if region and component_rect.colliderect(region):
+                    return True
+            return False
+        
         # =================================================================
         # RENDER ALL LAYERS IN Z-ORDER
         # =================================================================
@@ -1622,13 +1639,16 @@ class CassetteHandler:
             elif hasattr(meter_rects, 'x'):
                 dirty_rects.append(meter_rects)
         
-        # LAYER 5: Text fields (FORCE when reels animate)
-        if force_flag:
-            if self.artist_scroller:
+        # LAYER 5: Text fields - smart forcing based on overlap with cleared regions
+        # PERFORMANCE FIX: Only force scrollers that actually overlap reel areas
+        if self.artist_scroller:
+            if overlaps_cleared(self.artist_scroller._backing_rect):
                 self.artist_scroller.force_redraw()
-            if self.title_scroller:
+        if self.title_scroller:
+            if overlaps_cleared(self.title_scroller._backing_rect):
                 self.title_scroller.force_redraw()
-            if self.album_scroller:
+        if self.album_scroller:
+            if overlaps_cleared(self.album_scroller._backing_rect):
                 self.album_scroller.force_redraw()
         
         if self.artist_scroller:
@@ -1662,7 +1682,6 @@ class CassetteHandler:
         
         # LAYER 7: Time remaining (FORCE when reels animate)
         if self.time_pos:
-            import time as time_module
             current_time = time_module.time()
             
             # Check for persist file (countdown mode for external control)
@@ -1737,8 +1756,9 @@ class CassetteHandler:
                     if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
                         log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {self.time_pos}, color={t_color}", "trace", "time")
         
-        # LAYER 8: Sample rate / format icon (FORCE when reels animate)
-        # Format icon
+        # LAYER 8: Sample rate / format icon
+        # PERFORMANCE FIX: Separate format CHANGE (expensive) from force BLIT (cheap)
+        # Profiler showed 46% CPU wasted reloading/scaling/colorizing icon every frame
         if self.type_rect:
             fmt = (track_type or "").strip().lower().replace(" ", "_")
             if fmt == "dsf":
@@ -1781,14 +1801,12 @@ class CassetteHandler:
             if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("metadata", False):
                 log_debug(f"[FormatIcon] INPUT: track_type='{track_type}', fmt_normalized='{fmt_before}', fmt_mapped='{fmt}'", "trace", "metadata")
             
-            needs_redraw = fmt != self.last_track_type or force_flag
+            # Only reload icon when format actually changes (once per track)
+            format_changed = fmt != self.last_track_type
             
-            if needs_redraw:
+            if format_changed:
                 self.last_track_type = fmt
-                
-                # LAYER COMPOSITION: Clear from bgr_surface
-                if self.bgr_surface and self.type_rect:
-                    self.screen.blit(self.bgr_surface, self.type_rect.topleft, self.type_rect)
+                self.last_format_icon_surf = None  # Clear cache
                 
                 # Check for icon file
                 file_path = os.path.dirname(__file__)
@@ -1800,10 +1818,8 @@ class CassetteHandler:
                 
                 if not os.path.exists(icon_path):
                     # Render text fallback
-                    if self.sample_font:
-                        txt_surf = self.sample_font.render(fmt[:4], True, self.type_color)
-                        self.screen.blit(txt_surf, (self.type_rect.x, self.type_rect.y))
-                        self.last_format_icon_surf = txt_surf
+                    if self.sample_font and fmt:
+                        self.last_format_icon_surf = self.sample_font.render(fmt[:4], True, self.type_color)
                 else:
                     try:
                         if pg.version.ver.startswith("2"):
@@ -1816,33 +1832,31 @@ class CassetteHandler:
                                 img = pg.transform.smoothscale(img, new_size)
                             except Exception:
                                 img = pg.transform.scale(img, new_size)
-                            # Convert to format suitable for pixel manipulation
                             img = img.convert_alpha()
-                            # FIXED: Colorize icon to match skin theme
                             set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
-                            # FIXED: Center icon in type_rect
-                            dx = self.type_rect.x + (self.type_rect.width - img.get_width()) // 2
-                            dy = self.type_rect.y + (self.type_rect.height - img.get_height()) // 2
-                            self.screen.blit(img, (dx, dy))
                             self.last_format_icon_surf = img
                         elif CAIROSVG_AVAILABLE and PIL_AVAILABLE:
-                            # Pygame 1.x with cairosvg - FIXED: proper conversion path
                             png_bytes = cairosvg.svg2png(url=icon_path, 
                                                           output_width=self.type_rect.width,
                                                           output_height=self.type_rect.height)
                             pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
                             img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
                             img = img.convert_alpha()
-                            # FIXED: Colorize icon
                             set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
-                            # FIXED: Center icon
-                            dx = self.type_rect.x + (self.type_rect.width - img.get_width()) // 2
-                            dy = self.type_rect.y + (self.type_rect.height - img.get_height()) // 2
-                            self.screen.blit(img, (dx, dy))
                             self.last_format_icon_surf = img
                     except Exception as e:
                         print(f"[FormatIcon] error: {e}")
+            
+            # Blit cached icon when format changed OR when force_flag (reel overlap)
+            if (format_changed or force_flag) and self.last_format_icon_surf:
+                # Clear from bgr_surface
+                if self.bgr_surface:
+                    self.screen.blit(self.bgr_surface, self.type_rect.topleft, self.type_rect)
                 
+                # Center and blit cached icon
+                dx = self.type_rect.x + (self.type_rect.width - self.last_format_icon_surf.get_width()) // 2
+                dy = self.type_rect.y + (self.type_rect.height - self.last_format_icon_surf.get_height()) // 2
+                self.screen.blit(self.last_format_icon_surf, (dx, dy))
                 dirty_rects.append(self.type_rect.copy())
         
         # Sample rate
@@ -1881,6 +1895,11 @@ class CassetteHandler:
                             break
             else:
                 self.screen.blit(self.fgr_surf, self.fgr_pos)
+        
+        # Performance: meter timing delay for audio buffer accumulation
+        # Prevents render loop from spinning too fast when reels animate
+        if self.meter_delay_sec > 0:
+            time_module.sleep(self.meter_delay_sec)
         
         return dirty_rects
     
