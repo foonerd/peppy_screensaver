@@ -88,6 +88,8 @@
     "FRAME_RATE_DOC":"Display refresh rate in frames per second (FPS).<br /><br /><b>Default: 30</b><br /><br />Lower values reduce CPU usage but may appear less smooth.<br />Recommended: 20-30 for Pi 4, 15-20 for Pi 3",
     "UPDATE_INTERVAL":"Update interval",
     "UPDATE_INTERVAL_DOC":"Spectrum and needle update frequency.<br /><br /><b>Default: 2</b> (updates every 2nd frame)<br /><br />Higher values reduce CPU usage but decrease visual responsiveness.<br />At 30 FPS with interval 2: 15 updates/sec<br />At 20 FPS with interval 3: 6.7 updates/sec",
+    "METER_DELAY":"Meter timing delay (ms)",
+    "METER_DELAY_DOC":"Delay between render frames in milliseconds.<br /><br /><b>Default: 10</b><br /><br />This setting balances CPU usage and meter responsiveness.<br /><br /><b>Higher values (10-20):</b> Lower CPU usage, meters may feel slightly sluggish<br /><b>Lower values (0-5):</b> Higher CPU usage, more responsive meters<br /><br /><span style='color:orange'><b>Warning:</b></span> Values below 10 can significantly increase CPU usage (up to 95%).<br />Recommended: 10ms for most systems.",
     "DEBUG_LEVEL":"Debug logging",
     "DEBUG_LEVEL_DOC":"Enable debug logging to /tmp/peppy_debug.log.<br /><br /><b>Off:</b> No logging (recommended for normal use)<br /><b>Basic:</b> Essential events and errors<br /><b>Verbose:</b> Detailed information for troubleshooting",
     "DEBUG_OFF":"Off",

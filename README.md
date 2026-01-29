@@ -96,29 +96,47 @@ The plugin settings are organized into sections:
 | Smooth Buffer | Audio smoothing buffer size |
 | Needle Cache | Cache rotated needle images (reduces CPU, uses more RAM) |
 
-### Playback Behavior
+### VU-Meter Settings
 
-Controls display persistence during pause and track changes.
+Template/meter selection and randomization options.
 
-| Setting | Options | Default | Description |
-|---------|---------|---------|-------------|
-| Keep display active | Disabled/5s/15s/30s/1min/2min/5min | 30s | Delay before display turns off after pause/stop |
-| Time display during persist | Freeze/Countdown | Freeze | What to show in time area when paused |
-
-**Keep display active:** Prevents screen flicker during track changes by keeping the display running briefly after playback stops. Volumio sends stop-play sequence on next/prev, causing visible restart without this delay.
-
-**Time display modes:**
-- **Freeze**: Shows track time at moment of pause (default)
-- **Countdown**: Shows time until display turns off (orange color)
+| Setting | Description |
+|---------|-------------|
+| Meter Selection | Select specific meter or use random/list mode |
+| Random Selection | Comma-separated list of meters for list mode |
+| Random Mode | Trigger: on title change or at interval |
+| Random Interval | Seconds between random meter changes (15-1000) |
 
 ### Performance Settings
 
-Frame rate and update intervals.
+Frame rate, update intervals, and CPU tuning.
 
 | Setting | Range | Default | Description |
 |---------|-------|---------|-------------|
 | Frame Rate | 10-60 | 30 | Display refresh rate (FPS). Lower = less CPU |
 | Update Interval | 1-10 | 2 | Spectrum/needle updates per N frames. Higher = less CPU |
+| Meter Timing Delay | 0-20 | 10 | Render loop delay in milliseconds. See below for details |
+
+**Meter Timing Delay:** Controls the pause between render frames. This setting balances CPU usage and meter responsiveness:
+
+- **10ms (default)**: Good balance of CPU (~80-85%) and responsive meters
+- **15-20ms**: Lower CPU usage, meters may feel slightly sluggish  
+- **0-5ms**: Higher CPU usage (up to 95%), more responsive meters
+
+**Warning:** Values below 10ms can significantly increase CPU usage. Not recommended for Pi 3 or systems with thermal constraints.
+
+### Rotation Settings
+
+Album art and cassette spool rotation speed and quality.
+
+| Setting | Range | Default | Description |
+|---------|-------|---------|-------------|
+| Rotation Quality | Low/Medium/High/Custom | Medium | Rotation smoothness vs CPU usage |
+| Rotation FPS | 4-30 | 8 | Custom rotation update rate |
+| Vinyl Rotation Speed | 0.1-5.0 | 1.0 | Album art rotation multiplier |
+| Left Spool Speed | 0.1-5.0 | 1.0 | Left cassette reel multiplier |
+| Right Spool Speed | 0.1-5.0 | 1.0 | Right cassette reel multiplier |
+| Reel Rotation Direction | CCW/CW | CCW | Cassette reel rotation direction |
 
 ### Scrolling Settings
 
@@ -147,18 +165,20 @@ Fade transitions between meters and playback states.
 | Transition Color | Black/White | Black | Fade overlay color |
 | Transition Opacity | 0-100 | 100 | Fade overlay opacity percentage |
 
-### Rotation Settings
+### Playback Behavior
 
-Album art and cassette spool rotation speed and quality.
+Controls display persistence during pause and track changes.
 
-| Setting | Range | Default | Description |
-|---------|-------|---------|-------------|
-| Rotation Quality | Low/Medium/High/Custom | Medium | Rotation smoothness vs CPU usage |
-| Rotation FPS | 4-30 | 8 | Custom rotation update rate |
-| Vinyl Rotation Speed | 0.1-5.0 | 1.0 | Album art rotation multiplier |
-| Left Spool Speed | 0.1-5.0 | 1.0 | Left cassette reel multiplier |
-| Right Spool Speed | 0.1-5.0 | 1.0 | Right cassette reel multiplier |
-| Reel Rotation Direction | CCW/CW | CCW | Cassette reel rotation direction |
+| Setting | Options | Default | Description |
+|---------|---------|---------|-------------|
+| Keep display active | Disabled/5s/15s/30s/1min/2min/5min | 30s | Delay before display turns off after pause/stop |
+| Time display during persist | Freeze/Countdown | Freeze | What to show in time area when paused |
+
+**Keep display active:** Prevents screen flicker during track changes by keeping the display running briefly after playback stops. Volumio sends stop-play sequence on next/prev, causing visible restart without this delay.
+
+**Time display modes:**
+- **Freeze**: Shows track time at moment of pause (default)
+- **Countdown**: Shows time until display turns off (orange color)
 
 ### Debug Settings
 
@@ -201,6 +221,23 @@ When **Trace** is selected, additional switches appear to enable logging for spe
 
 All trace switches default to OFF and persist independently.
 
+### Profiling
+
+Performance analysis tools for developers and advanced users.
+
+| Setting | Range | Default | Description |
+|---------|-------|---------|-------------|
+| Timing Profiling | On/Off | Off | Log render loop timing to debug log |
+| Timing Interval | 1-1000 | 30 | Frames between timing reports |
+| cProfile Profiling | On/Off | Off | Enable Python cProfile for detailed analysis |
+| cProfile Duration | 0-3600 | 60 | Seconds to run profiler before writing results |
+
+**Timing Profiling:** Logs frame timing statistics (min/max/avg render time) to the debug log at the specified interval. Useful for identifying performance issues.
+
+**cProfile Profiling:** Runs Python's cProfile module for detailed function-level timing. Results are written to `/tmp/peppy_profile.txt` after the specified duration. Use for deep performance analysis.
+
+**Note:** Both profiling options add overhead. Disable after troubleshooting.
+
 ## Performance Tuning
 
 ### Tuning Guide
@@ -208,17 +245,21 @@ All trace switches default to OFF and persist independently.
 **Pi 4/5 (recommended settings):**
 - Frame rate: 30 FPS
 - Update interval: 2
-- Expected CPU: 15-25%
+- Meter timing delay: 10ms
+- Expected CPU: 15-25% (basic), 80-85% (turntable)
 
 **Pi 3B (conservative settings):**
 - Frame rate: 20 FPS
 - Update interval: 3
+- Meter timing delay: 15ms
 - Expected CPU: 25-35%
 
 **High CPU / thermal issues:**
 - Reduce frame rate to 15-20
 - Increase update interval to 3-4
+- Increase meter timing delay to 15-20ms
 - Use 800x480 resolution templates
+- Avoid turntable templates with rotation
 
 ### Optimization Details
 
@@ -228,11 +269,19 @@ v3.2.0+ includes several CPU optimizations:
 - **Skip-if-unchanged**: Needle animation skips frames when volume is static
 - **Configurable throttling**: UI-adjustable frame rate and update intervals
 
-These optimizations reduce CPU usage by 30-50% compared to earlier versions.
+v3.2.1+ adds turntable-specific optimizations:
+
+- **Vinyl + album art composite**: Album art is composited onto vinyl surface once per track change, then rotated as a single unit (like a real LP). Reduces per-frame blits by ~50%
+- **Precomputed rotation frames**: Tonearm rotation frames are precomputed at load time, eliminating per-frame rotation calculations
+- **Configurable meter timing delay**: Adjustable render loop delay (0-20ms) balances CPU usage and meter responsiveness
+
+These optimizations reduce turntable template CPU usage from 100%+ to 80-85% on Pi 5.
 
 ### Expected CPU Usage
 
-At default settings (30 FPS, update interval 2):
+At default settings (30 FPS, update interval 2, meter delay 10ms):
+
+**Basic/Spectrum templates:**
 
 | Resolution | Pi 5 | Pi 4 | Pi 3B | x64 |
 |------------|------|------|-------|-----|
@@ -240,6 +289,16 @@ At default settings (30 FPS, update interval 2):
 | 1024x600 | 12-18% | 18-25% | 30-40% | 1-2% |
 | 1280x720 | 20-30% | 30-40% | Not recommended | 1-2% |
 | 1920x1080 | 30-40% | 40-55% | Not recommended | 2-3% |
+
+**Turntable templates (with vinyl/art rotation):**
+
+| Resolution | Pi 5 | Pi 4 | Pi 3B | x64 |
+|------------|------|------|-------|-----|
+| 800x480 | 50-60% | 60-70% | Not recommended | 5-10% |
+| 1280x720 | 80-85% | 85-95% | Not recommended | 10-15% |
+
+Turntable templates are more CPU-intensive due to continuous rotation rendering.
+Use basic templates on Pi 3 or systems with thermal constraints.
 
 CPU usage can be reduced further by lowering frame rate and increasing update interval.
 
@@ -550,10 +609,12 @@ If CPU usage is higher than expected:
 1. **Adjust Performance Settings** (Settings > Plugins > PeppyMeter > Performance):
    - Reduce frame rate to 20 FPS
    - Increase update interval to 3 or 4
+   - Increase meter timing delay to 15-20ms
 2. Verify NEON is enabled (see above)
 3. Use a lower resolution meter template (800x480 recommended for Pi 3)
-4. Disable spectrum visualization if not needed
-5. Disable album art rotation if enabled
+4. Use basic templates instead of turntable templates (no rotation overhead)
+5. Disable spectrum visualization if not needed
+6. Disable album art rotation if enabled
 
 ## Directory Structure
 

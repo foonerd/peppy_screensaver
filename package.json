@@ -1,6 +1,6 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.2.0 - Architecure change - coordinator with targetted handlers."
+    "changelog": "3.2.1 - UI section reorder, turntable CPU optimization, configurable meter timing delay."
   },
   "engines": {
     "node": ">=20",

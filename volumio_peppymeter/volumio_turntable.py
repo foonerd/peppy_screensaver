@@ -52,7 +52,8 @@ from volumio_configfileparser import (
     PLAY_SAMPLE_POS, PLAY_SAMPLE_STYLE, PLAY_SAMPLE_MAX,
     TIME_REMAINING_POS, TIMECOLOR,
     FONTSIZE_LIGHT, FONTSIZE_REGULAR, FONTSIZE_BOLD, FONTSIZE_DIGI, FONTCOLOR,
-    FONT_STYLE_B, FONT_STYLE_R, FONT_STYLE_L
+    FONT_STYLE_B, FONT_STYLE_R, FONT_STYLE_L,
+    METER_DELAY
 )
 
 # Vinyl configuration constants
@@ -1680,6 +1681,12 @@ class TurntableHandler:
         self.enabled = False
         self.dirty_rects = []
         
+        # Performance: meter timing delay (configurable, affects CPU usage)
+        # Higher values = lower CPU but meters may feel sluggish
+        # Lower values = higher CPU but more responsive meters
+        self.meter_delay_ms = max(0, min(20, self.global_config.get(METER_DELAY, 10)))
+        self.meter_delay_sec = self.meter_delay_ms / 1000.0  # Convert to seconds for time.sleep()
+        
         # Background surface for layer composition
         self.bgr_surface = None
         
@@ -2403,20 +2410,19 @@ class TurntableHandler:
             elif hasattr(meter_rects, 'x'):
                 dirty_rects.append(meter_rects)
         
-        # TIMING FIX: Precomputed rotation frames make render loop complete very fast.
-        # This can cause meter.run() to be called before the audio data source has
-        # new samples, resulting in stuck needles.
+        # TIMING FIX: Optimizations (precomputed frames, vinyl+art composite) make
+        # the render loop complete very fast. This can cause meter.run() to be called
+        # before the audio data source has new samples, resulting in stuck needles.
         # 
-        # ORIGINAL: Only static art templates needed delay (rotation was slow).
-        # WITH PRECOMPUTED FRAMES: All templates need delay (frame lookup is instant).
-        # 
-        # Apply 10ms delay after meter.run() to let audio buffer accumulate samples.
-        # MONITOR: 10ms tuned on Pi5. Adjust if meters sluggish (reduce) or freeze (increase).
-        if USE_PRECOMPUTED_FRAMES:
-            if not getattr(self, '_precompute_delay_logged', False):
-                log_debug("Precomputed frames in use - adding 10ms delay after meter.run() for audio buffer", "basic")
-                self._precompute_delay_logged = True
-            time.sleep(0.010)  # 10ms delay for audio data source
+        # The meter_delay setting (UI configurable, 0-20ms, default 10ms) controls
+        # the balance between CPU usage and meter responsiveness:
+        # - Higher values (10-20): Lower CPU, meters may feel slightly sluggish
+        # - Lower values (0-5): Higher CPU (up to 95%), more responsive meters
+        if self.meter_delay_sec > 0:
+            if not getattr(self, '_meter_delay_logged', False):
+                log_debug(f"Meter timing delay: {self.meter_delay_ms}ms (configurable in Performance Settings)", "basic")
+                self._meter_delay_logged = True
+            time.sleep(self.meter_delay_sec)
         
         # =================================================================
         # SURGICAL OVERLAP DETECTION

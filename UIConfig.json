@@ -238,78 +238,6 @@
                             ]
                 },
                 {
-                "id": "playback_conf",
-                "element": "section",
-                "label": "TRANSLATE.PEPPY_SCREENSAVER.PLAYBACK_CONF",
-                "description": "TRANSLATE.PEPPY_SCREENSAVER.PLAYBACK_DESC",
-                "icon": "fa-play-circle",
-                "hidden": false,
-                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"savePlaybackConf"},
-                "saveButton": {
-                              "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
-                              "data": [
-                                      "persist_duration",
-                                      "persist_display"
-                                      ]
-                              },
-                "content": [
-                            {
-                             "id": "persist_duration",
-                             "element": "select",
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DURATION_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DURATION",
-                             "value": {"value": "30", "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_30" },
-                               "options": [
-                                 {
-                                    "value": "0",
-                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISABLED"
-                                 },
-                                 {
-                                    "value": "5",
-                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_5"
-                                 },
-                                 {
-                                    "value": "15",
-                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_15"
-                                 },
-                                 {
-                                    "value": "30",
-                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_30"
-                                 },
-                                 {
-                                    "value": "60",
-                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_60"
-                                 },
-                                 {
-                                    "value": "120",
-                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_120"
-                                 },
-                                 {
-                                    "value": "300",
-                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_300"
-                                 }
-                               ]
-                            },
-                            {
-                             "id": "persist_display",
-                             "element": "select",
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY",
-                             "value": {"value": "freeze", "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE" },
-                               "options": [
-                                 {
-                                    "value": "freeze",
-                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE"
-                                 },
-                                 {
-                                    "value": "countdown",
-                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_COUNTDOWN"
-                                 }
-                               ]
-                            }
-                           ]
-                },
-                {
                 "id": "VUmeter_conf",
                 "element": "section",
                 "label": "TRANSLATE.PEPPY_SCREENSAVER.VUMETER_CONF",
@@ -400,7 +328,8 @@
                               "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
                               "data": [
                                       "frameRate",
-                                      "updateInterval"
+                                      "updateInterval",
+                                      "meterDelay"
                                       ]
                               },
                 "content": [
@@ -431,6 +360,126 @@
                                              {"max": 10}
                                            ],
                              "value": 2
+                            },
+                            {
+                             "id": "meterDelay",
+                             "element": "input",
+                             "type": "number",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.METER_DELAY_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.METER_DELAY",
+                             "attributes": [
+                                             {"placeholder": 10},
+                                             {"maxlength": 2},
+                                             {"min": 0},
+                                             {"max": 20}
+                                           ],
+                             "value": 10
+                            }
+                            ]
+                },
+                {
+                "id": "rotation_conf",
+                "element": "section",
+                "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_CONF",
+                "description": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_DESC",
+                "icon": "fa-refresh",
+                "hidden": false,
+                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"saveRotationConf"},
+                "saveButton": {
+                              "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
+                              "data": [
+                                      "rotationQuality",
+                                      "rotationFPS",
+                                      "rotationSpeed",
+                                      "spoolLeftSpeed",
+                                      "spoolRightSpeed",
+                                      "reelDirection"
+                                      ]
+                              },
+                "content": [
+                            {
+                             "id": "rotationQuality",
+                             "element": "select",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_QUALITY_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_QUALITY",
+                             "value": {"value": "medium", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_MEDIUM"},
+                             "options": [
+                                          {"value": "low", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_LOW"},
+                                          {"value": "medium", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_MEDIUM"},
+                                          {"value": "high", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_HIGH"},
+                                          {"value": "custom", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_CUSTOM"}
+                                        ]
+                            },
+                            {
+                             "id": "rotationFPS",
+                             "element": "input",
+                             "type": "number",
+                             "visibleIf": {"field": "rotationQuality", "value": "custom"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_FPS_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_FPS",
+                             "attributes": [
+                                             {"placeholder": "8"},
+                                             {"maxlength": 2},
+                                             {"min": 4},
+                                             {"max": 30}
+                                           ],
+                             "value": 8
+                            },
+                            {
+                             "id": "rotationSpeed",
+                             "element": "input",
+                             "type": "number",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_SPEED_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_SPEED",
+                             "attributes": [
+                                             {"placeholder": "1.0"},
+                                             {"maxlength": 4},
+                                             {"min": 0.1},
+                                             {"max": 5.0},
+                                             {"step": 0.1}
+                                           ],
+                             "value": 1.0
+                            },
+                            {
+                             "id": "spoolLeftSpeed",
+                             "element": "input",
+                             "type": "number",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_LEFT_SPEED_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_LEFT_SPEED",
+                             "attributes": [
+                                             {"placeholder": "1.0"},
+                                             {"maxlength": 4},
+                                             {"min": 0.1},
+                                             {"max": 5.0},
+                                             {"step": 0.1}
+                                           ],
+                             "value": 1.0
+                            },
+                            {
+                             "id": "spoolRightSpeed",
+                             "element": "input",
+                             "type": "number",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_RIGHT_SPEED_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_RIGHT_SPEED",
+                             "attributes": [
+                                             {"placeholder": "1.0"},
+                                             {"maxlength": 4},
+                                             {"min": 0.1},
+                                             {"max": 5.0},
+                                             {"step": 0.1}
+                                           ],
+                             "value": 1.0
+                            },
+                            {
+                             "id": "reelDirection",
+                             "element": "select",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REEL_DIRECTION_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_DIRECTION",
+                             "value": {"value": "ccw", "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_CCW"},
+                             "options": [
+                                          {"value": "ccw", "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_CCW"},
+                                          {"value": "cw", "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_CW"}
+                                        ]
                             }
                             ]
                 },
@@ -584,110 +633,76 @@
                             ]
                 },
                 {
-                "id": "rotation_conf",
+                "id": "playback_conf",
                 "element": "section",
-                "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_CONF",
-                "description": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_DESC",
-                "icon": "fa-refresh",
+                "label": "TRANSLATE.PEPPY_SCREENSAVER.PLAYBACK_CONF",
+                "description": "TRANSLATE.PEPPY_SCREENSAVER.PLAYBACK_DESC",
+                "icon": "fa-play-circle",
                 "hidden": false,
-                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"saveRotationConf"},
+                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"savePlaybackConf"},
                 "saveButton": {
                               "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
                               "data": [
-                                      "rotationQuality",
-                                      "rotationFPS",
-                                      "rotationSpeed",
-                                      "spoolLeftSpeed",
-                                      "spoolRightSpeed",
-                                      "reelDirection"
+                                      "persist_duration",
+                                      "persist_display"
                                       ]
                               },
                 "content": [
                             {
-                             "id": "rotationQuality",
+                             "id": "persist_duration",
                              "element": "select",
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_QUALITY_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_QUALITY",
-                             "value": {"value": "medium", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_MEDIUM"},
-                             "options": [
-                                          {"value": "low", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_LOW"},
-                                          {"value": "medium", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_MEDIUM"},
-                                          {"value": "high", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_HIGH"},
-                                          {"value": "custom", "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_CUSTOM"}
-                                        ]
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DURATION_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DURATION",
+                             "value": {"value": "30", "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_30" },
+                               "options": [
+                                 {
+                                    "value": "0",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISABLED"
+                                 },
+                                 {
+                                    "value": "5",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_5"
+                                 },
+                                 {
+                                    "value": "15",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_15"
+                                 },
+                                 {
+                                    "value": "30",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_30"
+                                 },
+                                 {
+                                    "value": "60",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_60"
+                                 },
+                                 {
+                                    "value": "120",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_120"
+                                 },
+                                 {
+                                    "value": "300",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_300"
+                                 }
+                               ]
                             },
                             {
-                             "id": "rotationFPS",
-                             "element": "input",
-                             "type": "number",
-                             "visibleIf": {"field": "rotationQuality", "value": "custom"},
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_FPS_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_FPS",
-                             "attributes": [
-                                             {"placeholder": "8"},
-                                             {"maxlength": 2},
-                                             {"min": 4},
-                                             {"max": 30}
-                                           ],
-                             "value": 8
-                            },
-                            {
-                             "id": "rotationSpeed",
-                             "element": "input",
-                             "type": "number",
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_SPEED_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.ROTATION_SPEED",
-                             "attributes": [
-                                             {"placeholder": "1.0"},
-                                             {"maxlength": 4},
-                                             {"min": 0.1},
-                                             {"max": 5.0},
-                                             {"step": 0.1}
-                                           ],
-                             "value": 1.0
-                            },
-                            {
-                             "id": "spoolLeftSpeed",
-                             "element": "input",
-                             "type": "number",
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_LEFT_SPEED_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_LEFT_SPEED",
-                             "attributes": [
-                                             {"placeholder": "1.0"},
-                                             {"maxlength": 4},
-                                             {"min": 0.1},
-                                             {"max": 5.0},
-                                             {"step": 0.1}
-                                           ],
-                             "value": 1.0
-                            },
-                            {
-                             "id": "spoolRightSpeed",
-                             "element": "input",
-                             "type": "number",
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_RIGHT_SPEED_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_RIGHT_SPEED",
-                             "attributes": [
-                                             {"placeholder": "1.0"},
-                                             {"maxlength": 4},
-                                             {"min": 0.1},
-                                             {"max": 5.0},
-                                             {"step": 0.1}
-                                           ],
-                             "value": 1.0
-                            },
-                            {
-                             "id": "reelDirection",
+                             "id": "persist_display",
                              "element": "select",
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REEL_DIRECTION_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_DIRECTION",
-                             "value": {"value": "ccw", "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_CCW"},
-                             "options": [
-                                          {"value": "ccw", "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_CCW"},
-                                          {"value": "cw", "label": "TRANSLATE.PEPPY_SCREENSAVER.REEL_CW"}
-                                        ]
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY",
+                             "value": {"value": "freeze", "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE" },
+                               "options": [
+                                 {
+                                    "value": "freeze",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE"
+                                 },
+                                 {
+                                    "value": "countdown",
+                                    "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_COUNTDOWN"
+                                 }
+                               ]
                             }
-                            ]
+                           ]
                 },
                 {
                 "id": "debug_conf",
