@@ -524,6 +524,77 @@ Indicators support two display modes:
 Volume display supports multiple styles: numeric text, horizontal bar,
 image-based fader/slider, rotary knob, or arc gauge.
 
+#### Progress Indicator Styles
+
+Progress bar supports the same styles as volume indicator:
+
+**Horizontal slider (default):**
+```ini
+progress.pos = 100,680
+progress.dim = 500,10
+progress.color = 0,200,255
+progress.bg.color = 40,40,40
+```
+
+**Vertical slider:**
+```ini
+progress.pos = 50,200
+progress.dim = 10,400
+progress.slider.orientation = vertical
+progress.color = 0,200,255
+progress.bg.color = 40,40,40
+```
+
+**Arc gauge:**
+```ini
+progress.pos = 100,100
+progress.dim = 100,100
+progress.style = arc
+progress.arc.width = 8
+progress.arc.angle.start = 180
+progress.arc.angle.end = 0
+progress.color = 0,255,0
+progress.bg.color = 40,40,40
+```
+
+**Rotary knob:**
+```ini
+progress.pos = 100,100
+progress.dim = 80,80
+progress.style = knob
+progress.knob.image = progress_knob.png
+progress.knob.angle.start = 225
+progress.knob.angle.end = -45
+```
+
+**Image-based slider:**
+```ini
+progress.pos = 50,600
+progress.dim = 500,30
+progress.style = slider
+progress.slider.track = progress_track.png
+progress.slider.tip = progress_tip.png
+progress.slider.orientation = horizontal
+progress.slider.travel = 0,470
+progress.slider.tip.offset = 0,0
+```
+
+| Option | Description |
+|--------|-------------|
+| `progress.style` | Display style: slider, arc, knob, numeric (default: slider) |
+| `progress.slider.orientation` | Slider direction: horizontal, vertical (default: horizontal) |
+| `progress.slider.track` | PNG image for slider track/groove (optional) |
+| `progress.slider.tip` | PNG image for slider handle/tip (required for image slider) |
+| `progress.slider.travel` | Pixel range for tip movement: start,end |
+| `progress.slider.tip.offset` | Tip anchor offset: x,y (default: 0,0) |
+| `progress.knob.image` | PNG image for rotary knob (required for knob style) |
+| `progress.knob.angle.start` | Knob start angle in degrees (default: 225) |
+| `progress.knob.angle.end` | Knob end angle in degrees (default: -45) |
+| `progress.arc.width` | Arc stroke width in pixels (default: 6) |
+| `progress.arc.angle.start` | Arc start angle in degrees (default: 225) |
+| `progress.arc.angle.end` | Arc end angle in degrees (default: -45) |
+| `progress.font.size` | Font size for numeric style (default: 24) |
+
 See the wiki for detailed configuration reference and examples.
 
 ## Troubleshooting

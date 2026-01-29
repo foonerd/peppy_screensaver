@@ -1,12 +1,12 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.2.3",
+  "version": "3.2.4",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "2aCD (original), Just a Nerd, Wheaten",
+  "author": "2aCD (original), Just a Nerd",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.2.3 - BasicHandler anti-collision layer composition, METER_DELAY support, module-level imports."
+    "changelog": "3.2.4 - Progress indicator full feature parity with volume (vertical, arc, knob, image-based slider styles). SliderIndicator refactor."
   },
   "engines": {
     "node": ">=20",

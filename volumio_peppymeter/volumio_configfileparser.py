@@ -198,6 +198,19 @@ PROGRESS_COLOR = "progress.color"
 PROGRESS_BG_COLOR = "progress.bg.color"
 PROGRESS_BORDER = "progress.border"
 PROGRESS_BORDER_COLOR = "progress.border.color"
+PROGRESS_STYLE = "progress.style"
+PROGRESS_SLIDER_ORIENTATION = "progress.slider.orientation"
+PROGRESS_SLIDER_TRACK = "progress.slider.track"
+PROGRESS_SLIDER_TIP = "progress.slider.tip"
+PROGRESS_SLIDER_TRAVEL = "progress.slider.travel"
+PROGRESS_SLIDER_TIP_OFFSET = "progress.slider.tip.offset"
+PROGRESS_KNOB_IMAGE = "progress.knob.image"
+PROGRESS_KNOB_ANGLE_START = "progress.knob.angle.start"
+PROGRESS_KNOB_ANGLE_END = "progress.knob.angle.end"
+PROGRESS_ARC_WIDTH = "progress.arc.width"
+PROGRESS_ARC_ANGLE_START = "progress.arc.angle.start"
+PROGRESS_ARC_ANGLE_END = "progress.arc.angle.end"
+PROGRESS_FONT_SIZE = "progress.font.size"
 
 PLAY_TXT_CENTER = "playinfo.text.center"
 PLAY_TITLE_POS = "playinfo.title.pos"
@@ -913,6 +926,62 @@ class Volumio_ConfigFileParser(object):
             d[PROGRESS_BORDER_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
         except:
             d[PROGRESS_BORDER_COLOR] = (100, 100, 100)
+
+        # Progress style and advanced options (mirrors volume indicator)
+        try:
+            d[PROGRESS_STYLE] = config_file.get(section, PROGRESS_STYLE)
+        except:
+            d[PROGRESS_STYLE] = "slider"
+        try:
+            d[PROGRESS_SLIDER_ORIENTATION] = config_file.get(section, PROGRESS_SLIDER_ORIENTATION)
+        except:
+            d[PROGRESS_SLIDER_ORIENTATION] = "horizontal"
+        try:
+            d[PROGRESS_SLIDER_TRACK] = config_file.get(section, PROGRESS_SLIDER_TRACK)
+        except:
+            d[PROGRESS_SLIDER_TRACK] = None
+        try:
+            d[PROGRESS_SLIDER_TIP] = config_file.get(section, PROGRESS_SLIDER_TIP)
+        except:
+            d[PROGRESS_SLIDER_TIP] = None
+        try:
+            spl = config_file.get(section, PROGRESS_SLIDER_TRAVEL).split(',')
+            d[PROGRESS_SLIDER_TRAVEL] = (int(spl[0]), int(spl[1]))
+        except:
+            d[PROGRESS_SLIDER_TRAVEL] = None
+        try:
+            spl = config_file.get(section, PROGRESS_SLIDER_TIP_OFFSET).split(',')
+            d[PROGRESS_SLIDER_TIP_OFFSET] = (int(spl[0]), int(spl[1]))
+        except:
+            d[PROGRESS_SLIDER_TIP_OFFSET] = (0, 0)
+        try:
+            d[PROGRESS_KNOB_IMAGE] = config_file.get(section, PROGRESS_KNOB_IMAGE)
+        except:
+            d[PROGRESS_KNOB_IMAGE] = None
+        try:
+            d[PROGRESS_KNOB_ANGLE_START] = config_file.getfloat(section, PROGRESS_KNOB_ANGLE_START)
+        except:
+            d[PROGRESS_KNOB_ANGLE_START] = 225.0
+        try:
+            d[PROGRESS_KNOB_ANGLE_END] = config_file.getfloat(section, PROGRESS_KNOB_ANGLE_END)
+        except:
+            d[PROGRESS_KNOB_ANGLE_END] = -45.0
+        try:
+            d[PROGRESS_ARC_WIDTH] = config_file.getint(section, PROGRESS_ARC_WIDTH)
+        except:
+            d[PROGRESS_ARC_WIDTH] = 6
+        try:
+            d[PROGRESS_ARC_ANGLE_START] = config_file.getfloat(section, PROGRESS_ARC_ANGLE_START)
+        except:
+            d[PROGRESS_ARC_ANGLE_START] = 225.0
+        try:
+            d[PROGRESS_ARC_ANGLE_END] = config_file.getfloat(section, PROGRESS_ARC_ANGLE_END)
+        except:
+            d[PROGRESS_ARC_ANGLE_END] = -45.0
+        try:
+            d[PROGRESS_FONT_SIZE] = config_file.getint(section, PROGRESS_FONT_SIZE)
+        except:
+            d[PROGRESS_FONT_SIZE] = 24
 
         try:
             d[PLAY_TXT_CENTER] = config_file.getboolean(section, PLAY_TXT_CENTER)
