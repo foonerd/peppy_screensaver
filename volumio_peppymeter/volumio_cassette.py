@@ -1744,6 +1744,43 @@ class CassetteHandler:
             if fmt == "dsf":
                 fmt = "dsd"
             
+            # Strip signal strength indicators and other suffixes
+            # DAB sends "DAB ●◦◦◦◦" -> "dab_●◦◦◦◦", need just "dab"
+            # FM sends "FM ◦◦◦◦◦" -> "fm_◦◦◦◦◦", need just "fm"
+            import re
+            fmt_clean = re.sub(r'[^a-z0-9_].*', '', fmt)  # Keep only alphanumeric prefix
+            if fmt_clean:
+                fmt = fmt_clean
+            
+            # Normalize common trackType variants to icon names
+            format_map = {
+                'dab_radio': 'dab',
+                'dab_': 'dab',
+                'dab': 'dab',
+                'rtlsdr': 'dab',
+                'rtlsdr_radio': 'dab',
+                'fm_radio': 'fm',
+                'fm_': 'fm',
+                'fm': 'fm',
+                'webradio': 'radio',
+                'web_radio': 'radio',
+                'internet_radio': 'radio',
+                'tidal_connect': 'tidal',
+                'qobuz_connect': 'qobuz',
+                'spotify': 'spotify',
+                'spotify_connect': 'spotify',
+                'airplay': 'airplay',
+                'bluetooth': 'bluetooth',
+                'upnp': 'upnp',
+                'dlna': 'upnp',
+            }
+            fmt_before = fmt
+            fmt = format_map.get(fmt, fmt)
+            
+            # TRACE: Log format icon processing
+            if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("metadata", False):
+                log_debug(f"[FormatIcon] INPUT: track_type='{track_type}', fmt_normalized='{fmt_before}', fmt_mapped='{fmt}'", "trace", "metadata")
+            
             needs_redraw = fmt != self.last_track_type or force_flag
             
             if needs_redraw:
@@ -1755,7 +1792,7 @@ class CassetteHandler:
                 
                 # Check for icon file
                 file_path = os.path.dirname(__file__)
-                local_icons = {'tidal', 'cd', 'qobuz'}
+                local_icons = {'tidal', 'cd', 'qobuz', 'dab', 'fm', 'radio'}
                 if fmt in local_icons:
                     icon_path = os.path.join(file_path, 'format-icons', f"{fmt}.svg")
                 else:

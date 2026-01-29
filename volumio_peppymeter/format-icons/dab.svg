@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px"
+	 width="400px" height="200px" viewBox="0 0 400 200" xml:space="preserve">
+<g>
+	<!-- D -->
+	<path fill="#FFFFFF" d="M10,30h50c35,0,60,25,60,70s-25,70-60,70H10V30z M40,60v80h20c20,0,30-15,30-40s-10-40-30-40H40z"/>
+	<!-- A -->
+	<path fill="#FFFFFF" d="M150,170l50-140h30l50,140h-30l-10-30h-50l-10,30H150z M200,55l-17,55h34L200,55z"/>
+	<!-- B -->
+	<path fill="#FFFFFF" d="M290,30h55c25,0,45,12,45,37c0,15-8,27-22,32c18,5,28,18,28,36c0,28-22,35-50,35h-56V30z M320,60v35h22c12,0,18-7,18-18s-6-17-18-17H320z M320,125v15h25c14,0,20-7,20-19s-8-18-22-18h-23V125z"/>
+</g>
+</svg>
