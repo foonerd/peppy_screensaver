@@ -1,6 +1,6 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.2.2",
+  "version": "3.2.3",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.2.2 - Volatile icons, cassette CPU optimization, configurable meter timing delay."
+    "changelog": "3.2.3 - BasicHandler anti-collision layer composition, METER_DELAY support, module-level imports."
   },
   "engines": {
     "node": ">=20",
