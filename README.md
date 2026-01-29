@@ -119,11 +119,23 @@ Frame rate, update intervals, and CPU tuning.
 
 **Meter Timing Delay:** Controls the pause between render frames. This setting balances CPU usage and meter responsiveness:
 
-- **10ms (default)**: Good balance of CPU (~80-85%) and responsive meters
+- **10ms (default)**: Good balance of CPU and responsive meters
 - **15-20ms**: Lower CPU usage, meters may feel slightly sluggish  
-- **0-5ms**: Higher CPU usage (up to 95%), more responsive meters
+- **0-5ms**: Higher CPU usage, more responsive meters
 
 **Warning:** Values below 10ms can significantly increase CPU usage. Not recommended for Pi 3 or systems with thermal constraints.
+
+**Spectrum Template Performance:** Spectrum analyzer templates have higher CPU usage than VU meter templates due to rendering ~57 animated bars per frame. CPU scales directly with frame rate:
+
+| Frame Rate | Approximate CPU (Pi 5) |
+|------------|------------------------|
+| 30 fps | ~75-80% |
+| 25 fps | ~70-75% |
+| 20 fps | ~60-65% |
+| 15 fps | ~45-50% |
+| 10 fps | ~25-30% |
+
+**Recommendation:** Use 15-20 fps for spectrum templates to keep CPU under 60%.
 
 ### Rotation Settings
 
