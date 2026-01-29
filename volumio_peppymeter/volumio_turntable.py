@@ -533,6 +533,10 @@ class AlbumArtRenderer:
     Handles album art loading with optional mask, scaling, and rotation.
     TURNTABLE VERSION: Supports rotation for LP-style spinning effect.
     Can be coupled to VinylRenderer for unified rotation angle.
+    
+    COMPOSITE MODE: When coupled to vinyl with rotation enabled, art is
+    composited directly onto vinyl surface. They rotate as one unit (like
+    a real LP with label), halving per-frame blit count.
     """
 
     def __init__(self, base_path, meter_folder, art_pos, art_dim, screen_size,
@@ -560,6 +564,7 @@ class AlbumArtRenderer:
 
         # Vinyl coupling (for unified rotation)
         self.vinyl_renderer = vinyl_renderer
+        self._is_composited = False  # True when art is baked into vinyl surface
 
         # Derived center
         self.art_center = (int(art_pos[0] + art_dim[0] // 2),
@@ -619,13 +624,18 @@ class AlbumArtRenderer:
         return surf
 
     def load_from_url(self, url):
-        """Fetch image from URL, build scaled surface, pre-compute rotation frames."""
+        """Fetch image from URL, build scaled surface, pre-compute rotation frames.
+        
+        COMPOSITE MODE: If coupled to vinyl with rotation enabled, composites
+        art directly onto vinyl surface instead of precomputing separate frames.
+        """
         self._current_url = url
         self._scaled_surf = None
         self._rot_frames = None
         self._current_angle = 0.0
         self._needs_redraw = True
         self._need_first_blit = False
+        self._is_composited = False
 
         if not url:
             return
@@ -656,15 +666,35 @@ class AlbumArtRenderer:
                 except Exception:
                     self._scaled_surf = scaled
                 
-                # Pre-compute rotation frames
-                if USE_PRECOMPUTED_FRAMES and self.rotate_enabled and self.rotate_rpm > 0.0 and self._scaled_surf:
-                    try:
-                        self._rot_frames = [
-                            pg.transform.rotate(self._scaled_surf, -a)
-                            for a in range(0, 360, self.rotation_step)
-                        ]
-                    except Exception:
-                        self._rot_frames = None
+                # COMPOSITE MODE: If coupled to vinyl and rotation enabled,
+                # composite art onto vinyl surface (like real LP with label)
+                if self.vinyl_renderer and self.rotate_enabled and self.rotate_rpm > 0.0:
+                    if self.vinyl_renderer.composite_album_art(self._scaled_surf, self.art_dim):
+                        self._is_composited = True
+                        self._rot_frames = None  # Don't need separate frames
+                        log_debug("[AlbumArt] Composited onto vinyl - will skip separate blit", "basic")
+                    else:
+                        # Fallback to separate rotation frames
+                        self._is_composited = False
+                        if USE_PRECOMPUTED_FRAMES and self._scaled_surf:
+                            try:
+                                self._rot_frames = [
+                                    pg.transform.rotate(self._scaled_surf, -a)
+                                    for a in range(0, 360, self.rotation_step)
+                                ]
+                            except Exception:
+                                self._rot_frames = None
+                else:
+                    # Not coupled or not rotating - use separate frames
+                    self._is_composited = False
+                    if USE_PRECOMPUTED_FRAMES and self.rotate_enabled and self.rotate_rpm > 0.0 and self._scaled_surf:
+                        try:
+                            self._rot_frames = [
+                                pg.transform.rotate(self._scaled_surf, -a)
+                                for a in range(0, 360, self.rotation_step)
+                            ]
+                        except Exception:
+                            self._rot_frames = None
                 
                 self._need_first_blit = True
 
@@ -730,10 +760,40 @@ class AlbumArtRenderer:
         
         :param advance_angle: if False, render at current angle without advancing rotation
         :param volatile: if True, ignore stop/pause (track transition in progress)
+        
+        COMPOSITE MODE: If art is composited onto vinyl, skip the main blit
+        (vinyl already has art baked in). Still draw border and spindle markers.
         """
         if not self.art_pos or not self.art_dim or not self._scaled_surf:
             return None
 
+        # COMPOSITE MODE: Art is already baked into vinyl surface
+        # Skip blitting art, but still draw decorations (border, spindle)
+        if self._is_composited:
+            dirty_rect = pg.Rect(self.art_pos[0], self.art_pos[1], self.art_dim[0], self.art_dim[1])
+            
+            # Border
+            if self.border_width:
+                try:
+                    if self.circle and self.art_center:
+                        rad = min(self.art_dim[0], self.art_dim[1]) // 2
+                        pg.draw.circle(screen, self.font_color, self.art_center, rad, self.border_width)
+                    else:
+                        pg.draw.rect(screen, self.font_color, pg.Rect(self.art_pos, self.art_dim), self.border_width)
+                except Exception:
+                    pass
+            
+            # LP center markers (spindle + inner ring)
+            if self.rotate_enabled and self.art_center and self.rotate_rpm > 0.0:
+                try:
+                    pg.draw.circle(screen, self.font_color, self.art_center, self.spindle_radius, 0)
+                    pg.draw.circle(screen, self.font_color, self.art_center, self.ring_radius, 1)
+                except Exception:
+                    pass
+            
+            return dirty_rect
+
+        # NORMAL MODE: Render art separately
         if advance_angle and not self.will_blit(now_ticks):
             return None
 
@@ -805,6 +865,10 @@ class AlbumArtRenderer:
     def force_redraw(self):
         """Force redraw on next render() call."""
         self._needs_redraw = True
+    
+    def is_composited(self):
+        """Return True if art is composited onto vinyl (no separate blit needed)."""
+        return self._is_composited
 
 
 # =============================================================================
@@ -814,6 +878,10 @@ class VinylRenderer:
     """
     Handles vinyl disc graphics with rotation for turntable-style skins.
     Renders UNDER album art. Album art can lock to vinyl's rotation angle.
+    
+    COMPOSITE MODE: When album art is coupled, art is composited directly onto
+    vinyl surface and they rotate as a single unit (like a real LP with label).
+    This halves the blit count per frame.
     """
 
     def __init__(self, base_path, meter_folder, filename, pos, center,
@@ -829,7 +897,8 @@ class VinylRenderer:
         self.rotation_step = int(rotation_step)
         self.direction_mult = 1 if direction == "cw" else -1
         
-        self._original_surf = None
+        self._base_surf = None      # Original vinyl (without art) - kept for recompositing
+        self._original_surf = None  # Current surface (may have art composited)
         self._rot_frames = None
         self._current_angle = 0.0
         self._loaded = False
@@ -837,6 +906,7 @@ class VinylRenderer:
         self._blit_interval_ms = int(1000 / max(1, self.rotation_fps))
         self._needs_redraw = True
         self._need_first_blit = False
+        self._has_composited_art = False  # True when album art is baked into vinyl
         
         self._load_image()
     
@@ -848,22 +918,79 @@ class VinylRenderer:
         try:
             img_path = os.path.join(self.base_path, self.meter_folder, self.filename)
             if os.path.exists(img_path):
-                self._original_surf = pg.image.load(img_path).convert_alpha()
+                self._base_surf = pg.image.load(img_path).convert_alpha()
+                self._original_surf = self._base_surf.copy()  # Start with copy of base
                 self._loaded = True
                 self._need_first_blit = True
+                self._has_composited_art = False
                 
-                if USE_PRECOMPUTED_FRAMES and self.center and self.rotate_rpm > 0.0:
-                    try:
-                        self._rot_frames = [
-                            pg.transform.rotate(self._original_surf, -a)
-                            for a in range(0, 360, self.rotation_step)
-                        ]
-                    except Exception:
-                        self._rot_frames = None
+                self._regenerate_rotation_frames()
             else:
                 print(f"[VinylRenderer] File not found: {img_path}")
         except Exception as e:
             print(f"[VinylRenderer] Failed to load '{self.filename}': {e}")
+    
+    def _regenerate_rotation_frames(self):
+        """Regenerate precomputed rotation frames from current _original_surf."""
+        self._rot_frames = None
+        if USE_PRECOMPUTED_FRAMES and self.center and self.rotate_rpm > 0.0 and self._original_surf:
+            try:
+                self._rot_frames = [
+                    pg.transform.rotate(self._original_surf, -a)
+                    for a in range(0, 360, self.rotation_step)
+                ]
+                log_debug(f"[VinylRenderer] Regenerated {len(self._rot_frames)} rotation frames", "verbose")
+            except Exception as e:
+                log_debug(f"[VinylRenderer] Failed to regenerate frames: {e}", "basic")
+                self._rot_frames = None
+    
+    def composite_album_art(self, art_surf, art_dim):
+        """Composite album art onto vinyl surface center.
+        
+        This creates a single surface with vinyl + art that rotates as one unit,
+        like a real LP with its label. Halves the per-frame blit count.
+        
+        :param art_surf: Scaled album art surface (with transparency if circular)
+        :param art_dim: (width, height) of the album art
+        :return: True if composite successful, False otherwise
+        """
+        if not self._base_surf or not art_surf:
+            return False
+        
+        try:
+            # Start fresh from base vinyl (in case art changed)
+            self._original_surf = self._base_surf.copy()
+            
+            # Calculate position to center art on vinyl
+            vinyl_w = self._original_surf.get_width()
+            vinyl_h = self._original_surf.get_height()
+            art_w, art_h = art_dim
+            
+            # Art goes in center of vinyl
+            art_x = (vinyl_w - art_w) // 2
+            art_y = (vinyl_h - art_h) // 2
+            
+            # Blit art onto vinyl
+            self._original_surf.blit(art_surf, (art_x, art_y))
+            
+            # Regenerate rotation frames with composited surface
+            self._regenerate_rotation_frames()
+            
+            self._has_composited_art = True
+            self._needs_redraw = True
+            self._need_first_blit = True
+            
+            log_debug(f"[VinylRenderer] Composited album art ({art_w}x{art_h}) onto vinyl ({vinyl_w}x{vinyl_h})", "basic")
+            return True
+            
+        except Exception as e:
+            log_debug(f"[VinylRenderer] Failed to composite album art: {e}", "basic")
+            self._has_composited_art = False
+            return False
+    
+    def has_composited_art(self):
+        """Return True if album art is composited onto this vinyl."""
+        return self._has_composited_art
     
     def _update_angle(self, status, now_ticks, volatile=False, decel_factor=1.0):
         """Update rotation angle based on RPM, direction, and playback status.
@@ -1038,6 +1165,10 @@ class TonearmRenderer:
         
         self._arm_length = 0
         
+        # Precomputed rotation frames for CPU optimization
+        self._rot_frames = {}
+        self._rot_step = 0.5  # Degree step for precomputed frames
+        
         self._load_image()
     
     def set_exclusion_zones(self, zones):
@@ -1065,7 +1196,7 @@ class TonearmRenderer:
         return self._state in (TONEARM_STATE_DROP, TONEARM_STATE_LIFT)
     
     def _load_image(self):
-        """Load the tonearm PNG file."""
+        """Load the tonearm PNG file and precompute rotation frames."""
         if not self.filename:
             return
         
@@ -1086,7 +1217,27 @@ class TonearmRenderer:
                     for cx, cy in corners
                 )
                 
-                log_debug(f"[TonearmRenderer] Loaded '{self.filename}', arm_length={self._arm_length:.1f}")
+                # Precompute rotation frames for CPU optimization
+                # Range covers: rest -> start -> end (all tonearm positions)
+                if USE_PRECOMPUTED_FRAMES:
+                    angle_min = min(self.angle_rest, self.angle_start, self.angle_end) - 1.0
+                    angle_max = max(self.angle_rest, self.angle_start, self.angle_end) + 1.0
+                    
+                    angle = angle_min
+                    frame_count = 0
+                    while angle <= angle_max:
+                        key = round(angle / self._rot_step) * self._rot_step
+                        if key not in self._rot_frames:
+                            try:
+                                self._rot_frames[key] = pg.transform.rotate(self._original_surf, angle)
+                                frame_count += 1
+                            except Exception:
+                                pass
+                        angle += self._rot_step
+                    
+                    log_debug(f"[TonearmRenderer] Loaded '{self.filename}', arm_length={self._arm_length:.1f}, precomputed {frame_count} frames")
+                else:
+                    log_debug(f"[TonearmRenderer] Loaded '{self.filename}', arm_length={self._arm_length:.1f}")
             else:
                 print(f"[TonearmRenderer] File not found: {img_path}")
         except Exception as e:
@@ -1415,8 +1566,13 @@ class TonearmRenderer:
                 if abs(self._current_angle - self._last_drawn_angle) < 0.1:
                     return None
         
-        # Rotate around pivot point
-        rotated = pg.transform.rotate(self._original_surf, self._current_angle)
+        # Rotate around pivot point - use precomputed frame if available
+        frame_key = round(self._current_angle / self._rot_step) * self._rot_step
+        if frame_key in self._rot_frames:
+            rotated = self._rot_frames[frame_key]
+        else:
+            # Fallback to real-time rotation
+            rotated = pg.transform.rotate(self._original_surf, self._current_angle)
         
         px, py = self.pivot_image
         img_w = self._original_surf.get_width()
@@ -2247,18 +2403,19 @@ class TurntableHandler:
             elif hasattr(meter_rects, 'x'):
                 dirty_rects.append(meter_rects)
         
-        # TIMING FIX: When album art is static (no rotation), the render loop
-        # completes very fast. This can cause meter.run() to be called before
-        # the audio data source has new samples, resulting in stuck needles.
-        # A small delay gives the audio buffer time to accumulate samples.
-        # Only needed when render is fast (static art on spinning vinyl).
-        # MONITOR: This delay value (10ms) was tuned on Pi5. May need adjustment
-        # for Pi4 or other platforms. If meters are sluggish, reduce delay.
-        # If meters freeze on static art templates, increase delay.
-        if self.album_renderer and not self.album_renderer.rotate_enabled:
-            if not getattr(self, '_static_art_delay_logged', False):
-                log_debug("Static album art detected - adding 10ms delay after meter.run() to allow audio data source to update", "basic")
-                self._static_art_delay_logged = True
+        # TIMING FIX: Precomputed rotation frames make render loop complete very fast.
+        # This can cause meter.run() to be called before the audio data source has
+        # new samples, resulting in stuck needles.
+        # 
+        # ORIGINAL: Only static art templates needed delay (rotation was slow).
+        # WITH PRECOMPUTED FRAMES: All templates need delay (frame lookup is instant).
+        # 
+        # Apply 10ms delay after meter.run() to let audio buffer accumulate samples.
+        # MONITOR: 10ms tuned on Pi5. Adjust if meters sluggish (reduce) or freeze (increase).
+        if USE_PRECOMPUTED_FRAMES:
+            if not getattr(self, '_precompute_delay_logged', False):
+                log_debug("Precomputed frames in use - adding 10ms delay after meter.run() for audio buffer", "basic")
+                self._precompute_delay_logged = True
             time.sleep(0.010)  # 10ms delay for audio data source
         
         # =================================================================
