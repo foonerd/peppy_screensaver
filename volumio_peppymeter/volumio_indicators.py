@@ -26,6 +26,7 @@ except ImportError:
 # =============================================================================
 # Debug logging support (shared from main module)
 # =============================================================================
+DEBUG_LOG_FILE = '/tmp/peppy_debug.log'
 _DEBUG_LEVEL = "off"
 _DEBUG_TRACE = {}
 
@@ -40,29 +41,42 @@ def init_indicator_debug(level, trace_dict):
     _DEBUG_TRACE = trace_dict
 
 def _log_debug(msg, level="basic", component=None):
-    """Log debug message if level is enabled.
+    """Write debug message to log file based on debug level and component switches.
+    
+    Debug Levels:
+    - off: No logging
+    - basic: Startup, errors, key state changes
+    - verbose: Configuration details (includes basic)
+    - trace: Component-specific logging (includes verbose, requires component switch)
     
     :param msg: Message to log
-    :param level: Required level ("basic", "verbose", "trace")
-    :param component: For trace level, the component name to check
+    :param level: Required level - 'basic', 'verbose', or 'trace'
+    :param component: For trace level, which component (e.g., 'tonearm', 'meters')
+                     Must match a key in DEBUG_TRACE dict
     """
     if _DEBUG_LEVEL == "off":
         return
     
-    level_order = {"off": 0, "basic": 1, "verbose": 2, "trace": 3}
-    current_level = level_order.get(_DEBUG_LEVEL, 0)
-    required_level = level_order.get(level, 1)
-    
-    if current_level < required_level:
-        return
-    
-    # For trace level, check component switch
-    if level == "trace" and component:
-        if not _DEBUG_TRACE.get(component, False):
+    if level == "basic":
+        # basic logs at basic, verbose, or trace
+        pass
+    elif level == "verbose":
+        # verbose logs at verbose or trace only
+        if _DEBUG_LEVEL == "basic":
+            return
+    elif level == "trace":
+        # trace logs only at trace level AND component switch must be on
+        if _DEBUG_LEVEL != "trace":
+            return
+        if component and not _DEBUG_TRACE.get(component, False):
             return
     
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"[{timestamp}] {msg}")
+    try:
+        ts = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        with open(DEBUG_LOG_FILE, 'a') as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
 
 
 # =============================================================================
@@ -529,12 +543,14 @@ class IconIndicator:
 # =============================================================================
 # VolumeIndicator - Renders volume display in various styles
 # =============================================================================
-class VolumeIndicator:
-    """Renders volume level display.
+class SliderIndicator:
+    """Renders value indicator (0-100) as numeric, slider, knob, or arc.
+    
+    Used for volume, progress, or any percentage-based display.
     
     Styles:
     - numeric: text display "75%"
-    - slider: horizontal bar
+    - slider: horizontal/vertical bar (procedural or image-based)
     - knob: rotary graphic (requires knob image)
     - arc: gauge/arc style
     """
@@ -549,8 +565,8 @@ class VolumeIndicator:
                  knob_image=None, knob_angle_start=225.0, knob_angle_end=-45.0,
                  arc_width=6, arc_angle_start=225.0, arc_angle_end=-45.0,
                  slider_track=None, slider_tip=None, slider_orientation="vertical",
-                 slider_travel=None, slider_tip_offset=None):
-        """Initialize volume indicator.
+                 slider_travel=None, slider_tip_offset=None, name="Slider"):
+        """Initialize slider indicator.
         
         :param pos: (x, y) screen position
         :param dim: (width, height) for slider/knob/arc
@@ -572,7 +588,9 @@ class VolumeIndicator:
         :param slider_orientation: 'vertical' or 'horizontal' (default: vertical)
         :param slider_travel: (min, max) pixel range for tip movement
         :param slider_tip_offset: (x, y) offset for tip anchor point
+        :param name: identifier for logging (default: 'Slider')
         """
+        self.name = name
         self.pos = pos
         self.dim = dim if dim else (100, 20)
         self.style = (style or self.STYLE_NUMERIC).lower()
@@ -653,11 +671,11 @@ class VolumeIndicator:
                     # Adjust so pointer points correctly
                     rotated = pg.transform.rotate(self._knob_image, angle)
                     self._knob_frames.append(rotated)
-                print(f"[VolumeIndicator] Knob loaded: {self.knob_image_filename}, {len(self._knob_frames)} frames, sweep={self.knob_angle_sweep}")
+                print(f"[{self.name}] Knob loaded: {self.knob_image_filename}, {len(self._knob_frames)} frames, sweep={self.knob_angle_sweep}")
             else:
-                print(f"[VolumeIndicator] Knob image not found: {knob_path}")
+                print(f"[{self.name}] Knob image not found: {knob_path}")
         except Exception as e:
-            print(f"[VolumeIndicator] Failed to load knob image: {e}")
+            print(f"[{self.name}] Failed to load knob image: {e}")
     
     def _load_slider_images(self):
         """Load slider track and tip images for image-based slider style."""
@@ -671,11 +689,11 @@ class VolumeIndicator:
                 if os.path.exists(tip_path):
                     self._slider_tip_image = pg.image.load(tip_path).convert_alpha()
                     self._slider_is_image_based = True
-                    print(f"[VolumeIndicator] Slider tip loaded: {self.slider_tip_filename} ({self._slider_tip_image.get_width()}x{self._slider_tip_image.get_height()})")
+                    print(f"[{self.name}] Slider tip loaded: {self.slider_tip_filename} ({self._slider_tip_image.get_width()}x{self._slider_tip_image.get_height()})")
                 else:
-                    print(f"[VolumeIndicator] Slider tip image not found: {tip_path}")
+                    print(f"[{self.name}] Slider tip image not found: {tip_path}")
             except Exception as e:
-                print(f"[VolumeIndicator] Failed to load slider tip: {e}")
+                print(f"[{self.name}] Failed to load slider tip: {e}")
         
         # Load track image (optional - may be in background)
         if self.slider_track_filename:
@@ -683,11 +701,11 @@ class VolumeIndicator:
             try:
                 if os.path.exists(track_path):
                     self._slider_track_image = pg.image.load(track_path).convert_alpha()
-                    print(f"[VolumeIndicator] Slider track loaded: {self.slider_track_filename}")
+                    print(f"[{self.name}] Slider track loaded: {self.slider_track_filename}")
                 else:
-                    print(f"[VolumeIndicator] Slider track image not found: {track_path}")
+                    print(f"[{self.name}] Slider track image not found: {track_path}")
             except Exception as e:
-                print(f"[VolumeIndicator] Failed to load slider track: {e}")
+                print(f"[{self.name}] Failed to load slider track: {e}")
         
         # Auto-calculate travel if not specified
         if self._slider_is_image_based and not self.slider_travel:
@@ -701,13 +719,13 @@ class VolumeIndicator:
                 tip_w = self._slider_tip_image.get_width() if self._slider_tip_image else 0
                 # travel[0] = left (volume 0%), travel[1] = right (volume 100%)
                 self.slider_travel = (0, self.dim[0] - tip_w)
-            print(f"[VolumeIndicator] Auto-calculated travel: {self.slider_travel}")
+            print(f"[{self.name}] Auto-calculated travel: {self.slider_travel}")
     
     def get_rect(self):
         """Get bounding rectangle for this indicator.
         
         For image-based sliders, expands to include full tip travel area
-        accounting for tip size and offset to prevent ghosting artifacts.
+        accounting for tip size, offset, AND travel range to prevent ghosting.
         """
         if not self.pos:
             return None
@@ -716,31 +734,37 @@ class VolumeIndicator:
             # Estimate text size
             return pg.Rect(self.pos[0], self.pos[1], self.dim[0], self.font_size)
         elif self.style == self.STYLE_SLIDER and self._slider_is_image_based and self._slider_tip_image:
-            # Expand rect to cover full tip travel area including offset
+            # Expand rect to cover full tip travel area including offset AND travel range
             x, y = self.pos
             w, h = self.dim
             tip_w = self._slider_tip_image.get_width()
             tip_h = self._slider_tip_image.get_height()
             off_x, off_y = self.slider_tip_offset
+            travel_start, travel_end = self.slider_travel
             
             if self.slider_orientation == "vertical":
-                # Tip moves vertically, centered horizontally with offset
-                # Calculate leftmost and rightmost tip positions
+                # Tip moves vertically
+                # Tip x position (centered horizontally with offset)
                 tip_center_x = x + (w - tip_w) // 2 + off_x
                 left = min(x, tip_center_x)
                 right = max(x + w, tip_center_x + tip_w)
-                # Vertical travel
-                top = y + off_y
-                bottom = y + h + off_y
+                
+                # Vertical travel: tip_y ranges from (y + travel_start + off_y) to (y + travel_end + off_y)
+                # Plus tip height at the bottom position
+                top = y + travel_start + off_y
+                bottom = y + travel_end + off_y + tip_h
                 return pg.Rect(left, top, right - left, bottom - top)
             else:
-                # Tip moves horizontally, centered vertically with offset
+                # Tip moves horizontally
+                # Tip y position (centered vertically with offset)
                 tip_center_y = y + (h - tip_h) // 2 + off_y
                 top = min(y, tip_center_y)
                 bottom = max(y + h, tip_center_y + tip_h)
-                # Horizontal travel
-                left = x + off_x
-                right = x + w + off_x
+                
+                # Horizontal travel: tip_x ranges from (x + travel_start + off_x) to (x + travel_end + off_x)
+                # Plus tip width at the right position
+                left = x + travel_start + off_x
+                right = x + travel_end + off_x + tip_w
                 return pg.Rect(left, top, right - left, bottom - top)
         else:
             return pg.Rect(self.pos[0], self.pos[1], self.dim[0], self.dim[1])
@@ -911,13 +935,39 @@ class VolumeIndicator:
     def force_redraw(self):
         """Force redraw on next render call."""
         self._needs_redraw = True
+    
+    def needs_render(self, value):
+        """Check if render is needed based on value change.
+        
+        For progress bar usage, checks if visual representation would change.
+        
+        :param value: 0-100 value (int or float)
+        :return: True if render would produce visual change
+        """
+        if self._needs_redraw:
+            return True
+        if not self.pos or not self.dim:
+            return False
+        
+        # Convert to integer for comparison (SliderIndicator uses 0-100 int internally)
+        int_value = max(0, min(100, int(value)))
+        return int_value != self._current_volume
+
+
+# Backward compatibility alias - VolumeIndicator is now SliderIndicator
+VolumeIndicator = SliderIndicator
 
 
 # =============================================================================
-# ProgressBar - Renders track progress bar
+# ProgressBar - Renders track progress bar (DEPRECATED - use SliderIndicator)
 # =============================================================================
 class ProgressBar:
-    """Renders horizontal track progress bar."""
+    """Renders horizontal track progress bar.
+    
+    DEPRECATED: For new templates, use SliderIndicator with progress.* config
+    which supports all styles: numeric, slider, knob, arc.
+    This class is retained for backward compatibility with existing templates.
+    """
     
     def __init__(self, pos, dim, color, bg_color=None,
                  border_width=0, border_color=None):
@@ -937,8 +987,8 @@ class ProgressBar:
         self.border_width = max(0, int(border_width))
         self.border_color = border_color if border_color else (100, 100, 100)
         
-        # State tracking
-        self._current_progress = -1
+        # State tracking - use pixel width for change detection
+        self._current_fill_w = -1
         self._needs_redraw = True
         
         # Backing
@@ -981,25 +1031,24 @@ class ProgressBar:
         if not self.pos or not self.dim:
             return None
         
-        # Quantize to 1% steps to reduce redraws
-        progress_int = max(0, min(100, int(progress_pct)))
-        
-        # Check if changed
-        if progress_int == self._current_progress and not self._needs_redraw:
-            return None
-        
-        self._current_progress = progress_int
-        self._needs_redraw = False
-        
         x, y = self.pos
         w, h = self.dim
+        
+        # Calculate fill width in pixels - this is the visual change metric
+        fill_w = int((progress_pct / 100.0) * w)
+        
+        # Check if pixel width changed (smooth visual updates)
+        if fill_w == self._current_fill_w and not self._needs_redraw:
+            return None
+        
+        self._current_fill_w = fill_w
+        self._needs_redraw = False
         
         # Background
         if self.bg_color:
             pg.draw.rect(screen, self.bg_color, (x, y, w, h))
         
         # Foreground fill based on progress
-        fill_w = int((progress_pct / 100.0) * w)
         if fill_w > 0:
             pg.draw.rect(screen, self.color, (x, y, fill_w, h))
         
@@ -1012,6 +1061,20 @@ class ProgressBar:
     def force_redraw(self):
         """Force redraw on next render call."""
         self._needs_redraw = True
+    
+    def needs_render(self, progress_pct):
+        """Check if render is needed based on pixel change.
+        
+        :param progress_pct: 0.0-100.0 percentage
+        :return: True if render would produce visual change
+        """
+        if self._needs_redraw:
+            return True
+        if not self.pos or not self.dim:
+            return False
+        w = self.dim[0]
+        fill_w = int((progress_pct / 100.0) * w)
+        return fill_w != self._current_fill_w
 
 
 # =============================================================================
@@ -1055,7 +1118,6 @@ class IndicatorRenderer:
         self._prev_repeat = None
         self._prev_repeat_single = None
         self._prev_status = None
-        self._prev_progress = None
         
         # Initialize indicators from config
         self._init_volume()
@@ -1117,7 +1179,8 @@ class IndicatorRenderer:
             slider_tip=slider_tip,
             slider_orientation=slider_orientation,
             slider_travel=slider_travel,
-            slider_tip_offset=slider_tip_offset
+            slider_tip_offset=slider_tip_offset,
+            name="Volume"
         )
     
     def _init_mute(self):
@@ -1253,19 +1316,45 @@ class IndicatorRenderer:
             )
     
     def _init_progress(self):
-        """Initialize progress bar from config."""
+        """Initialize progress indicator from config.
+        
+        Uses SliderIndicator for full feature parity with volume:
+        supports numeric, slider, knob, and arc styles.
+        """
         pos = self.config.get("progress.pos")
         dim = self.config.get("progress.dim")
         if not pos or not dim:
             return
         
-        self._progress = ProgressBar(
+        style = self.config.get("progress.style", "slider")
+        color = self.config.get("progress.color", (0, 200, 255))
+        bg_color = self.config.get("progress.bg.color", (40, 40, 40))
+        
+        # Get font from fonts dict if available
+        font = self.fonts.get("regular") if self.fonts else None
+        
+        self._progress = SliderIndicator(
             pos=pos,
             dim=dim,
-            color=self.config.get("progress.color", (0, 200, 255)),
-            bg_color=self.config.get("progress.bg.color", (40, 40, 40)),
-            border_width=self.config.get("progress.border", 0),
-            border_color=self.config.get("progress.border.color", (100, 100, 100))
+            style=style,
+            color=color,
+            bg_color=bg_color,
+            font=font,
+            font_size=self.config.get("progress.font.size", 24),
+            base_path=self.base_path,
+            meter_folder=self.meter_folder,
+            knob_image=self.config.get("progress.knob.image"),
+            knob_angle_start=self.config.get("progress.knob.angle.start", 225.0),
+            knob_angle_end=self.config.get("progress.knob.angle.end", -45.0),
+            arc_width=self.config.get("progress.arc.width", 6),
+            arc_angle_start=self.config.get("progress.arc.angle.start", 225.0),
+            arc_angle_end=self.config.get("progress.arc.angle.end", -45.0),
+            slider_track=self.config.get("progress.slider.track"),
+            slider_tip=self.config.get("progress.slider.tip"),
+            slider_orientation=self.config.get("progress.slider.orientation", "horizontal"),
+            slider_travel=self.config.get("progress.slider.travel"),
+            slider_tip_offset=self.config.get("progress.slider.tip.offset", (0, 0)),
+            name="Progress"
         )
     
     def has_indicators(self):
@@ -1305,7 +1394,7 @@ class IndicatorRenderer:
         if self._progress:
             self._progress.force_redraw()
     
-    def render(self, screen, metadata, dirty_rects, force=False):
+    def render(self, screen, metadata, dirty_rects, force=False, skip_restore=False):
         """Render all configured indicators.
         
         :param screen: pygame screen surface
@@ -1313,6 +1402,9 @@ class IndicatorRenderer:
                          repeatSingle, status, seek, duration
         :param dirty_rects: list to append dirty rects
         :param force: if True, redraw all indicators regardless of value change
+        :param skip_restore: if True, skip restore_backing calls (for BasicHandler
+                             where meters redraw every frame and procedural
+                             indicators self-clear)
         """
         # Volume
         if self._volume:
@@ -1329,13 +1421,14 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._volume.force_redraw()
-                self._volume.restore_backing(screen)
+                if not skip_restore:
+                    self._volume.restore_backing(screen)
                 rect = self._volume.render(screen, volume)
                 if rect:
                     dirty_rects.append(rect)
                     # TRACE: Log volume output
                     if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("volume", False):
-                        _log_debug(f"[Volume] OUTPUT: rect={rect}, type={self._volume._render_type}", "trace", "volume")
+                        _log_debug(f"[Volume] OUTPUT: rect={rect}, style={self._volume.style}", "trace", "volume")
                 self._prev_volume = volume
         
         # Mute (3 states: off=0, on=1, zero=2)
@@ -1363,7 +1456,8 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._mute.force_redraw()
-                self._mute.restore_backing(screen)
+                if not skip_restore:
+                    self._mute.restore_backing(screen)
                 rect = self._mute.render(screen, mute_state)
                 if rect:
                     dirty_rects.append(rect)
@@ -1397,7 +1491,8 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._shuffle.force_redraw()
-                self._shuffle.restore_backing(screen)
+                if not skip_restore:
+                    self._shuffle.restore_backing(screen)
                 rect = self._shuffle.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
@@ -1431,7 +1526,8 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._repeat.force_redraw()
-                self._repeat.restore_backing(screen)
+                if not skip_restore:
+                    self._repeat.restore_backing(screen)
                 rect = self._repeat.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
@@ -1463,7 +1559,8 @@ class IndicatorRenderer:
             if will_render:
                 if force:
                     self._playstate.force_redraw()
-                self._playstate.restore_backing(screen)
+                if not skip_restore:
+                    self._playstate.restore_backing(screen)
                 rect = self._playstate.render(screen, state_idx)
                 if rect:
                     dirty_rects.append(rect)
@@ -1472,7 +1569,7 @@ class IndicatorRenderer:
                         _log_debug(f"[Playstate] OUTPUT: state={state_idx}, rect={rect}", "trace", "playstate")
                 self._prev_status = status
         
-        # Progress bar
+        # Progress indicator - uses SliderIndicator for full style support
         if self._progress:
             duration = metadata.get("duration", 0) or 0
             seek = metadata.get("seek", 0) or 0
@@ -1481,25 +1578,57 @@ class IndicatorRenderer:
             else:
                 progress_pct = 0.0
             
-            # Quantize to 1% steps to reduce redraws
-            progress_quantized = int(progress_pct)
-            will_render = force or progress_quantized != self._prev_progress
+            # Check if render needed BEFORE restoring backing
+            if force:
+                self._progress.force_redraw()
+            will_render = self._progress.needs_render(progress_pct)
             
             # TRACE: Log progress input and decision
             if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("progress", False):
-                _log_debug(f"[Progress] INPUT: seek={seek}ms, duration={duration}s, pct={progress_pct:.1f}%", "trace", "progress")
-                if will_render:
-                    reason = "forced" if force else "changed"
-                    _log_debug(f"[Progress] DECISION: render=True ({reason}), quantized={progress_quantized}%", "trace", "progress")
+                _log_debug(f"[Progress] INPUT: seek={seek}ms, duration={duration}s, pct={progress_pct:.1f}%, will_render={will_render}", "trace", "progress")
             
             if will_render:
-                if force:
-                    self._progress.force_redraw()
-                self._progress.restore_backing(screen)
-                rect = self._progress.render(screen, progress_pct)
+                if not skip_restore:
+                    self._progress.restore_backing(screen)
+                # SliderIndicator expects 0-100 integer
+                rect = self._progress.render(screen, int(progress_pct))
                 if rect:
                     dirty_rects.append(rect)
                     # TRACE: Log progress output
                     if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("progress", False):
                         _log_debug(f"[Progress] OUTPUT: pct={progress_pct:.1f}%, rect={rect}", "trace", "progress")
-                self._prev_progress = progress_quantized
+
+    def get_all_rects(self):
+        """Get bounding rectangles for all configured indicators.
+        
+        Used by handlers for layer composition - clearing indicator areas
+        from bgr_surface before rendering.
+        
+        :return: list of pygame.Rect objects
+        """
+        rects = []
+        if self._volume:
+            rect = self._volume.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._mute:
+            rect = self._mute.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._shuffle:
+            rect = self._shuffle.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._repeat:
+            rect = self._repeat.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._playstate:
+            rect = self._playstate.get_rect()
+            if rect:
+                rects.append(rect)
+        if self._progress:
+            rect = self._progress.get_rect()
+            if rect:
+                rects.append(rect)
+        return rects

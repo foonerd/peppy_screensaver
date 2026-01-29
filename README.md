@@ -96,29 +96,59 @@ The plugin settings are organized into sections:
 | Smooth Buffer | Audio smoothing buffer size |
 | Needle Cache | Cache rotated needle images (reduces CPU, uses more RAM) |
 
-### Playback Behavior
+### VU-Meter Settings
 
-Controls display persistence during pause and track changes.
+Template/meter selection and randomization options.
 
-| Setting | Options | Default | Description |
-|---------|---------|---------|-------------|
-| Keep display active | Disabled/5s/15s/30s/1min/2min/5min | 30s | Delay before display turns off after pause/stop |
-| Time display during persist | Freeze/Countdown | Freeze | What to show in time area when paused |
-
-**Keep display active:** Prevents screen flicker during track changes by keeping the display running briefly after playback stops. Volumio sends stop-play sequence on next/prev, causing visible restart without this delay.
-
-**Time display modes:**
-- **Freeze**: Shows track time at moment of pause (default)
-- **Countdown**: Shows time until display turns off (orange color)
+| Setting | Description |
+|---------|-------------|
+| Meter Selection | Select specific meter or use random/list mode |
+| Random Selection | Comma-separated list of meters for list mode |
+| Random Mode | Trigger: on title change or at interval |
+| Random Interval | Seconds between random meter changes (15-1000) |
 
 ### Performance Settings
 
-Frame rate and update intervals.
+Frame rate, update intervals, and CPU tuning.
 
 | Setting | Range | Default | Description |
 |---------|-------|---------|-------------|
 | Frame Rate | 10-60 | 30 | Display refresh rate (FPS). Lower = less CPU |
 | Update Interval | 1-10 | 2 | Spectrum/needle updates per N frames. Higher = less CPU |
+| Meter Timing Delay | 0-20 | 10 | Render loop delay in milliseconds. See below for details |
+
+**Meter Timing Delay:** Controls the pause between render frames. This setting balances CPU usage and meter responsiveness:
+
+- **10ms (default)**: Good balance of CPU and responsive meters
+- **15-20ms**: Lower CPU usage, meters may feel slightly sluggish  
+- **0-5ms**: Higher CPU usage, more responsive meters
+
+**Warning:** Values below 10ms can significantly increase CPU usage. Not recommended for Pi 3 or systems with thermal constraints.
+
+**Spectrum Template Performance:** Spectrum analyzer templates have higher CPU usage than VU meter templates due to rendering ~57 animated bars per frame. CPU scales directly with frame rate:
+
+| Frame Rate | Approximate CPU (Pi 5) |
+|------------|------------------------|
+| 30 fps | ~75-80% |
+| 25 fps | ~70-75% |
+| 20 fps | ~60-65% |
+| 15 fps | ~45-50% |
+| 10 fps | ~25-30% |
+
+**Recommendation:** Use 15-20 fps for spectrum templates to keep CPU under 60%.
+
+### Rotation Settings
+
+Album art and cassette spool rotation speed and quality.
+
+| Setting | Range | Default | Description |
+|---------|-------|---------|-------------|
+| Rotation Quality | Low/Medium/High/Custom | Medium | Rotation smoothness vs CPU usage |
+| Rotation FPS | 4-30 | 8 | Custom rotation update rate |
+| Vinyl Rotation Speed | 0.1-5.0 | 1.0 | Album art rotation multiplier |
+| Left Spool Speed | 0.1-5.0 | 1.0 | Left cassette reel multiplier |
+| Right Spool Speed | 0.1-5.0 | 1.0 | Right cassette reel multiplier |
+| Reel Rotation Direction | CCW/CW | CCW | Cassette reel rotation direction |
 
 ### Scrolling Settings
 
@@ -147,18 +177,20 @@ Fade transitions between meters and playback states.
 | Transition Color | Black/White | Black | Fade overlay color |
 | Transition Opacity | 0-100 | 100 | Fade overlay opacity percentage |
 
-### Rotation Settings
+### Playback Behavior
 
-Album art and cassette spool rotation speed and quality.
+Controls display persistence during pause and track changes.
 
-| Setting | Range | Default | Description |
-|---------|-------|---------|-------------|
-| Rotation Quality | Low/Medium/High/Custom | Medium | Rotation smoothness vs CPU usage |
-| Rotation FPS | 4-30 | 8 | Custom rotation update rate |
-| Vinyl Rotation Speed | 0.1-5.0 | 1.0 | Album art rotation multiplier |
-| Left Spool Speed | 0.1-5.0 | 1.0 | Left cassette reel multiplier |
-| Right Spool Speed | 0.1-5.0 | 1.0 | Right cassette reel multiplier |
-| Reel Rotation Direction | CCW/CW | CCW | Cassette reel rotation direction |
+| Setting | Options | Default | Description |
+|---------|---------|---------|-------------|
+| Keep display active | Disabled/5s/15s/30s/1min/2min/5min | 30s | Delay before display turns off after pause/stop |
+| Time display during persist | Freeze/Countdown | Freeze | What to show in time area when paused |
+
+**Keep display active:** Prevents screen flicker during track changes by keeping the display running briefly after playback stops. Volumio sends stop-play sequence on next/prev, causing visible restart without this delay.
+
+**Time display modes:**
+- **Freeze**: Shows track time at moment of pause (default)
+- **Countdown**: Shows time until display turns off (orange color)
 
 ### Debug Settings
 
@@ -201,6 +233,23 @@ When **Trace** is selected, additional switches appear to enable logging for spe
 
 All trace switches default to OFF and persist independently.
 
+### Profiling
+
+Performance analysis tools for developers and advanced users.
+
+| Setting | Range | Default | Description |
+|---------|-------|---------|-------------|
+| Timing Profiling | On/Off | Off | Log render loop timing to debug log |
+| Timing Interval | 1-1000 | 30 | Frames between timing reports |
+| cProfile Profiling | On/Off | Off | Enable Python cProfile for detailed analysis |
+| cProfile Duration | 0-3600 | 60 | Seconds to run profiler before writing results |
+
+**Timing Profiling:** Logs frame timing statistics (min/max/avg render time) to the debug log at the specified interval. Useful for identifying performance issues.
+
+**cProfile Profiling:** Runs Python's cProfile module for detailed function-level timing. Results are written to `/tmp/peppy_profile.txt` after the specified duration. Use for deep performance analysis.
+
+**Note:** Both profiling options add overhead. Disable after troubleshooting.
+
 ## Performance Tuning
 
 ### Tuning Guide
@@ -208,31 +257,43 @@ All trace switches default to OFF and persist independently.
 **Pi 4/5 (recommended settings):**
 - Frame rate: 30 FPS
 - Update interval: 2
-- Expected CPU: 15-25%
+- Meter timing delay: 10ms
+- Expected CPU: 15-25% (basic), 80-85% (turntable)
 
 **Pi 3B (conservative settings):**
 - Frame rate: 20 FPS
 - Update interval: 3
+- Meter timing delay: 15ms
 - Expected CPU: 25-35%
 
 **High CPU / thermal issues:**
 - Reduce frame rate to 15-20
 - Increase update interval to 3-4
+- Increase meter timing delay to 15-20ms
 - Use 800x480 resolution templates
+- Avoid turntable templates with rotation
 
 ### Optimization Details
 
-v3.0.7+ includes several CPU optimizations:
+v3.2.0+ includes several CPU optimizations:
 
 - **Dirty rectangle rendering**: Spectrum analyzer only redraws bars that changed
 - **Skip-if-unchanged**: Needle animation skips frames when volume is static
 - **Configurable throttling**: UI-adjustable frame rate and update intervals
 
-These optimizations reduce CPU usage by 30-50% compared to earlier versions.
+v3.2.1+ adds turntable-specific optimizations:
+
+- **Vinyl + album art composite**: Album art is composited onto vinyl surface once per track change, then rotated as a single unit (like a real LP). Reduces per-frame blits by ~50%
+- **Precomputed rotation frames**: Tonearm rotation frames are precomputed at load time, eliminating per-frame rotation calculations
+- **Configurable meter timing delay**: Adjustable render loop delay (0-20ms) balances CPU usage and meter responsiveness
+
+These optimizations reduce turntable template CPU usage from 100%+ to 80-85% on Pi 5.
 
 ### Expected CPU Usage
 
-At default settings (30 FPS, update interval 2):
+At default settings (30 FPS, update interval 2, meter delay 10ms):
+
+**Basic/Spectrum templates:**
 
 | Resolution | Pi 5 | Pi 4 | Pi 3B | x64 |
 |------------|------|------|-------|-----|
@@ -240,6 +301,16 @@ At default settings (30 FPS, update interval 2):
 | 1024x600 | 12-18% | 18-25% | 30-40% | 1-2% |
 | 1280x720 | 20-30% | 30-40% | Not recommended | 1-2% |
 | 1920x1080 | 30-40% | 40-55% | Not recommended | 2-3% |
+
+**Turntable templates (with vinyl/art rotation):**
+
+| Resolution | Pi 5 | Pi 4 | Pi 3B | x64 |
+|------------|------|------|-------|-----|
+| 800x480 | 50-60% | 60-70% | Not recommended | 5-10% |
+| 1280x720 | 80-85% | 85-95% | Not recommended | 10-15% |
+
+Turntable templates are more CPU-intensive due to continuous rotation rendering.
+Use basic templates on Pi 3 or systems with thermal constraints.
 
 CPU usage can be reduced further by lowering frame rate and increasing update interval.
 
@@ -453,6 +524,77 @@ Indicators support two display modes:
 Volume display supports multiple styles: numeric text, horizontal bar,
 image-based fader/slider, rotary knob, or arc gauge.
 
+#### Progress Indicator Styles
+
+Progress bar supports the same styles as volume indicator:
+
+**Horizontal slider (default):**
+```ini
+progress.pos = 100,680
+progress.dim = 500,10
+progress.color = 0,200,255
+progress.bg.color = 40,40,40
+```
+
+**Vertical slider:**
+```ini
+progress.pos = 50,200
+progress.dim = 10,400
+progress.slider.orientation = vertical
+progress.color = 0,200,255
+progress.bg.color = 40,40,40
+```
+
+**Arc gauge:**
+```ini
+progress.pos = 100,100
+progress.dim = 100,100
+progress.style = arc
+progress.arc.width = 8
+progress.arc.angle.start = 180
+progress.arc.angle.end = 0
+progress.color = 0,255,0
+progress.bg.color = 40,40,40
+```
+
+**Rotary knob:**
+```ini
+progress.pos = 100,100
+progress.dim = 80,80
+progress.style = knob
+progress.knob.image = progress_knob.png
+progress.knob.angle.start = 225
+progress.knob.angle.end = -45
+```
+
+**Image-based slider:**
+```ini
+progress.pos = 50,600
+progress.dim = 500,30
+progress.style = slider
+progress.slider.track = progress_track.png
+progress.slider.tip = progress_tip.png
+progress.slider.orientation = horizontal
+progress.slider.travel = 0,470
+progress.slider.tip.offset = 0,0
+```
+
+| Option | Description |
+|--------|-------------|
+| `progress.style` | Display style: slider, arc, knob, numeric (default: slider) |
+| `progress.slider.orientation` | Slider direction: horizontal, vertical (default: horizontal) |
+| `progress.slider.track` | PNG image for slider track/groove (optional) |
+| `progress.slider.tip` | PNG image for slider handle/tip (required for image slider) |
+| `progress.slider.travel` | Pixel range for tip movement: start,end |
+| `progress.slider.tip.offset` | Tip anchor offset: x,y (default: 0,0) |
+| `progress.knob.image` | PNG image for rotary knob (required for knob style) |
+| `progress.knob.angle.start` | Knob start angle in degrees (default: 225) |
+| `progress.knob.angle.end` | Knob end angle in degrees (default: -45) |
+| `progress.arc.width` | Arc stroke width in pixels (default: 6) |
+| `progress.arc.angle.start` | Arc start angle in degrees (default: 225) |
+| `progress.arc.angle.end` | Arc end angle in degrees (default: -45) |
+| `progress.font.size` | Font size for numeric style (default: 24) |
+
 See the wiki for detailed configuration reference and examples.
 
 ## Troubleshooting
@@ -550,10 +692,12 @@ If CPU usage is higher than expected:
 1. **Adjust Performance Settings** (Settings > Plugins > PeppyMeter > Performance):
    - Reduce frame rate to 20 FPS
    - Increase update interval to 3 or 4
+   - Increase meter timing delay to 15-20ms
 2. Verify NEON is enabled (see above)
 3. Use a lower resolution meter template (800x480 recommended for Pi 3)
-4. Disable spectrum visualization if not needed
-5. Disable album art rotation if enabled
+4. Use basic templates instead of turntable templates (no rotation overhead)
+5. Disable spectrum visualization if not needed
+6. Disable album art rotation if enabled
 
 ## Directory Structure
 
@@ -566,7 +710,10 @@ peppy_screensaver/
   screensaver/                   - PeppyMeter runtime (after install)
     peppymeter/                  - PeppyMeter module
     spectrum/                    - PeppySpectrum module
-    volumio_peppymeter.py        - Main screensaver script
+    volumio_peppymeter.py        - Main coordinator and entry point
+    volumio_basic.py             - Basic skin handler (meters, static art)
+    volumio_turntable.py         - Turntable skin handler (vinyl, tonearm)
+    volumio_cassette.py          - Cassette skin handler (rotating reels)
     volumio_spectrum.py          - Spectrum analyzer integration
     volumio_configfileparser.py  - Volumio config extensions
     volumio_indicators.py        - Playback indicator support
@@ -577,6 +724,69 @@ peppy_screensaver/
   UIConfig.json                  - Plugin settings UI definition
   index.js                       - Volumio plugin controller
 ```
+
+## Architecture Overview
+
+The plugin uses a coordinator pattern with specialized handlers for different skin types.
+The main coordinator (`volumio_peppymeter.py`) detects the skin type and delegates
+rendering to the appropriate handler.
+
+### Skin Type Detection
+
+Skin type is automatically detected from the meter configuration:
+
+| Skin Type | Detection Criteria | Handler |
+|-----------|-------------------|---------|
+| **Cassette** | Has `reel.left.center` OR `reel.right.center`, WITHOUT tonearm or vinyl | `volumio_cassette.py` |
+| **Turntable** | Has `vinyl.center` OR `tonearm.*` OR `albumart.rotation = True` | `volumio_turntable.py` |
+| **Basic** | Everything else (meters only, static album art) | `volumio_basic.py` |
+
+### Handler Responsibilities
+
+Each handler is self-contained and manages its own render loop:
+
+**BasicHandler** - Simplest rendering path, no backing buffer conflicts:
+- Static album art
+- Scrolling text fields
+- Playback indicators
+- No animated mechanical elements
+
+**TurntableHandler** - Vinyl turntable skins:
+- Rotating vinyl disc
+- Rotating album art (coupled to vinyl)
+- Animated tonearm with drop/lift/tracking states
+- Backing buffer management for overlapping elements
+
+**CassetteHandler** - Cassette deck skins:
+- Left and right rotating reels
+- Backing buffer management for reel overlap zones
+- Force-redraw logic for text in reel areas
+
+### Render Z-Order
+
+All handlers follow a layered render order:
+
+1. Background (static, already on screen)
+2. Backing restoration (for animated elements)
+3. Meters (needle animation)
+4. Animated elements (vinyl, reels, tonearm)
+5. Album art
+6. Text fields (artist, title, album)
+7. Indicators (volume, mute, shuffle, repeat, progress)
+8. Time remaining
+9. Sample rate / format icon
+10. Foreground mask
+
+### Performance Implications
+
+| Skin Type | Relative CPU | Notes |
+|-----------|-------------|-------|
+| Basic | Lowest | No rotation calculations or backing management |
+| Turntable | Medium | Pre-computed rotation frames, FPS-gated updates |
+| Cassette | Medium-High | Dual reel rotation, force-redraw for overlap zones |
+
+Template authors can reduce CPU usage by choosing simpler skin types when
+animated mechanical elements are not needed.
 
 ## Build Information
 
@@ -625,5 +835,5 @@ MIT
 - PeppyMeter/PeppySpectrum: [project-owner](https://github.com/project-owner)
 - Original Volumio plugin: [2aCD](https://github.com/2aCD-creator)
 - Volumio 4 refactoring: [foonerd](https://github.com/foonerd)
-- Volumio 4 pythonising: [Wheaten](https://github.com/WheatenSudo)
+- Volumio 4 Python development: [Wheaten](https://github.com/WheatenSudo)
 - Plugin Q&A testing: Wheaten

@@ -20,6 +20,8 @@ from spectrumconfigparser import SCREEN_WIDTH, SCREEN_HEIGHT, AVAILABLE_SPECTRUM
 # =============================================================================
 # Debug logging support (shared from main module)
 # =============================================================================
+DEBUG_LOG_FILE = '/tmp/peppy_debug.log'
+
 _DEBUG_LEVEL = "off"
 _DEBUG_TRACE = {}
 
@@ -34,7 +36,7 @@ def init_spectrum_debug(level, trace_dict):
     _DEBUG_TRACE = trace_dict
 
 def _log_debug(msg, level="basic", component=None):
-    """Log debug message if level is enabled.
+    """Log debug message to file if level is enabled.
     
     :param msg: Message to log
     :param level: Required level ("basic", "verbose", "trace")
@@ -55,8 +57,13 @@ def _log_debug(msg, level="basic", component=None):
         if not _DEBUG_TRACE.get(component, False):
             return
     
-    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"[{timestamp}] {msg}") 
+    try:
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        with open(DEBUG_LOG_FILE, 'a') as f:
+            f.write(f"[{timestamp}] {msg}\n")
+    except Exception:
+        pass
+
 
 class SpectrumOutput(Thread):
     """ Provides show spectrum in a separate thread """

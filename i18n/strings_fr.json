@@ -83,7 +83,7 @@
     "NOTINLIST_TITLE":"Avertissement en mode liste",
     "NOTINLIST":"La liste ne peut pas être enregistrée.<br />Les entrées de suivi ne sont pas disponibles dans la section Compteur:<br /><br />",
     "PERFORMANCE_CONF":"Paramètres de performance",
-    "PERFORMANCE_DESC":"Taux de rafraîchissement, intervalles de mise à jour et journalisation de débogage",
+    "PERFORMANCE_DESC":"Taux de rafraîchissement et intervalles de mise à jour",
     "FRAME_RATE":"Taux de rafraîchissement",
     "FRAME_RATE_DOC":"Taux de rafraîchissement en images par seconde (FPS).<br /><br /><b>Par défaut: 30</b><br /><br />Des valeurs plus basses réduisent l'utilisation du CPU mais peuvent sembler moins fluides.<br />Recommandé: 20-30 pour Pi 4, 15-20 pour Pi 3",
     "UPDATE_INTERVAL":"Intervalle de mise à jour",
@@ -187,6 +187,16 @@
     "TRACE_FADE":"Trace: Transitions fondu",
     "TRACE_FADE_DOC":"Journaliser le timing fondu entrée/sortie, états de verrouillage",
     "TRACE_FRAME":"Trace: Timing frame",
-    "TRACE_FRAME_DOC":"Journaliser le timing de boucle de rendu, changements de statut, gating FPS"
+    "TRACE_FRAME_DOC":"Journaliser le timing de boucle de rendu, changements de statut, gating FPS",
+    "PROFILING_CONF":"Profilage",
+    "PROFILING_DESC":"Outils d'analyse de performance CPU pour identifier les goulots d'étranglement",
+    "PROFILING_TIMING":"Chronométrage par frame",
+    "PROFILING_TIMING_DOC":"Journaliser la répartition du temps pour chaque frame de rendu dans /tmp/peppy_debug.log<br /><br />Affiche: temps total du frame, compteur, rotation, blit, défilement et autres composants.<br /><br /><b>Faible surcharge</b> - sûr pour utilisation continue pendant les tests.",
+    "PROFILING_INTERVAL":"Intervalle de journalisation",
+    "PROFILING_INTERVAL_DOC":"Journaliser le timing tous les N frames.<br /><br /><b>1:</b> Chaque frame (verbeux)<br /><b>30:</b> Une fois par seconde à 30fps (défaut)<br /><b>300:</b> Toutes les 10 secondes<br /><br />Valeurs plus basses = plus de sortie journal",
+    "PROFILING_CPROFILE":"Activer cProfile",
+    "PROFILING_CPROFILE_DOC":"Profilage complet au niveau fonction Python.<br /><br /><b>ATTENTION:</b> Surcharge CPU significative (10-30%). Utiliser uniquement pour de courtes sessions de diagnostic.<br /><br />Crée /tmp/peppy_profile.prof et /tmp/peppy_profile_summary.txt à la fermeture.",
+    "PROFILING_DURATION":"Durée du profilage (secondes)",
+    "PROFILING_DURATION_DOC":"Arrêter automatiquement cProfile après ce délai.<br /><br /><b>0:</b> Exécuter jusqu'à l'arrêt du compteur (non recommandé)<br /><b>60:</b> Une minute (défaut)<br /><b>300:</b> Cinq minutes<br /><br />Empêche la croissance incontrôlée du fichier de profil."
   }
 }
