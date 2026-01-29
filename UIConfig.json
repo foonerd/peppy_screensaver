@@ -898,6 +898,70 @@
                              "value": false
                             }
                             ]
+                },
+                {
+                "id": "profiling_conf",
+                "element": "section",
+                "label": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_CONF",
+                "description": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_DESC",
+                "icon": "fa-tachometer",
+                "hidden": false,
+                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"saveProfilingConf"},
+                "saveButton": {
+                              "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
+                              "data": [
+                                      "profilingTiming",
+                                      "profilingInterval",
+                                      "profilingCprofile",
+                                      "profilingDuration"
+                                      ]
+                              },
+                "content": [
+                            {
+                             "id": "profilingTiming",
+                             "element": "switch",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_TIMING_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_TIMING",
+                             "value": false
+                            },
+                            {
+                             "id": "profilingInterval",
+                             "element": "input",
+                             "type": "number",
+                             "visibleIf": {"field": "profilingTiming", "value": true},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_INTERVAL_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_INTERVAL",
+                             "attributes": [
+                                             {"placeholder": 30},
+                                             {"maxlength": 4},
+                                             {"min": 1},
+                                             {"max": 1000}
+                                           ],
+                             "value": 30
+                            },
+                            {
+                             "id": "profilingCprofile",
+                             "element": "switch",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_CPROFILE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_CPROFILE",
+                             "value": false
+                            },
+                            {
+                             "id": "profilingDuration",
+                             "element": "input",
+                             "type": "number",
+                             "visibleIf": {"field": "profilingCprofile", "value": true},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_DURATION_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.PROFILING_DURATION",
+                             "attributes": [
+                                             {"placeholder": 60},
+                                             {"maxlength": 4},
+                                             {"min": 0},
+                                             {"max": 3600}
+                                           ],
+                             "value": 60
+                            }
+                            ]
                 }
   ]
 }

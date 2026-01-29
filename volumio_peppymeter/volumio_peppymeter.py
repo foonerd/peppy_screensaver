@@ -25,6 +25,8 @@ import math
 import requests
 import pygame as pg
 import socketio
+import cProfile
+import pstats
 
 # SDL2 window positioning support (pygame 2.x with SDL2)
 use_sdl2 = False
@@ -61,6 +63,7 @@ from volumio_configfileparser import (
     DEBUG_TRACE_PLAYSTATE, DEBUG_TRACE_PROGRESS,
     DEBUG_TRACE_METADATA, DEBUG_TRACE_SEEK, DEBUG_TRACE_TIME,
     DEBUG_TRACE_INIT, DEBUG_TRACE_FADE, DEBUG_TRACE_FRAME,
+    PROFILING_TIMING, PROFILING_INTERVAL, PROFILING_CPROFILE, PROFILING_DURATION,
     ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
     REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
@@ -330,6 +333,17 @@ DEBUG_TRACE = {
     "frame": False,
 }
 
+# Profiling settings - controlled by config profiling.* settings
+# Per-frame timing logs component breakdown to debug log
+# cProfile creates /tmp/peppy_profile.prof and /tmp/peppy_profile_summary.txt
+PROFILING_TIMING_ENABLED = False
+PROFILING_INTERVAL_VALUE = 30
+PROFILING_CPROFILE_ENABLED = False
+PROFILING_DURATION_VALUE = 60
+PROFILING_START_TIME = 0
+PROFILING_FRAME_COUNTER = 0
+PROFILER = None
+
 def log_debug(msg, level="basic", component=None):
     """Write debug message to log file based on debug level and component switches.
     
@@ -402,6 +416,115 @@ def init_debug_config(meter_config_volumio):
     
     for config_key, trace_key in trace_key_map.items():
         DEBUG_TRACE[trace_key] = meter_config_volumio.get(config_key, False)
+
+
+def init_profiling_config(meter_config_volumio):
+    """Initialize profiling settings from config. Called after config is parsed."""
+    global PROFILING_TIMING_ENABLED, PROFILING_INTERVAL_VALUE
+    global PROFILING_CPROFILE_ENABLED, PROFILING_DURATION_VALUE
+    global PROFILING_START_TIME, PROFILER
+    
+    PROFILING_TIMING_ENABLED = meter_config_volumio.get(PROFILING_TIMING, False)
+    PROFILING_INTERVAL_VALUE = meter_config_volumio.get(PROFILING_INTERVAL, 30)
+    PROFILING_CPROFILE_ENABLED = meter_config_volumio.get(PROFILING_CPROFILE, False)
+    PROFILING_DURATION_VALUE = meter_config_volumio.get(PROFILING_DURATION, 60)
+    
+    if PROFILING_TIMING_ENABLED:
+        log_debug(f"[Profiling] Per-frame timing ENABLED, interval={PROFILING_INTERVAL_VALUE} frames", "basic")
+    
+    if PROFILING_CPROFILE_ENABLED:
+        log_debug(f"[Profiling] cProfile ENABLED, duration={PROFILING_DURATION_VALUE}s", "basic")
+        log_debug("[Profiling] WARNING: cProfile adds 10-30% CPU overhead", "basic")
+        PROFILER = cProfile.Profile()
+        PROFILER.enable()
+        PROFILING_START_TIME = time.time()
+
+
+def stop_profiling():
+    """Stop cProfile and save results. Called on exit or after duration expires."""
+    global PROFILER, PROFILING_CPROFILE_ENABLED
+    
+    if PROFILER and PROFILING_CPROFILE_ENABLED:
+        PROFILER.disable()
+        
+        # Save binary profile
+        profile_path = '/tmp/peppy_profile.prof'
+        PROFILER.dump_stats(profile_path)
+        log_debug(f"[Profiling] Profile saved to {profile_path}", "basic")
+        
+        # Save human-readable summary
+        summary_path = '/tmp/peppy_profile_summary.txt'
+        try:
+            with open(summary_path, 'w') as f:
+                f.write("PeppyMeter cProfile Summary\n")
+                f.write("=" * 60 + "\n\n")
+                f.write("Top 50 functions by cumulative time:\n\n")
+                stats = pstats.Stats(PROFILER, stream=f)
+                stats.sort_stats('cumulative')
+                stats.print_stats(50)
+                f.write("\n\nTop 50 functions by total time:\n\n")
+                stats.sort_stats('tottime')
+                stats.print_stats(50)
+            log_debug(f"[Profiling] Summary saved to {summary_path}", "basic")
+        except Exception as e:
+            log_debug(f"[Profiling] Error saving summary: {e}", "basic")
+        
+        PROFILER = None
+        PROFILING_CPROFILE_ENABLED = False
+
+
+def check_profiling_duration():
+    """Check if cProfile duration has expired. Call each frame."""
+    global PROFILING_CPROFILE_ENABLED
+    
+    if PROFILING_CPROFILE_ENABLED and PROFILING_DURATION_VALUE > 0:
+        elapsed = time.time() - PROFILING_START_TIME
+        if elapsed >= PROFILING_DURATION_VALUE:
+            log_debug(f"[Profiling] Duration limit reached ({PROFILING_DURATION_VALUE}s), stopping cProfile", "basic")
+            stop_profiling()
+
+
+def log_frame_timing(frame_num, t_start, t_meter=None, t_rotation=None, t_blit=None, t_scroll=None, t_end=None):
+    """Log per-frame timing breakdown.
+    
+    If per-component timings are not available (None), only total time is logged.
+    For detailed component timing, handlers must be instrumented.
+    """
+    global PROFILING_FRAME_COUNTER
+    
+    if not PROFILING_TIMING_ENABLED:
+        return
+    
+    PROFILING_FRAME_COUNTER += 1
+    if PROFILING_FRAME_COUNTER % PROFILING_INTERVAL_VALUE != 0:
+        return
+    
+    if t_end is None:
+        return
+    
+    total_ms = (t_end - t_start) * 1000
+    
+    # Check if we have per-component timing
+    if t_meter is not None and t_rotation is not None and t_blit is not None and t_scroll is not None:
+        meter_ms = (t_meter - t_start) * 1000
+        rot_ms = (t_rotation - t_meter) * 1000
+        blit_ms = (t_blit - t_rotation) * 1000
+        scroll_ms = (t_scroll - t_blit) * 1000
+        other_ms = (t_end - t_scroll) * 1000
+        
+        log_debug(
+            f"[Perf] Frame #{frame_num}: total={total_ms:.1f}ms | "
+            f"meter={meter_ms:.1f}ms | rot={rot_ms:.1f}ms | blit={blit_ms:.1f}ms | "
+            f"scroll={scroll_ms:.1f}ms | other={other_ms:.1f}ms",
+            "basic"
+        )
+    else:
+        # Only total time available
+        log_debug(
+            f"[Perf] Frame #{frame_num}: total={total_ms:.1f}ms",
+            "basic"
+        )
+
 
 # Runtime paths
 PeppyRunning = '/tmp/peppyrunning'
@@ -2907,6 +3030,9 @@ def start_display_output(pm, callback, meter_config_volumio):
     _dbg_log_time = 0  # Throttle periodic logging
     
     while running:
+        # CHECK PROFILING DURATION: Auto-stop cProfile if duration exceeded
+        check_profiling_duration()
+        
         # CHECK STOP SIGNAL: Exit if plugin removed runFlag
         # This is separate from touch/mouse exit handling to ensure
         # clean shutdown when plugin requests stop
@@ -2979,8 +3105,26 @@ def start_display_output(pm, callback, meter_config_volumio):
             # Check for handler delegation
             handler = ov.get("handler")
             if handler:
+                # PROFILING: Time the handler render
+                t_render_start = time.perf_counter() if PROFILING_TIMING_ENABLED else 0
+                
                 # Handler-based rendering (handler calls meter.run() internally)
                 dirty_rects = handler.render(last_metadata, now_ticks)
+                
+                # PROFILING: Log frame timing
+                if PROFILING_TIMING_ENABLED:
+                    t_render_end = time.perf_counter()
+                    # Note: Per-component timing requires handler instrumentation
+                    # Here we just log total render time
+                    log_frame_timing(
+                        frame_counter,
+                        t_render_start,
+                        None,  # t_meter - not available at this level
+                        None,  # t_rotation - not available at this level
+                        None,  # t_blit - not available at this level
+                        None,  # t_scroll - not available at this level
+                        t_render_end  # t_end - total render time
+                    )
                 
                 # TRACE: Log meter activity (meter.run() called by handler)
                 if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("meters", False):
@@ -3071,6 +3215,9 @@ def start_display_output(pm, callback, meter_config_volumio):
     
     metadata_watcher.stop()
     
+    # Stop profiling and save results
+    stop_profiling()
+    
     pm.exit()
 
 
@@ -3102,6 +3249,9 @@ if __name__ == "__main__":
         except Exception:
             pass
     log_debug(f"Debug level set to: {DEBUG_LEVEL_CURRENT}", "basic")
+    
+    # Initialize profiling settings (must be after debug init to use log_debug)
+    init_profiling_config(meter_config_volumio)
     
     # Log enabled trace components (AFTER file clearing)
     if DEBUG_LEVEL_CURRENT == "trace":

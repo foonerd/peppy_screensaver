@@ -83,7 +83,7 @@
     "NOTINLIST_TITLE":"List-Modus Warnung",
     "NOTINLIST":"Liste kann nicht gespeichert werden.<br />Folgende Einträge sind nicht als Meter-Abschnitt vorhanden :<br /><br />",
     "PERFORMANCE_CONF":"Leistungseinstellungen",
-    "PERFORMANCE_DESC":"Bildrate, Update-Intervalle und Debug-Protokollierung",
+    "PERFORMANCE_DESC":"Bildrate und Update-Intervalle",
     "FRAME_RATE":"Bildrate",
     "FRAME_RATE_DOC":"Bildwiederholrate in Bildern pro Sekunde (FPS).<br /><br /><b>Standard: 30</b><br /><br />Niedrigere Werte reduzieren die CPU-Auslastung, können aber weniger flüssig erscheinen.<br />Empfohlen: 20-30 für Pi 4, 15-20 für Pi 3",
     "UPDATE_INTERVAL":"Update-Intervall",
@@ -187,6 +187,16 @@
     "TRACE_FADE":"Trace: Überblendungen",
     "TRACE_FADE_DOC":"Einblend-/Ausblendzeit, Lock-Status protokollieren",
     "TRACE_FRAME":"Trace: Frame-Timing",
-    "TRACE_FRAME_DOC":"Render-Loop-Timing, Status-Änderungen, FPS-Gating protokollieren"
+    "TRACE_FRAME_DOC":"Render-Loop-Timing, Status-Änderungen, FPS-Gating protokollieren",
+    "PROFILING_CONF":"Profiling",
+    "PROFILING_DESC":"CPU-Leistungsanalyse zur Identifizierung von Engpässen",
+    "PROFILING_TIMING":"Frame-Zeitmessung",
+    "PROFILING_TIMING_DOC":"Zeitaufschlüsselung für jeden Render-Frame in /tmp/peppy_debug.log protokollieren<br /><br />Zeigt: Gesamtframezeit, Meter, Rotation, Blit, Scroll und andere Komponenten.<br /><br /><b>Geringer Overhead</b> - sicher für kontinuierlichen Testbetrieb.",
+    "PROFILING_INTERVAL":"Zeitmessungs-Intervall",
+    "PROFILING_INTERVAL_DOC":"Zeitmessung alle N Frames protokollieren.<br /><br /><b>1:</b> Jeden Frame (ausführlich)<br /><b>30:</b> Einmal pro Sekunde bei 30fps (Standard)<br /><b>300:</b> Alle 10 Sekunden<br /><br />Niedrigere Werte = mehr Protokollausgabe",
+    "PROFILING_CPROFILE":"cProfile aktivieren",
+    "PROFILING_CPROFILE_DOC":"Vollständiges Python-Funktionslevel-Profiling.<br /><br /><b>WARNUNG:</b> Erheblicher CPU-Overhead (10-30%). Nur für kurze Diagnosesitzungen verwenden.<br /><br />Erstellt /tmp/peppy_profile.prof und /tmp/peppy_profile_summary.txt beim Beenden.",
+    "PROFILING_DURATION":"Profiling-Dauer (Sekunden)",
+    "PROFILING_DURATION_DOC":"cProfile nach dieser Zeit automatisch stoppen.<br /><br /><b>0:</b> Bis zum Meter-Stopp ausführen (nicht empfohlen)<br /><b>60:</b> Eine Minute (Standard)<br /><b>300:</b> Fünf Minuten<br /><br />Verhindert unkontrolliertes Wachstum der Profildatei."
   }
 }

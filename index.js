@@ -790,6 +790,23 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 uiconf.sections[7].content[i + 1].value = traceValue;
             }
             
+            // section 8 - Profiling settings -----------------------------
+            // per-frame timing
+            var profilingTiming = peppy_config.current['profiling.timing'] === 'true' || peppy_config.current['profiling.timing'] === true;
+            uiconf.sections[8].content[0].value = profilingTiming;
+            
+            // timing interval
+            var profilingInterval = parseInt(peppy_config.current['profiling.interval'], 10) || 30;
+            uiconf.sections[8].content[1].value = profilingInterval;
+            
+            // cProfile enabled
+            var profilingCprofile = peppy_config.current['profiling.cprofile'] === 'true' || peppy_config.current['profiling.cprofile'] === true;
+            uiconf.sections[8].content[2].value = profilingCprofile;
+            
+            // profile duration
+            var profilingDuration = parseInt(peppy_config.current['profiling.duration'], 10) || 60;
+            uiconf.sections[8].content[3].value = profilingDuration;
+            
         } else {
             self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));            
         }
@@ -1485,6 +1502,58 @@ peppyScreensaver.prototype.saveDebugConf = function (confData) {
     }
   }, 500);
 }; // end saveDebugConf -------------------------------------
+
+peppyScreensaver.prototype.saveProfilingConf = function (confData) {
+  const self = this;
+  let noChanges = true;
+  
+  if (fs.existsSync(PeppyConf)){
+    
+    // per-frame timing switch
+    var profilingTiming = confData.profilingTiming ? 'true' : 'false';
+    if (peppy_config.current['profiling.timing'] != profilingTiming) {
+        peppy_config.current['profiling.timing'] = profilingTiming;
+        noChanges = false;
+    }
+    
+    // timing interval
+    var profilingInterval = self.minmax('profiling_interval', confData.profilingInterval, [1, 1000, 30]);
+    if (peppy_config.current['profiling.interval'] != profilingInterval) {
+        peppy_config.current['profiling.interval'] = profilingInterval;
+        noChanges = false;
+    }
+    
+    // cProfile switch
+    var profilingCprofile = confData.profilingCprofile ? 'true' : 'false';
+    if (peppy_config.current['profiling.cprofile'] != profilingCprofile) {
+        peppy_config.current['profiling.cprofile'] = profilingCprofile;
+        noChanges = false;
+    }
+    
+    // profile duration
+    var profilingDuration = self.minmax('profiling_duration', confData.profilingDuration, [0, 3600, 60]);
+    if (peppy_config.current['profiling.duration'] != profilingDuration) {
+        peppy_config.current['profiling.duration'] = profilingDuration;
+        noChanges = false;
+    }
+    
+    if (!noChanges) {
+        fs.writeFileSync(PeppyConf, ini.stringify(peppy_config, {whitespace: true}));
+        // Restart meter to apply new profiling settings
+        if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+    }
+  } else {
+      self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));
+  }
+  
+  setTimeout(function () {
+    if (noChanges) {
+        self.commandRouter.pushToastMessage('info', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_CHANGES'));
+    } else {
+        self.commandRouter.pushToastMessage('success', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('COMMON.SETTINGS_SAVED_SUCCESSFULLY'));
+    }
+  }, 500);
+}; // end saveProfilingConf -------------------------------------
 
 // global functions
 //-------------------------------------------------------------

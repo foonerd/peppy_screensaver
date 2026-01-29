@@ -62,6 +62,12 @@ DEBUG_TRACE_SWITCHES = [
     DEBUG_TRACE_INIT, DEBUG_TRACE_FADE, DEBUG_TRACE_FRAME
 ]
 
+# Profiling settings
+PROFILING_TIMING = "profiling.timing"
+PROFILING_INTERVAL = "profiling.interval"
+PROFILING_CPROFILE = "profiling.cprofile"
+PROFILING_DURATION = "profiling.duration"
+
 TRANSITION_TYPE = "transition.type"
 TRANSITION_DURATION = "transition.duration"
 TRANSITION_COLOR = "transition.color"
@@ -312,6 +318,24 @@ class Volumio_ConfigFileParser(object):
                 self.meter_config_volumio[trace_key] = c.getboolean(CURRENT, trace_key)
             except:
                 self.meter_config_volumio[trace_key] = False
+
+        # Profiling settings
+        try:
+            self.meter_config_volumio[PROFILING_TIMING] = c.getboolean(CURRENT, PROFILING_TIMING)
+        except:
+            self.meter_config_volumio[PROFILING_TIMING] = False
+        try:
+            self.meter_config_volumio[PROFILING_INTERVAL] = c.getint(CURRENT, PROFILING_INTERVAL)
+        except:
+            self.meter_config_volumio[PROFILING_INTERVAL] = 30
+        try:
+            self.meter_config_volumio[PROFILING_CPROFILE] = c.getboolean(CURRENT, PROFILING_CPROFILE)
+        except:
+            self.meter_config_volumio[PROFILING_CPROFILE] = False
+        try:
+            self.meter_config_volumio[PROFILING_DURATION] = c.getint(CURRENT, PROFILING_DURATION)
+        except:
+            self.meter_config_volumio[PROFILING_DURATION] = 60
 
         # Rotation settings (global)
         try:
