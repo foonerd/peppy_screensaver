@@ -18,6 +18,8 @@ import io
 import time
 import requests
 import pygame as pg
+import re
+import time as time_module
 
 try:
     from PIL import Image, ImageOps, ImageDraw
@@ -41,7 +43,7 @@ from configfileparser import (
 )
 
 from volumio_configfileparser import (
-    EXTENDED_CONF,
+    EXTENDED_CONF, METER_DELAY,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
     PLAY_TXT_CENTER, PLAY_CENTER, PLAY_MAX,
@@ -320,6 +322,7 @@ class ScrollingLabel:
         self._pause_until = 0
         self._backing = None
         self._backing_rect = None
+        self._bgr_surface = None  # Layer composition: use bgr for clearing
         # OPTIMIZATION: Track if redraw needed
         self._needs_redraw = True
         self._last_draw_offset = -1
@@ -341,6 +344,14 @@ class ScrollingLabel:
         # TRACE: Log backing capture
         if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
             log_debug(f"[Scrolling] CAPTURE: pos={self.pos}, box_w={self.box_width}, backing_rect={self._backing_rect}", "trace", "scrolling")
+
+    def set_background_surface(self, bgr_surface):
+        """Set background surface for layer composition clearing.
+        
+        When set, draw() will clear from this surface instead of captured backing.
+        This eliminates backing collision artifacts.
+        """
+        self._bgr_surface = bgr_surface
 
     def update_text(self, new_text):
         """Update text content, reset scroll position if changed."""
@@ -392,8 +403,10 @@ class ScrollingLabel:
             if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
                 log_debug(f"[Scrolling] STATIC: text='{self.text[:20]}...', pos={self.pos}, box_w={self.box_width}, text_w={self.text_w}", "trace", "scrolling")
             
-            # Restore backing before drawing (prevents artifacts)
-            if self._backing and self._backing_rect:
+            # LAYER COMPOSITION: Clear from bgr_surface if available
+            if self._bgr_surface and self._backing_rect:
+                surface.blit(self._bgr_surface, self._backing_rect.topleft, self._backing_rect)
+            elif self._backing and self._backing_rect:
                 surface.blit(self._backing, self._backing_rect.topleft)
             
             if self.center and self.box_width > 0:
@@ -439,8 +452,10 @@ class ScrollingLabel:
         if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
             log_debug(f"[Scrolling] SCROLL: text='{self.text[:20]}...', offset={current_offset_int}, forced={self._needs_redraw}, backing={self._backing_rect}", "trace", "scrolling")
         
-        # Restore backing before drawing (prevents artifacts)
-        if self._backing and self._backing_rect:
+        # LAYER COMPOSITION: Clear from bgr_surface if available
+        if self._bgr_surface and self._backing_rect:
+            surface.blit(self._bgr_surface, self._backing_rect.topleft, self._backing_rect)
+        elif self._backing and self._backing_rect:
             surface.blit(self._backing, self._backing_rect.topleft)
         
         # Draw scrolling text
@@ -654,8 +669,12 @@ class BasicHandler:
         
         # State tracking
         self.enabled = False
-        self.backing_dict = {}
+        self.bgr_surface = None  # Layer composition: static background
         self.dirty_rects = []
+        
+        # Meter timing delay
+        self.meter_delay_ms = 10
+        self.meter_delay_sec = 0.010
         
         # Renderers
         self.album_renderer = None
@@ -673,6 +692,11 @@ class BasicHandler:
         self.type_rect = None
         self.sample_box = 0
         self.center_flag = False
+        
+        # Rects for layer composition clearing
+        self.time_rect = None
+        self.sample_rect = None
+        self.art_rect = None
         
         # Fonts
         self.fontL = None
@@ -732,6 +756,10 @@ class BasicHandler:
             return
         
         self.enabled = True
+        
+        # Meter timing delay (configurable, 0-20ms, default 10ms)
+        self.meter_delay_ms = max(0, min(20, self.global_config.get(METER_DELAY, 10)))
+        self.meter_delay_sec = self.meter_delay_ms / 1000.0
         
         # Load fonts
         self._load_fonts(mc_vol)
@@ -839,40 +867,26 @@ class BasicHandler:
         else:
             self.sample_box = 0
         
-        # Capture backing surfaces
-        self.backing_dict = {}
-        screen_rect = self.screen.get_rect()
+        # LAYER COMPOSITION: Store background surface for clearing
+        # This is captured AFTER background is drawn but BEFORE dynamic content
+        self.bgr_surface = self.screen.copy()
+        log_debug("  Background surface captured for layer composition", "verbose")
         
-        def capture_rect(name, pos, width, height):
-            if pos and width and height:
-                r = pg.Rect(pos[0], pos[1], int(width), int(height))
-                clipped = r.clip(screen_rect)
-                if clipped.width > 0 and clipped.height > 0:
-                    try:
-                        surf = self.screen.subsurface(clipped).copy()
-                        self.backing_dict[name] = (clipped, surf)
-                        log_debug(f"  Backing captured: {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
-                    except Exception:
-                        s = pg.Surface((clipped.width, clipped.height))
-                        s.fill((0, 0, 0))
-                        self.backing_dict[name] = (clipped, s)
-                        log_debug(f"  Backing captured (fallback): {name} -> x={clipped.x}, y={clipped.y}, w={clipped.width}, h={clipped.height}", "verbose")
-        
-        log_debug("--- Backing Captures ---", "verbose")
-        if artist_pos:
-            capture_rect("artist", artist_pos, artist_box, artist_font.get_linesize())
-        if title_pos:
-            capture_rect("title", title_pos, title_box, title_font.get_linesize())
-        if album_pos:
-            capture_rect("album", album_pos, album_box, album_font.get_linesize())
+        # Store rects for layer composition clearing
         if self.time_pos:
-            capture_rect("time", self.time_pos, self.fontDigi.size('00:00')[0] + 10, self.fontDigi.get_linesize())
+            time_w = self.fontDigi.size('00:00')[0] + 10
+            time_h = self.fontDigi.get_linesize()
+            self.time_rect = pg.Rect(self.time_pos[0], self.time_pos[1], time_w, time_h)
+            log_debug(f"  time_rect: x={self.time_rect.x}, y={self.time_rect.y}, w={self.time_rect.width}, h={self.time_rect.height}", "verbose")
+        
         if self.sample_pos and self.sample_box:
-            capture_rect("sample", self.sample_pos, self.sample_box, self.sample_font.get_linesize())
-        if self.type_pos and type_dim:
-            capture_rect("type", self.type_pos, type_dim[0], type_dim[1])
+            sample_h = self.sample_font.get_linesize()
+            self.sample_rect = pg.Rect(self.sample_pos[0], self.sample_pos[1], self.sample_box, sample_h)
+            log_debug(f"  sample_rect: x={self.sample_rect.x}, y={self.sample_rect.y}, w={self.sample_rect.width}, h={self.sample_rect.height}", "verbose")
+        
         if art_pos and art_dim:
-            capture_rect("art", art_pos, art_dim[0], art_dim[1])
+            self.art_rect = pg.Rect(art_pos[0], art_pos[1], art_dim[0], art_dim[1])
+            log_debug(f"  art_rect: x={self.art_rect.x}, y={self.art_rect.y}, w={self.art_rect.width}, h={self.art_rect.height}", "verbose")
         
         # Create album art renderer (static for basic)
         self.album_renderer = None
@@ -933,15 +947,19 @@ class BasicHandler:
         self.title_scroller = ScrollingLabel(title_font, title_color, title_pos, title_box, center=self.center_flag, speed_px_per_sec=scroll_speed_title) if title_pos else None
         self.album_scroller = ScrollingLabel(album_font, album_color, album_pos, album_box, center=self.center_flag, speed_px_per_sec=scroll_speed_album) if album_pos else None
         
-        # Capture backing for scrollers
-        if self.artist_scroller:
-            self.artist_scroller.capture_backing(self.screen)
-        if self.title_scroller:
-            self.title_scroller.capture_backing(self.screen)
-        if self.album_scroller:
-            self.album_scroller.capture_backing(self.screen)
+        # LAYER COMPOSITION: Set background surface for scrollers
+        if self.bgr_surface:
+            if self.artist_scroller:
+                self.artist_scroller.capture_backing(self.screen)  # For rect calculation
+                self.artist_scroller.set_background_surface(self.bgr_surface)
+            if self.title_scroller:
+                self.title_scroller.capture_backing(self.screen)
+                self.title_scroller.set_background_surface(self.bgr_surface)
+            if self.album_scroller:
+                self.album_scroller.capture_backing(self.screen)
+                self.album_scroller.set_background_surface(self.bgr_surface)
         
-        # Capture backing for indicators
+        # Capture backing for indicators (indicators use skip_restore=True)
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
             self.indicator_renderer.capture_backings(self.screen)
         
@@ -975,7 +993,7 @@ class BasicHandler:
         
         log_debug("--- Initialization Complete ---", "verbose")
         log_debug(f"  Renderers: album_art={'YES' if self.album_renderer else 'NO'}, indicators={'YES' if self.indicator_renderer and self.indicator_renderer.has_indicators() else 'NO'}", "verbose")
-        log_debug(f"  Backings captured: {len(self.backing_dict)} ({', '.join(self.backing_dict.keys())})", "verbose")
+        log_debug(f"  Layer composition: bgr_surface={'YES' if self.bgr_surface else 'NO'}", "verbose")
         log_debug(f"  Foreground: {'YES' if self.fgr_surf else 'NO'} ({len(self.fgr_regions) if self.fgr_regions else 0} regions)", "verbose")
     
     def _load_fonts(self, mc_vol):
@@ -1085,7 +1103,6 @@ class BasicHandler:
             return []
         
         dirty_rects = []
-        bd = self.backing_dict
         
         # Extract metadata
         artist = meta.get("artist", "")
@@ -1129,10 +1146,9 @@ class BasicHandler:
         
         # LAYER: Album art (only redraw on URL change) - BEFORE meters
         if self.album_renderer and album_url_changed:
-            # Restore backing before loading new art
-            if "art" in bd:
-                r, b = bd["art"]
-                self.screen.blit(b, r.topleft)
+            # LAYER COMPOSITION: Clear from bgr_surface
+            if self.bgr_surface and self.art_rect:
+                self.screen.blit(self.bgr_surface, self.art_rect.topleft, self.art_rect)
             
             self.album_renderer.load_from_url(albumart)
             rect = self.album_renderer.render(self.screen)
@@ -1186,7 +1202,6 @@ class BasicHandler:
         
         # LAYER: Time remaining (with persist countdown support)
         if self.time_pos:
-            import time as time_module
             current_time = time_module.time()
             
             # Check for persist countdown
@@ -1240,10 +1255,10 @@ class BasicHandler:
                 if time_str != self.last_time_str:
                     self.last_time_str = time_str
                     
-                    if "time" in bd:
-                        r, b = bd["time"]
-                        self.screen.blit(b, r.topleft)
-                        dirty_rects.append(r.copy())
+                    # LAYER COMPOSITION: Clear from bgr_surface
+                    if self.bgr_surface and self.time_rect:
+                        self.screen.blit(self.bgr_surface, self.time_rect.topleft, self.time_rect)
+                        dirty_rects.append(self.time_rect.copy())
                     
                     if show_persist_countdown:
                         t_color = (242, 165, 0)  # Orange for persist countdown
@@ -1268,7 +1283,6 @@ class BasicHandler:
             # Strip signal strength indicators and other suffixes
             # DAB sends "DAB ●◦◦◦◦" -> "dab_●◦◦◦◦", need just "dab"
             # FM sends "FM ◦◦◦◦◦" -> "fm_◦◦◦◦◦", need just "fm"
-            import re
             fmt_clean = re.sub(r'[^a-z0-9_].*', '', fmt)  # Keep only alphanumeric prefix
             if fmt_clean:
                 fmt = fmt_clean
@@ -1305,10 +1319,9 @@ class BasicHandler:
             if fmt != self.last_track_type:
                 self.last_track_type = fmt
                 
-                # Restore backing for type area
-                if "type" in bd:
-                    r, b = bd["type"]
-                    self.screen.blit(b, r.topleft)
+                # LAYER COMPOSITION: Clear from bgr_surface
+                if self.bgr_surface and self.type_rect:
+                    self.screen.blit(self.bgr_surface, self.type_rect.topleft, self.type_rect)
                 
                 file_path = os.path.dirname(__file__)
                 local_icons = {'tidal', 'cd', 'qobuz', 'dab', 'fm', 'radio'}
@@ -1369,10 +1382,10 @@ class BasicHandler:
             if sample_text and sample_text != self.last_sample_text:
                 self.last_sample_text = sample_text
                 
-                if "sample" in bd:
-                    r, b = bd["sample"]
-                    self.screen.blit(b, r.topleft)
-                    dirty_rects.append(r.copy())
+                # LAYER COMPOSITION: Clear from bgr_surface
+                if self.bgr_surface and self.sample_rect:
+                    self.screen.blit(self.bgr_surface, self.sample_rect.topleft, self.sample_rect)
+                    dirty_rects.append(self.sample_rect.copy())
                 
                 self.last_sample_surf = self.sample_font.render(sample_text, True, self.type_color)
                 
@@ -1400,11 +1413,17 @@ class BasicHandler:
                 # Fallback: no regions computed, blit entire foreground
                 self.screen.blit(self.fgr_surf, self.fgr_pos)
         
+        # METER TIMING: Delay to allow audio buffer to accumulate samples
+        # Without this, fast render loops can outpace audio data source
+        if self.meter_delay_sec > 0:
+            time_module.sleep(self.meter_delay_sec)
+        
         return dirty_rects
     
     def cleanup(self):
         """Release resources on shutdown."""
         log_debug("BasicHandler cleanup", "basic")
+        self.bgr_surface = None
         self.album_renderer = None
         self.indicator_renderer = None
         self.artist_scroller = None
