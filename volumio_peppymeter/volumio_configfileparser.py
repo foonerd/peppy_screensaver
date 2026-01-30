@@ -81,6 +81,7 @@ ROTATION_SPEED = "rotation.speed"
 REEL_DIRECTION = "reel.direction"
 SPOOL_LEFT_SPEED = "spool.left.speed"
 SPOOL_RIGHT_SPEED = "spool.right.speed"
+QUEUE_MODE = "queue.mode"
 
 EXTENDED_CONF = "config.extend"
 METER_VISIBLE = "meter.visible"
@@ -381,6 +382,10 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[SPOOL_RIGHT_SPEED] = c.getfloat(CURRENT, SPOOL_RIGHT_SPEED)
         except:
             self.meter_config_volumio[SPOOL_RIGHT_SPEED] = 1.0
+        try:
+            self.meter_config_volumio[QUEUE_MODE] = c.get(CURRENT, QUEUE_MODE)
+        except:
+            self.meter_config_volumio[QUEUE_MODE] = "track"
 
         # Scrolling settings (global)
         try:

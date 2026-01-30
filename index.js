@@ -589,6 +589,22 @@ peppyScreensaver.prototype.getUIConfig = function() {
             uiconf.sections[6].content[1].value.value = persistDisplayVal;
             uiconf.sections[6].content[1].value.label = self.commandRouter.getI18nString(persistDisplayLabels[persistDisplayVal] || 'PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE');
 
+            // queue mode (read from PeppyConf, fallback to config.json)
+            var queueMode = 'track';
+            if (fs.existsSync(PeppyConf)) {
+                queueMode = peppy_config.current['queue.mode'] || 'track';
+            } else {
+                queueMode = self.config.get('queue.mode') || 'track';
+            }
+            
+            var queueModeOptions = uiconf.sections[6].content[2].options;
+            for (var i = 0; i < queueModeOptions.length; i++) {
+                if (queueModeOptions[i].value === queueMode) {
+                    uiconf.sections[6].content[2].value = queueModeOptions[i];
+                    break;
+                }
+            }
+
             // section 1 - VU-Meter settings -----------------------------
             availMeters = '';
            
@@ -1079,8 +1095,35 @@ peppyScreensaver.prototype.savePlaybackConf = function(data) {
         ? data['persist_display'].value 
         : 'freeze';
     
+    // Queue mode - save to both config.json and PeppyConf
+    var queueMode = data['queueMode'] && data['queueMode'].value 
+        ? data['queueMode'].value 
+        : 'track';
+    
+    // Validate queue mode
+    if (queueMode !== 'track' && queueMode !== 'queue') {
+        queueMode = 'track';  // Default fallback
+    }
+    
     self.config.set('persist_duration', persistDuration);
     self.config.set('persist_display', persistDisplay);
+    
+    // Track if queue mode changed (needs restart to apply)
+    var queueModeChanged = false;
+    
+    // Save queue mode to PeppyConf (for Python handlers)
+    if (fs.existsSync(PeppyConf)) {
+        if (peppy_config.current['queue.mode'] != queueMode) {
+            peppy_config.current['queue.mode'] = queueMode;
+            fs.writeFileSync(PeppyConf, ini.stringify(peppy_config, {whitespace: true}));
+            queueModeChanged = true;
+        }
+    }
+    
+    // Restart meter to apply new queue mode setting
+    if (queueModeChanged && fs.existsSync(runFlag)) {
+        fs.removeSync(runFlag);
+    }
     
     self.commandRouter.pushToastMessage('success', 
         self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), 

@@ -46,7 +46,7 @@ from configfileparser import (
 from volumio_configfileparser import (
     EXTENDED_CONF, METER_DELAY,
     ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
-    REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED,
+    REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED, QUEUE_MODE,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
     ALBUMART_ROT, ALBUMART_ROT_SPEED,
@@ -1515,6 +1515,32 @@ class CassetteHandler:
         is_playing = status == "play"
         duration = meta.get("duration", 0) or 0
         
+        # Get queue mode from config
+        queue_mode = self.meter_config_volumio.get(QUEUE_MODE, "track")
+        
+        # Determine which duration/progress to use
+        use_queue = (queue_mode == "queue" and not volatile and 
+                     meta.get("queue_progress_pct") is not None)
+        
+        if use_queue:
+            effective_duration = meta.get("queue_duration", 0) or 0
+            effective_progress_pct = meta.get("queue_progress_pct", 0.0)
+            effective_time_remaining = meta.get("queue_time_remaining", 0.0)
+        else:
+            # Track mode (default or fallback)
+            effective_duration = duration
+            if duration > 0:
+                seek = meta.get("seek", 0) or 0
+                effective_progress_pct = (seek / 1000.0 / duration) * 100.0
+                effective_time_remaining = duration - (seek / 1000.0)
+            else:
+                effective_progress_pct = 0.0
+                effective_time_remaining = None
+        
+        # Pass effective progress to indicators via metadata
+        # This allows progress bar to reflect queue progress when queue mode is active
+        meta["_effective_progress_pct"] = effective_progress_pct
+        
         # Seek interpolation - calculate current position based on elapsed time
         # CRITICAL: Don't use 'or' fallback - 0 is a valid seek position!
         seek_raw = meta.get("_seek_raw")
@@ -1531,6 +1557,9 @@ class CassetteHandler:
                 elapsed_ms = (time.time() - seek_update_time) * 1000
                 seek = min(duration * 1000, seek_raw + elapsed_ms)
                 meta["seek"] = seek  # Update for indicators (progress bar)
+        
+        # Use effective_progress_pct for future spool speed adjustments if needed
+        # Currently reels just spin based on playback status, but this provides foundation
         
         # Pre-calculate reel state
         reel_should_spin = is_playing or volatile

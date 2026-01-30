@@ -22,6 +22,8 @@ import ctypes
 import resource
 import io
 import math
+import json
+import hashlib
 import requests
 import pygame as pg
 import socketio
@@ -62,6 +64,7 @@ from volumio_configfileparser import (
     DEBUG_TRACE_VOLUME, DEBUG_TRACE_MUTE, DEBUG_TRACE_SHUFFLE, DEBUG_TRACE_REPEAT,
     DEBUG_TRACE_PLAYSTATE, DEBUG_TRACE_PROGRESS,
     DEBUG_TRACE_METADATA, DEBUG_TRACE_SEEK, DEBUG_TRACE_TIME,
+    QUEUE_MODE,
     DEBUG_TRACE_INIT, DEBUG_TRACE_FADE, DEBUG_TRACE_FRAME,
     PROFILING_TIMING, PROFILING_INTERVAL, PROFILING_CPROFILE, PROFILING_DURATION,
     ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
@@ -594,6 +597,12 @@ class MetadataWatcher:
         self.time_last_update = 0
         self.time_service = ""
         
+        # Queue tracking
+        self.queue_array = []  # Full queue array from pushQueue
+        self.queue_duration = 0.0  # Cached total queue duration
+        self.queue_position = 0  # Current track position in queue
+        self._queue_hash = None  # Hash to detect queue changes
+        
         # Initialize infinity state (separate from random/shuffle)
         self.metadata["infinity"] = False
     
@@ -654,6 +663,12 @@ class MetadataWatcher:
             self.metadata["status"] = status
             self.metadata["volatile"] = volatile
             
+            # Update queue position if available
+            position = data.get("position")
+            if position is not None:
+                self.queue_position = int(position)
+                self.metadata["queue_position"] = self.queue_position
+            
             # Playback control states (for indicators)
             self.metadata["volume"] = data.get("volume", 0) or 0
             self.metadata["mute"] = data.get("mute", False) or False
@@ -686,6 +701,28 @@ class MetadataWatcher:
             self.metadata["_time_remain"] = self.time_remain_sec
             self.metadata["_time_update"] = self.time_last_update
             
+            # Store queue calculations in metadata
+            queue_mode = self.metadata.get("_queue_mode", "track")  # Will be set by main loop
+            if queue_mode == "queue":
+                queue_info = self.calculate_queue_progress(
+                    seek, 
+                    duration, 
+                    volatile=volatile
+                )
+                if queue_info:
+                    self.metadata["queue_progress_pct"] = queue_info['progress_pct']
+                    self.metadata["queue_duration"] = queue_info['duration']
+                    self.metadata["queue_time_remaining"] = queue_info['time_remaining']
+                else:
+                    # Fall back to track mode
+                    self.metadata["queue_progress_pct"] = None
+                    self.metadata["queue_duration"] = None
+                    self.metadata["queue_time_remaining"] = None
+            else:
+                self.metadata["queue_progress_pct"] = None
+                self.metadata["queue_duration"] = None
+                self.metadata["queue_time_remaining"] = None
+            
             # Check for title change (for random meter mode)
             current_title = self.metadata["title"]
             if self.title_callback and current_title != self.last_title:
@@ -702,12 +739,39 @@ class MetadataWatcher:
             if data and isinstance(data, dict):
                 self.metadata["infinity"] = data.get("enabled", False)
         
+        @self.sio.on('pushQueue')
+        def on_push_queue(queue_data):
+            """Handle queue updates from Volumio."""
+            nonlocal _pushstate_count
+            
+            if not isinstance(queue_data, list):
+                return
+            
+            # Calculate hash to detect changes
+            queue_str = json.dumps(queue_data, sort_keys=True)
+            queue_hash = hashlib.md5(queue_str.encode()).hexdigest()
+            
+            # Only recalculate if queue actually changed
+            if queue_hash != self._queue_hash:
+                self._queue_hash = queue_hash
+                self.queue_array = queue_data
+                
+                # Calculate total queue duration (sum of all track durations)
+                self.queue_duration = sum(
+                    float(track.get('duration', 0) or 0) 
+                    for track in queue_data
+                )
+                
+                log_debug(f"[pushQueue] Updated: {len(queue_data)} tracks, total_duration={self.queue_duration:.1f}s", "trace", "metadata")
+        
         @self.sio.on('connect')
         def on_connect():
             if self.run_flag:
                 self.sio.emit('getState')
                 self.sio.emit('getInfinityPlayback')
+                self.sio.emit('getQueue')
         
+        # Socket connection loop - must be at end of _run() method
         while self.run_flag:
             try:
                 self.sio.connect('http://localhost:3000', transports=['websocket'])
@@ -723,6 +787,54 @@ class MetadataWatcher:
                         self.sio.disconnect()
                     except Exception:
                         pass
+    
+    def calculate_queue_progress(self, current_seek_ms, current_duration, volatile=False):
+        """Calculate queue progress percentage.
+        
+        :param current_seek_ms: Current track seek position in milliseconds
+        :param current_duration: Current track duration in seconds
+        :param volatile: Whether current source is volatile (webstream)
+        :return: dict with progress_pct, duration, time_remaining or None if not applicable
+        """
+        # If queue is empty or invalid, return None (will fall back to track mode)
+        if not self.queue_array or len(self.queue_array) == 0:
+            return None
+        
+        # For volatile sources (webstreams), use track mode even if queue exists
+        if volatile:
+            return None
+        
+        # If queue duration is 0 (all tracks have no duration), fall back to track mode
+        if self.queue_duration <= 0:
+            return None
+        
+        # If current track has no duration, only valid for volatile (already handled above)
+        # But double-check: if current track missing duration and not volatile, can't calculate
+        if current_duration <= 0:
+            return None
+        
+        # Calculate completed duration (sum of durations before current position)
+        completed_duration = 0.0
+        for i in range(self.queue_position):
+            if i < len(self.queue_array):
+                track_dur = float(self.queue_array[i].get('duration', 0) or 0)
+                completed_duration += track_dur
+        
+        # Add current track progress
+        current_progress_sec = current_seek_ms / 1000.0
+        total_progress_sec = completed_duration + current_progress_sec
+        
+        # Calculate percentage
+        queue_progress_pct = min(100.0, (total_progress_sec / self.queue_duration) * 100.0)
+        
+        # Calculate time remaining in queue
+        queue_time_remaining = max(0.0, self.queue_duration - total_progress_sec)
+        
+        return {
+            'progress_pct': queue_progress_pct,
+            'duration': self.queue_duration,
+            'time_remaining': queue_time_remaining
+        }
     
     def stop(self):
         self.run_flag = False
@@ -3107,6 +3219,12 @@ def start_display_output(pm, callback, meter_config_volumio):
             if handler:
                 # PROFILING: Time the handler render
                 t_render_start = time.perf_counter() if PROFILING_TIMING_ENABLED else 0
+                
+                # Get queue mode from config
+                queue_mode = meter_config_volumio.get(QUEUE_MODE, "track")
+                
+                # Pass queue mode to metadata (for MetadataWatcher calculations)
+                last_metadata["_queue_mode"] = queue_mode
                 
                 # Handler-based rendering (handler calls meter.run() internally)
                 dirty_rects = handler.render(last_metadata, now_ticks)

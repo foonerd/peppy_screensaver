@@ -644,7 +644,8 @@
                               "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
                               "data": [
                                       "persist_duration",
-                                      "persist_display"
+                                      "persist_display",
+                                      "queueMode"
                                       ]
                               },
                 "content": [
@@ -700,6 +701,17 @@
                                     "value": "countdown",
                                     "label": "TRANSLATE.PEPPY_SCREENSAVER.PERSIST_DISPLAY_COUNTDOWN"
                                  }
+                               ]
+                            },
+                            {
+                             "id": "queueMode",
+                             "element": "select",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.QUEUE_MODE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.QUEUE_MODE",
+                             "value": {"value": "track", "label": "TRANSLATE.PEPPY_SCREENSAVER.QUEUE_MODE_TRACK"},
+                             "options": [
+                                 {"value": "track", "label": "TRANSLATE.PEPPY_SCREENSAVER.QUEUE_MODE_TRACK"},
+                                 {"value": "queue", "label": "TRANSLATE.PEPPY_SCREENSAVER.QUEUE_MODE_QUEUE"}
                                ]
                             }
                            ]
