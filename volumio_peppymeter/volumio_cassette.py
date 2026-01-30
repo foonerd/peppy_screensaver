@@ -46,7 +46,7 @@ from configfileparser import (
 from volumio_configfileparser import (
     EXTENDED_CONF, METER_DELAY,
     ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
-    REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED,
+    REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED, SPOOL_ADAPTIVE, QUEUE_MODE,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
     ALBUMART_ROT, ALBUMART_ROT_SPEED,
@@ -693,7 +693,9 @@ class ReelRenderer:
         self.filename = filename
         self.pos = pos
         self.center = center
-        self.rotate_rpm = abs(float(rotate_rpm) * float(speed_multiplier))
+        self._base_rpm = abs(float(rotate_rpm))  # Base RPM from config
+        self.speed_multiplier = float(speed_multiplier)  # Can be changed at runtime
+        self.rotate_rpm = self._base_rpm * self.speed_multiplier  # Effective RPM
         self.angle_step_deg = float(angle_step_deg)
         self.rotation_fps = int(rotation_fps)
         self.rotation_step = int(rotation_step)
@@ -741,7 +743,9 @@ class ReelRenderer:
     
     def _update_angle(self, status, now_ticks, volatile=False):
         """Update rotation angle based on RPM, direction, and playback status."""
-        if self.rotate_rpm <= 0.0:
+        # Calculate effective RPM from base RPM and current speed multiplier
+        effective_rpm = self._base_rpm * self.speed_multiplier
+        if effective_rpm <= 0.0:
             return
         
         status = (status or "").lower()
@@ -749,7 +753,7 @@ class ReelRenderer:
             status = "play"
         if status == "play":
             dt = self._blit_interval_ms / 1000.0
-            self._current_angle = (self._current_angle + self.rotate_rpm * 6.0 * dt * self.direction_mult) % 360.0
+            self._current_angle = (self._current_angle + effective_rpm * 6.0 * dt * self.direction_mult) % 360.0
     
     def will_blit(self, now_ticks):
         """Check if blit is needed (FPS gating)."""
@@ -762,7 +766,8 @@ class ReelRenderer:
                 log_debug(f"[{self._trace_name}] FIRST_BLIT: will return True", "trace", self._trace_component)
             return True
         
-        if not self.center or self.rotate_rpm <= 0.0:
+        effective_rpm = self._base_rpm * self.speed_multiplier
+        if not self.center or effective_rpm <= 0.0:
             return self._needs_redraw
         
         result = (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
@@ -1515,6 +1520,32 @@ class CassetteHandler:
         is_playing = status == "play"
         duration = meta.get("duration", 0) or 0
         
+        # Get queue mode from config
+        queue_mode = self.meter_config_volumio.get(QUEUE_MODE, "track")
+        
+        # Determine which duration/progress to use
+        use_queue = (queue_mode == "queue" and not volatile and 
+                     meta.get("queue_progress_pct") is not None)
+        
+        if use_queue:
+            effective_duration = meta.get("queue_duration", 0) or 0
+            effective_progress_pct = meta.get("queue_progress_pct", 0.0)
+            effective_time_remaining = meta.get("queue_time_remaining", 0.0)
+        else:
+            # Track mode (default or fallback)
+            effective_duration = duration
+            if duration > 0:
+                seek = meta.get("seek", 0) or 0
+                effective_progress_pct = (seek / 1000.0 / duration) * 100.0
+                effective_time_remaining = duration - (seek / 1000.0)
+            else:
+                effective_progress_pct = 0.0
+                effective_time_remaining = None
+        
+        # Pass effective progress to indicators via metadata
+        # This allows progress bar to reflect queue progress when queue mode is active
+        meta["_effective_progress_pct"] = effective_progress_pct
+        
         # Seek interpolation - calculate current position based on elapsed time
         # CRITICAL: Don't use 'or' fallback - 0 is a valid seek position!
         seek_raw = meta.get("_seek_raw")
@@ -1531,6 +1562,45 @@ class CassetteHandler:
                 elapsed_ms = (time.time() - seek_update_time) * 1000
                 seek = min(duration * 1000, seek_raw + elapsed_ms)
                 meta["seek"] = seek  # Update for indicators (progress bar)
+        
+        # Adaptive spool speeds: dynamically adjust based on progress
+        # Left spool slows down (less tape), right spool speeds up (more tape accumulated)
+        spool_adaptive = self.mc_vol.get(SPOOL_ADAPTIVE)
+        if spool_adaptive is None:
+            spool_adaptive = self.meter_config_volumio.get(SPOOL_ADAPTIVE, False)
+        
+        if spool_adaptive and effective_progress_pct is not None and self.reel_left and self.reel_right:
+            progress_factor = effective_progress_pct / 100.0  # 0.0 to 1.0
+            base_left = self.meter_config_volumio.get(SPOOL_LEFT_SPEED, 1.0)
+            base_right = self.meter_config_volumio.get(SPOOL_RIGHT_SPEED, 1.0)
+            
+            # Get reel direction (per-meter or global)
+            reel_direction = self.mc_vol.get(REEL_DIRECTION)
+            if reel_direction is None:
+                reel_direction = self.meter_config_volumio.get(REEL_DIRECTION, "ccw")
+            
+            # Real cassette physics: tape speed over head is constant.
+            # Angular velocity is inversely proportional to spool radius.
+            # Larger spool (more tape) = slower spin, smaller spool = faster spin.
+            #
+            # CCW (tape at bottom): Left=supply (full→empty), Right=take-up (empty→full)
+            #   Start (0%): left FULL (slow), right EMPTY (fast)
+            #   End (100%): left EMPTY (fast), right FULL (slow)
+            #
+            # CW (tape at top): Reverse - left is take-up, right is supply
+            #   Start (0%): left EMPTY (fast), right FULL (slow)
+            #   End (100%): left FULL (slow), right EMPTY (fast)
+            
+            if reel_direction == "ccw":
+                # CCW: left starts slow (full), ends fast (empty)
+                #      right starts fast (empty), ends slow (full)
+                self.reel_left.speed_multiplier = base_left * (0.5 + progress_factor)
+                self.reel_right.speed_multiplier = base_right * (1.5 - progress_factor)
+            else:
+                # CW: left starts fast (empty), ends slow (full)
+                #     right starts slow (full), ends fast (empty)
+                self.reel_left.speed_multiplier = base_left * (1.5 - progress_factor)
+                self.reel_right.speed_multiplier = base_right * (0.5 + progress_factor)
         
         # Pre-calculate reel state
         reel_should_spin = is_playing or volatile

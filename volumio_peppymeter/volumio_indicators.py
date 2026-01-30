@@ -1570,13 +1570,22 @@ class IndicatorRenderer:
                 self._prev_status = status
         
         # Progress indicator - uses SliderIndicator for full style support
+        # Supports queue mode: if queue_progress_pct is in metadata and valid, use it
         if self._progress:
-            duration = metadata.get("duration", 0) or 0
-            seek = metadata.get("seek", 0) or 0
-            if duration > 0:
-                progress_pct = min(100.0, (seek / 1000.0 / duration) * 100.0)
+            # Check for queue-aware progress (set by handlers when queue mode is active)
+            queue_progress = metadata.get("_effective_progress_pct")
+            
+            if queue_progress is not None:
+                # Queue mode: use pre-calculated progress from handler
+                progress_pct = queue_progress
             else:
-                progress_pct = 0.0
+                # Track mode: calculate from seek/duration
+                duration = metadata.get("duration", 0) or 0
+                seek = metadata.get("seek", 0) or 0
+                if duration > 0:
+                    progress_pct = min(100.0, (seek / 1000.0 / duration) * 100.0)
+                else:
+                    progress_pct = 0.0
             
             # Check if render needed BEFORE restoring backing
             if force:
@@ -1585,7 +1594,8 @@ class IndicatorRenderer:
             
             # TRACE: Log progress input and decision
             if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("progress", False):
-                _log_debug(f"[Progress] INPUT: seek={seek}ms, duration={duration}s, pct={progress_pct:.1f}%, will_render={will_render}", "trace", "progress")
+                mode = "queue" if queue_progress is not None else "track"
+                _log_debug(f"[Progress] INPUT: mode={mode}, pct={progress_pct:.1f}%, will_render={will_render}", "trace", "progress")
             
             if will_render:
                 if not skip_restore:

@@ -589,6 +589,22 @@ peppyScreensaver.prototype.getUIConfig = function() {
             uiconf.sections[6].content[1].value.value = persistDisplayVal;
             uiconf.sections[6].content[1].value.label = self.commandRouter.getI18nString(persistDisplayLabels[persistDisplayVal] || 'PEPPY_SCREENSAVER.PERSIST_DISPLAY_FREEZE');
 
+            // queue mode (read from PeppyConf, fallback to config.json)
+            var queueMode = 'track';
+            if (fs.existsSync(PeppyConf)) {
+                queueMode = peppy_config.current['queue.mode'] || 'track';
+            } else {
+                queueMode = self.config.get('queue.mode') || 'track';
+            }
+            
+            var queueModeOptions = uiconf.sections[6].content[2].options;
+            for (var i = 0; i < queueModeOptions.length; i++) {
+                if (queueModeOptions[i].value === queueMode) {
+                    uiconf.sections[6].content[2].value = queueModeOptions[i];
+                    break;
+                }
+            }
+
             // section 1 - VU-Meter settings -----------------------------
             availMeters = '';
            
@@ -763,12 +779,16 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 uiconf.sections[3].content[4].attributes[3].max,
                 uiconf.sections[3].content[4].attributes[0].placeholder];
             
+            // spool adaptive (dynamic speeds based on progress)
+            var spoolAdaptive = peppy_config.current['spool.adaptive'] === true || peppy_config.current['spool.adaptive'] === 'true';
+            uiconf.sections[3].content[5].value = spoolAdaptive;
+            
             // reel direction
             var reelDirection = peppy_config.current['reel.direction'] || 'ccw';
-            var directionOptions = uiconf.sections[3].content[5].options;
+            var directionOptions = uiconf.sections[3].content[6].options;
             for (var i = 0; i < directionOptions.length; i++) {
                 if (directionOptions[i].value === reelDirection) {
-                    uiconf.sections[3].content[5].value = directionOptions[i];
+                    uiconf.sections[3].content[6].value = directionOptions[i];
                     break;
                 }
             }
@@ -1079,8 +1099,35 @@ peppyScreensaver.prototype.savePlaybackConf = function(data) {
         ? data['persist_display'].value 
         : 'freeze';
     
+    // Queue mode - save to both config.json and PeppyConf
+    var queueMode = data['queueMode'] && data['queueMode'].value 
+        ? data['queueMode'].value 
+        : 'track';
+    
+    // Validate queue mode
+    if (queueMode !== 'track' && queueMode !== 'queue') {
+        queueMode = 'track';  // Default fallback
+    }
+    
     self.config.set('persist_duration', persistDuration);
     self.config.set('persist_display', persistDisplay);
+    
+    // Track if queue mode changed (needs restart to apply)
+    var queueModeChanged = false;
+    
+    // Save queue mode to PeppyConf (for Python handlers)
+    if (fs.existsSync(PeppyConf)) {
+        if (peppy_config.current['queue.mode'] != queueMode) {
+            peppy_config.current['queue.mode'] = queueMode;
+            fs.writeFileSync(PeppyConf, ini.stringify(peppy_config, {whitespace: true}));
+            queueModeChanged = true;
+        }
+    }
+    
+    // Restart meter to apply new queue mode setting
+    if (queueModeChanged && fs.existsSync(runFlag)) {
+        fs.removeSync(runFlag);
+    }
     
     self.commandRouter.pushToastMessage('success', 
         self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), 
@@ -1438,6 +1485,13 @@ peppyScreensaver.prototype.saveRotationConf = function (confData) {
             peppy_config.current['spool.right.speed'] = confData.spoolRightSpeed;
             noChanges = false;
         }
+    }
+    
+    // write spool adaptive (dynamic speeds based on progress)
+    var spoolAdaptive = confData.spoolAdaptive || false;
+    if (peppy_config.current['spool.adaptive'] != spoolAdaptive) {
+        peppy_config.current['spool.adaptive'] = spoolAdaptive;
+        noChanges = false;
     }
     
     if (!noChanges) {

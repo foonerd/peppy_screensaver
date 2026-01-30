@@ -39,7 +39,7 @@ from configfileparser import (
 from volumio_configfileparser import (
     EXTENDED_CONF,
     ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
-    REEL_DIRECTION,
+    REEL_DIRECTION, QUEUE_MODE,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
     ALBUMART_ROT, ALBUMART_ROT_SPEED,
@@ -2231,6 +2231,32 @@ class TurntableHandler:
         is_playing = status == "play"
         duration = meta.get("duration", 0) or 0
         
+        # Get queue mode from config
+        queue_mode = self.global_config.get(QUEUE_MODE, "track")
+        
+        # Determine which duration/progress to use
+        use_queue = (queue_mode == "queue" and not volatile and 
+                     meta.get("queue_progress_pct") is not None)
+        
+        if use_queue:
+            effective_duration = meta.get("queue_duration", 0) or 0
+            effective_progress_pct = meta.get("queue_progress_pct", 0.0)
+            effective_time_remaining = meta.get("queue_time_remaining", 0.0)
+        else:
+            # Track mode (default or fallback)
+            effective_duration = duration
+            if duration > 0:
+                seek = meta.get("seek", 0) or 0
+                effective_progress_pct = (seek / 1000.0 / duration) * 100.0
+                effective_time_remaining = duration - (seek / 1000.0)
+            else:
+                effective_progress_pct = 0.0
+                effective_time_remaining = None
+        
+        # Pass effective progress to indicators via metadata
+        # This allows progress bar to reflect queue progress when queue mode is active
+        meta["_effective_progress_pct"] = effective_progress_pct
+        
         # Seek interpolation - calculate current position based on elapsed time
         # CRITICAL: Don't use 'or' fallback - 0 is a valid seek position!
         seek_raw = meta.get("_seek_raw")
@@ -2252,14 +2278,10 @@ class TurntableHandler:
         tonearm_will_render = False
         tonearm_is_animating = False
         if self.tonearm_renderer:
-            if duration > 0:
-                progress_pct = min(100.0, (seek / 1000.0 / duration) * 100.0)
-                time_remaining_sec = duration - (seek / 1000.0)
+            if effective_duration > 0:
+                self.tonearm_renderer.update(status, effective_progress_pct, effective_time_remaining)
             else:
-                progress_pct = 0.0
-                time_remaining_sec = None
-            
-            self.tonearm_renderer.update(status, progress_pct, time_remaining_sec)
+                self.tonearm_renderer.update(status, 0.0, None)
             tonearm_will_render = self.tonearm_renderer.will_blit(now_ticks)
             tonearm_is_animating = self.tonearm_renderer.is_animating()
         
