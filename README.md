@@ -148,6 +148,7 @@ Album art and cassette spool rotation speed and quality.
 | Vinyl Rotation Speed | 0.1-5.0 | 1.0 | Album art rotation multiplier |
 | Left Spool Speed | 0.1-5.0 | 1.0 | Left cassette reel multiplier |
 | Right Spool Speed | 0.1-5.0 | 1.0 | Right cassette reel multiplier |
+| Adaptive Spool Speeds | On/Off | Off | Dynamic speed based on playback progress |
 | Reel Rotation Direction | CCW/CW | CCW | Cassette reel rotation direction |
 
 ### Scrolling Settings
@@ -185,12 +186,19 @@ Controls display persistence during pause and track changes.
 |---------|---------|---------|-------------|
 | Keep display active | Disabled/5s/15s/30s/1min/2min/5min | 30s | Delay before display turns off after pause/stop |
 | Time display during persist | Freeze/Countdown | Freeze | What to show in time area when paused |
+| Queue progress mode | Single Track/Full Queue | Single Track | How cassette/turntable animations track progress |
 
 **Keep display active:** Prevents screen flicker during track changes by keeping the display running briefly after playback stops. Volumio sends stop-play sequence on next/prev, causing visible restart without this delay.
 
 **Time display modes:**
 - **Freeze**: Shows track time at moment of pause (default)
 - **Countdown**: Shows time until display turns off (orange color)
+
+**Queue progress mode:** Determines how cassette reels and turntable tonearm track playback progress:
+- **Single Track**: Animations based on current track duration (default)
+- **Full Queue**: Animations span the entire playlist - reels/tonearm move across all queued tracks
+
+Queue mode automatically falls back to single track for webstreams or when the queue is empty.
 
 ### Debug Settings
 
@@ -381,6 +389,9 @@ reel.rotation.speed = 1.5
 
 # Rotation direction (optional - overrides global setting)
 reel.direction = ccw
+
+# Adaptive spool speeds (optional - overrides global setting)
+spool.adaptive = true
 ```
 
 | Option | Description |
@@ -393,6 +404,7 @@ reel.direction = ccw
 | `reel.right.center` | Center point (x,y) for rotation pivot |
 | `reel.rotation.speed` | Rotation speed in RPM (default: 0) |
 | `reel.direction` | Rotation direction: `cw` or `ccw` (optional, overrides global setting) |
+| `spool.adaptive` | Adaptive spool speeds: `true` or `false` (optional, overrides global setting) |
 
 The reel graphics should be PNG files with transparency. The center point
 defines the rotation axis and should be the visual center of the reel hub.
@@ -400,6 +412,19 @@ defines the rotation axis and should be the visual center of the reel hub.
 Reel rotation direction can be set per-meter in meters.txt (`reel.direction = cw` or `ccw`),
 or globally via plugin settings (Rotation Settings > Reel Rotation Direction).
 Per-meter setting takes priority over global setting.
+
+**Adaptive spool speeds:** When enabled, spool speeds dynamically adjust based on playback
+progress to simulate realistic cassette physics. Tape speed over the head is constant, so
+angular velocity is inversely proportional to spool radius (larger spool = slower spin).
+
+For **CCW** (tape path at bottom, standard orientation):
+- Start: Left spool full (slow), right spool empty (fast)
+- End: Left spool empty (fast), right spool full (slow)
+
+For **CW** (tape path at top): Reversed - left is take-up, right is supply.
+
+Uses queue progress when Queue Mode is set to Full Queue, otherwise uses single track progress.
+Can be set globally (Rotation Settings > Adaptive Spool Speeds) or per-meter in meters.txt.
 
 ### Album Art Rotation
 

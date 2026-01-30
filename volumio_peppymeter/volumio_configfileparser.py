@@ -81,6 +81,7 @@ ROTATION_SPEED = "rotation.speed"
 REEL_DIRECTION = "reel.direction"
 SPOOL_LEFT_SPEED = "spool.left.speed"
 SPOOL_RIGHT_SPEED = "spool.right.speed"
+SPOOL_ADAPTIVE = "spool.adaptive"
 QUEUE_MODE = "queue.mode"
 
 EXTENDED_CONF = "config.extend"
@@ -383,6 +384,10 @@ class Volumio_ConfigFileParser(object):
         except:
             self.meter_config_volumio[SPOOL_RIGHT_SPEED] = 1.0
         try:
+            self.meter_config_volumio[SPOOL_ADAPTIVE] = c.getboolean(CURRENT, SPOOL_ADAPTIVE)
+        except:
+            self.meter_config_volumio[SPOOL_ADAPTIVE] = False
+        try:
             self.meter_config_volumio[QUEUE_MODE] = c.get(CURRENT, QUEUE_MODE)
         except:
             self.meter_config_volumio[QUEUE_MODE] = "track"
@@ -515,6 +520,10 @@ class Volumio_ConfigFileParser(object):
             d[REEL_DIRECTION] = config_file.get(section, REEL_DIRECTION)
         except:
             d[REEL_DIRECTION] = None  # None = use global config
+        try:
+            d[SPOOL_ADAPTIVE] = config_file.getboolean(section, SPOOL_ADAPTIVE)
+        except:
+            d[SPOOL_ADAPTIVE] = None  # None = use global config
 
         # --- Vinyl configuration (for turntable skins) ---
         try:

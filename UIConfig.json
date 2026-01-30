@@ -393,6 +393,7 @@
                                       "rotationSpeed",
                                       "spoolLeftSpeed",
                                       "spoolRightSpeed",
+                                      "spoolAdaptive",
                                       "reelDirection"
                                       ]
                               },
@@ -469,6 +470,13 @@
                                              {"step": 0.1}
                                            ],
                              "value": 1.0
+                            },
+                            {
+                             "id": "spoolAdaptive",
+                             "element": "switch",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_ADAPTIVE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.SPOOL_ADAPTIVE",
+                             "value": false
                             },
                             {
                              "id": "reelDirection",

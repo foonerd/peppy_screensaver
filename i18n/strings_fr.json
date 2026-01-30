@@ -127,6 +127,8 @@
     "SPOOL_LEFT_SPEED_DOC":"Multiplicateur de vitesse pour la bobine gauche de cassette.<br /><br /><b>1,0:</b> Vitesse normale (par défaut)<br /><br />Réglable séparément de la bobine droite pour un effet réaliste.",
     "SPOOL_RIGHT_SPEED":"Vitesse bobine droite",
     "SPOOL_RIGHT_SPEED_DOC":"Multiplicateur de vitesse pour la bobine droite de cassette.<br /><br /><b>1,0:</b> Vitesse normale (par défaut)<br /><br />Réglable séparément de la bobine gauche pour un effet réaliste.",
+    "SPOOL_ADAPTIVE":"Vitesses de bobine adaptatives",
+    "SPOOL_ADAPTIVE_DOC":"Lorsqu'activé, les vitesses des bobines de cassette changent dynamiquement en fonction de la progression de la lecture.<br /><br />La bobine gauche ralentit à mesure que la bande s'épuise, la bobine droite accélère à mesure que la bande s'accumule.<br /><br />Utilise la progression de la file d'attente lorsque le mode file d'attente est réglé sur 'File d'attente complète', sinon utilise la progression du titre unique.<br /><br />Peut être remplacé par mètre dans meters.txt avec <code>spool.adaptive = true/false</code>",
     "REEL_DIRECTION":"Sens de rotation des bobines",
     "REEL_DIRECTION_DOC":"Sens de rotation des bobines de cassette.<br /><br /><b>Sens anti-horaire:</b> Sens standard (par défaut)<br /><b>Sens horaire:</b> Sens inverse",
     "REEL_CCW":"Sens anti-horaire",

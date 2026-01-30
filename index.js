@@ -779,12 +779,16 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 uiconf.sections[3].content[4].attributes[3].max,
                 uiconf.sections[3].content[4].attributes[0].placeholder];
             
+            // spool adaptive (dynamic speeds based on progress)
+            var spoolAdaptive = peppy_config.current['spool.adaptive'] === true || peppy_config.current['spool.adaptive'] === 'true';
+            uiconf.sections[3].content[5].value = spoolAdaptive;
+            
             // reel direction
             var reelDirection = peppy_config.current['reel.direction'] || 'ccw';
-            var directionOptions = uiconf.sections[3].content[5].options;
+            var directionOptions = uiconf.sections[3].content[6].options;
             for (var i = 0; i < directionOptions.length; i++) {
                 if (directionOptions[i].value === reelDirection) {
-                    uiconf.sections[3].content[5].value = directionOptions[i];
+                    uiconf.sections[3].content[6].value = directionOptions[i];
                     break;
                 }
             }
@@ -1481,6 +1485,13 @@ peppyScreensaver.prototype.saveRotationConf = function (confData) {
             peppy_config.current['spool.right.speed'] = confData.spoolRightSpeed;
             noChanges = false;
         }
+    }
+    
+    // write spool adaptive (dynamic speeds based on progress)
+    var spoolAdaptive = confData.spoolAdaptive || false;
+    if (peppy_config.current['spool.adaptive'] != spoolAdaptive) {
+        peppy_config.current['spool.adaptive'] = spoolAdaptive;
+        noChanges = false;
     }
     
     if (!noChanges) {

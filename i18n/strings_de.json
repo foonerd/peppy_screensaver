@@ -127,6 +127,8 @@
     "SPOOL_LEFT_SPEED_DOC":"Geschwindigkeitsmultiplikator für linke Kassettenspule.<br /><br /><b>1,0:</b> Normale Geschwindigkeit (Standard)<br /><br />Separat von rechter Spule für realistischen Effekt einstellbar.",
     "SPOOL_RIGHT_SPEED":"Rechte Spulengeschwindigkeit",
     "SPOOL_RIGHT_SPEED_DOC":"Geschwindigkeitsmultiplikator für rechte Kassettenspule.<br /><br /><b>1,0:</b> Normale Geschwindigkeit (Standard)<br /><br />Separat von linker Spule für realistischen Effekt einstellbar.",
+    "SPOOL_ADAPTIVE":"Adaptive Spulengeschwindigkeiten",
+    "SPOOL_ADAPTIVE_DOC":"Bei Aktivierung ändern sich die Kassettenspulen-Geschwindigkeiten dynamisch basierend auf dem Wiedergabefortschritt.<br /><br />Die linke Spule wird langsamer wenn das Band weniger wird, die rechte Spule wird schneller wenn sich Band ansammelt.<br /><br />Verwendet den Warteschlangen-Fortschritt wenn der Warteschlangen-Modus auf 'Gesamte Warteschlange' steht, ansonsten den Einzeltitel-Fortschritt.<br /><br />Kann pro Meter in meters.txt mit <code>spool.adaptive = true/false</code> überschrieben werden",
     "REEL_DIRECTION":"Spulen-Drehrichtung",
     "REEL_DIRECTION_DOC":"Drehrichtung für Kassettenspulen.<br /><br /><b>Gegen den Uhrzeigersinn:</b> Standardrichtung (Standard)<br /><b>Im Uhrzeigersinn:</b> Umgekehrte Richtung",
     "REEL_CCW":"Gegen den Uhrzeigersinn",
