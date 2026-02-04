@@ -959,8 +959,11 @@ class BasicHandler:
                 self.album_scroller.capture_backing(self.screen)
                 self.album_scroller.set_background_surface(self.bgr_surface)
         
-        # Capture backing for indicators (indicators use skip_restore=True)
+        # Capture backing for indicators (indicators use skip_restore=True in basic handler,
+        # but set_background_surfaces is still needed for proper transparent icon handling)
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
+            if self.bgr_surface:
+                self.indicator_renderer.set_background_surfaces(self.bgr_surface)
             self.indicator_renderer.capture_backings(self.screen)
         
         # Now run meter to show initial needle positions

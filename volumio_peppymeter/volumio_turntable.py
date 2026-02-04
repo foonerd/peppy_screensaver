@@ -2046,6 +2046,7 @@ class TurntableHandler:
             # LAYER COMPOSITION: Indicators capture backing from bgr_surface (pure static bg)
             # This ensures restore_backing doesn't restore stale meter/tonearm positions
             if self.indicator_renderer and self.indicator_renderer.has_indicators():
+                self.indicator_renderer.set_background_surfaces(self.bgr_surface)
                 self.indicator_renderer.capture_backings(self.bgr_surface)
         else:
             # Fallback to old backing capture if no bgr_surface

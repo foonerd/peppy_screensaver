@@ -1304,6 +1304,10 @@ class CassetteHandler:
                     fonts=fonts_dict
                 )
                 log_debug(f"[CassetteHandler] IndicatorRenderer created: has_indicators={self.indicator_renderer.has_indicators()}", "trace", "init")
+                # Set background surface for proper transparent icon restore
+                if self.bgr_surface and self.indicator_renderer.has_indicators():
+                    self.indicator_renderer.set_background_surfaces(self.bgr_surface)
+                    self.indicator_renderer.capture_backings(self.bgr_surface)
         except ImportError as e:
             log_debug(f"[CassetteHandler] IndicatorRenderer not available: {e}", "trace", "init")
         except Exception as e:
@@ -1743,12 +1747,11 @@ class CassetteHandler:
                 dirty_rects.append(rect)
         
         # LAYER 6: Indicators (FORCE when reels animate)
-        # NOTE: skip_restore=True because:
-        # - Procedural indicators (volume bars) self-clear with bg_color
-        # - Icon indicators fully overwrite their area
-        # - This eliminates backing collision artifacts
+        # NOTE: skip_restore=False to properly clear transparent icons
+        # - bgr_surface provides clean background for transparent icon restore
+        # - Without this, transparent areas show previous icon state (ghosting)
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
-            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=force_flag, skip_restore=True)
+            self.indicator_renderer.render(self.screen, meta, dirty_rects, force=force_flag, skip_restore=False)
         
         # LAYER 7: Time remaining (FORCE when reels animate)
         if self.time_pos:

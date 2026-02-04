@@ -410,6 +410,7 @@ class IconIndicator:
         # Backing
         self._backing = None
         self._backing_rect = None
+        self._bgr_surface = None  # Clean background for proper restore with transparency
     
     def _load_icons(self):
         """Load icon PNG files."""
@@ -498,10 +499,26 @@ class IconIndicator:
             self._backing = pg.Surface((rect.width, rect.height))
             self._backing.fill((0, 0, 0))
     
+    def set_background_surface(self, bgr_surface):
+        """Set background surface for clean restore with transparent icons.
+        
+        :param bgr_surface: clean background surface (before any icons drawn)
+        """
+        self._bgr_surface = bgr_surface
+    
     def restore_backing(self, screen):
-        """Restore backing surface to screen."""
-        if self._backing and self._backing_rect:
-            screen.blit(self._backing, self._backing_rect.topleft)
+        """Restore backing surface to screen.
+        
+        Uses bgr_surface if available for proper clearing of transparent icons,
+        otherwise falls back to captured backing.
+        """
+        if self._backing_rect:
+            if self._bgr_surface:
+                # Blit from clean background source - essential for transparent icons
+                screen.blit(self._bgr_surface, self._backing_rect.topleft, self._backing_rect)
+            elif self._backing:
+                # Fallback to captured backing
+                screen.blit(self._backing, self._backing_rect.topleft)
             return self._backing_rect.copy()
         return None
     
@@ -1378,6 +1395,21 @@ class IndicatorRenderer:
             self._playstate.capture_backing(screen)
         if self._progress:
             self._progress.capture_backing(screen)
+    
+    def set_background_surfaces(self, bgr_surface):
+        """Set background surface for icon indicators (for proper transparent icon restore).
+        
+        :param bgr_surface: clean background surface (before any icons drawn)
+        """
+        # Only IconIndicator instances need this - LED and Slider handle their own clearing
+        if self._mute and isinstance(self._mute, IconIndicator):
+            self._mute.set_background_surface(bgr_surface)
+        if self._shuffle and isinstance(self._shuffle, IconIndicator):
+            self._shuffle.set_background_surface(bgr_surface)
+        if self._repeat and isinstance(self._repeat, IconIndicator):
+            self._repeat.set_background_surface(bgr_surface)
+        if self._playstate and isinstance(self._playstate, IconIndicator):
+            self._playstate.set_background_surface(bgr_surface)
     
     def force_redraw_all(self):
         """Force redraw of all indicators."""
