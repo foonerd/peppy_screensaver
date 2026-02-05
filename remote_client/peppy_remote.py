@@ -408,9 +408,12 @@ def setup_remote_config(peppymeter_path, templates_path, config_fetcher):
     config['sdl.env']['double.buffer'] = 'True'
     config['sdl.env']['no.frame'] = 'False'  # Allow window frame on desktop
     
-    # Data source - we override with RemoteDataSource anyway
-    config['data.source']['type'] = 'noise'
-    config['data.source']['smooth.buffer.size'] = '0'
+    # Data source configuration
+    # Keep 'pipe' type - it will fail silently (no data) since /tmp/myfifo doesn't exist
+    # The actual data comes from RemoteDataSource which we inject at runtime
+    # Don't use 'noise' - it generates random values causing chaotic meter behavior
+    # Keep smooth buffer for smoother needle movement
+    config['data.source']['smooth.buffer.size'] = '4'
     
     # Write adjusted config
     with open(config_path, 'w') as f:
@@ -525,13 +528,21 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
         # Replace data source with remote data source
         print("Connecting remote data source...")
         remote_ds = RemoteDataSource(level_receiver)
-        pm.data_source = remote_ds
         
-        # Stop the default data source if it was started
-        if hasattr(pm, 'data_source') and pm.data_source != remote_ds:
-            if hasattr(pm.data_source, 'stop_data_source'):
-                pm.data_source.stop_data_source()
-            pm.data_source = remote_ds
+        # Stop the original data source if it exists (prevents noise/pipe conflicts)
+        original_ds = getattr(pm, 'data_source', None)
+        if original_ds and original_ds != remote_ds:
+            if hasattr(original_ds, 'stop_data_source'):
+                try:
+                    original_ds.stop_data_source()
+                except Exception:
+                    pass
+        
+        # Inject remote data source into both Peppymeter AND Meter
+        # PeppyMeter's meter.run() uses self.data_source internally
+        pm.data_source = remote_ds
+        if hasattr(pm, 'meter') and pm.meter:
+            pm.meter.data_source = remote_ds
         
         # Create callback handler
         callback = CallBack(pm.util, meter_config_volumio, pm.meter)
