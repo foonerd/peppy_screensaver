@@ -408,6 +408,71 @@ class ServerDiscovery:
 
 
 # =============================================================================
+# Config Version Listener (UDP) - detect server config/template changes
+# =============================================================================
+class ConfigVersionListener(threading.Thread):
+    """
+    Listens for UDP discovery packets from the PeppyMeter server and sets
+    reload_requested when config_version in a packet differs from the
+    client's current version (so the client can reload config/templates).
+    """
+    def __init__(self, port, current_version_holder, server_ip=None):
+        super().__init__(daemon=True)
+        self.port = port
+        self.current_version_holder = current_version_holder  # dict with 'version' key
+        self.server_ip = server_ip  # if set, only accept packets from this IP
+        self.reload_requested = False
+        self._stop = False
+        self._sock = None
+
+    def run(self):
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.settimeout(1.0)
+        try:
+            self._sock.bind(('', self.port))
+        except OSError as e:
+            print(f"  ConfigVersionListener: could not bind to port {self.port}: {e}")
+            return
+        while not self._stop:
+            try:
+                data, addr = self._sock.recvfrom(1024)
+                if self.server_ip is not None and addr[0] != self.server_ip:
+                    continue
+                try:
+                    info = json.loads(data.decode('utf-8'))
+                    if info.get('service') != 'peppy_level_server':
+                        continue
+                    new_version = info.get('config_version', '')
+                    if not new_version:
+                        continue
+                    current = self.current_version_holder.get('version', '')
+                    if new_version != current:
+                        self.reload_requested = True
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+            except socket.timeout:
+                continue
+            except OSError:
+                if self._stop:
+                    break
+                raise
+        try:
+            self._sock.close()
+        except Exception:
+            pass
+        self._sock = None
+
+    def stop_listener(self):
+        self._stop = True
+        if self._sock:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+
+
+# =============================================================================
 # Config Fetcher (HTTP)
 # =============================================================================
 class ConfigFetcher:
@@ -473,6 +538,16 @@ class ConfigFetcher:
         return new_version and new_version != self.cached_version
 
 
+def _is_ip_address(host):
+    """Return True if host is an IPv4 or IPv6 address, False for a hostname."""
+    try:
+        import ipaddress
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
 # =============================================================================
 # SMB Mount Manager
 # =============================================================================
@@ -482,7 +557,11 @@ class SMBMount:
     def __init__(self, hostname, mount_point=None):
         self.hostname = hostname
         self.mount_point = Path(mount_point if mount_point else SMB_MOUNT_BASE)
-        self.share_path = f"//{hostname}.local/{SMB_SHARE_PATH}"
+        # .local is for mDNS hostnames only; use host as-is for IP addresses
+        if _is_ip_address(hostname):
+            self.share_path = f"//{hostname}/{SMB_SHARE_PATH}"
+        else:
+            self.share_path = f"//{hostname}.local/{SMB_SHARE_PATH}"
         self._mounted = False
     
     def mount(self):
@@ -876,6 +955,17 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
         pg.mouse.set_visible(False)
         pg.font.init()
         
+        # Config version listener: detect server config/template changes and reload
+        current_version_holder = {'version': config_fetcher.cached_version or ''}
+        discovery_port = server_info.get('discovery_port', DISCOVERY_PORT)
+        version_listener = ConfigVersionListener(
+            discovery_port, current_version_holder, server_ip=server_info['ip']
+        )
+        version_listener.start()
+        
+        peppy_running_file = '/tmp/peppyrunning'
+        from pathlib import Path
+        
         # Determine display flags from config (passed via environment)
         is_windowed = os.environ.get('PEPPY_DISPLAY_WINDOWED', '1') == '1'
         is_fullscreen = os.environ.get('PEPPY_DISPLAY_FULLSCREEN', '0') == '1'
@@ -905,21 +995,59 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
         print(f"Starting meter display ({mode_str})...")
         print("Press ESC or Q to exit, or click/touch screen")
         
-        # Create PeppyRunning file - start_display_output() checks for this
-        # and exits if it doesn't exist (it's used by Volumio plugin to signal stop)
-        peppy_running_file = '/tmp/peppyrunning'
-        from pathlib import Path
         Path(peppy_running_file).touch()
         Path(peppy_running_file).chmod(0o777)
         
+        # Support both old and new volumio_peppymeter (new has check_reload_callback)
         try:
-            # Run main display loop
-            # Pass server IP for socket.io metadata connection (not localhost)
-            start_display_output(pm, callback, meter_config_volumio,
-                               volumio_host=server_info['ip'],
-                               volumio_port=server_info['volumio_port'])
+            import inspect
+            _sig = inspect.signature(start_display_output)
+            reload_callback_supported = 'check_reload_callback' in _sig.parameters
+        except Exception:
+            reload_callback_supported = False
+        
+        try:
+            while True:
+                current_version_holder['version'] = config_fetcher.cached_version or ''
+                version_listener.reload_requested = False
+                Path(peppy_running_file).touch()
+                Path(peppy_running_file).chmod(0o777)
+                if reload_callback_supported:
+                    start_display_output(pm, callback, meter_config_volumio,
+                                        volumio_host=server_info['ip'],
+                                        volumio_port=server_info['volumio_port'],
+                                        check_reload_callback=lambda: version_listener.reload_requested)
+                else:
+                    start_display_output(pm, callback, meter_config_volumio,
+                                        volumio_host=server_info['ip'],
+                                        volumio_port=server_info['volumio_port'])
+                if not version_listener.reload_requested:
+                    break
+                print("Config changed on server, reloading...")
+                setup_remote_config(peppymeter_path, templates_path, config_fetcher)
+                pm = Peppymeter(standalone=True, timer_controlled_random_meter=False,
+                               quit_pygame_on_stop=False)
+                parser = Volumio_ConfigFileParser(pm.util)
+                meter_config_volumio = parser.meter_config_volumio
+                init_debug_config(meter_config_volumio)
+                pm.data_source = remote_ds
+                if hasattr(pm, 'meter') and pm.meter:
+                    pm.meter.data_source = remote_ds
+                callback = CallBack(pm.util, meter_config_volumio, pm.meter)
+                pm.meter.callback_start = callback.peppy_meter_start
+                pm.meter.callback_stop = callback.peppy_meter_stop
+                pm.dependent = callback.peppy_meter_update
+                pm.meter.malloc_trim = callback.trim_memory
+                pm.malloc_trim = callback.exit_trim_memory
+                pm.util.meter_config[SCREEN_INFO][WIDTH] = screen_w
+                pm.util.meter_config[SCREEN_INFO][HEIGHT] = screen_h
+                pm.util.meter_config[SCREEN_INFO][DEPTH] = depth
+                pm.util.PYGAME_SCREEN = screen
+                pm.util.screen_copy = screen
+                pm.util.meter_config[SCREEN_RECT] = pg.Rect(0, 0, screen_w, screen_h)
+                print("Config reloaded from server.")
         finally:
-            # Clean up PeppyRunning file
+            version_listener.stop_listener()
             if os.path.exists(peppy_running_file):
                 os.remove(peppy_running_file)
         

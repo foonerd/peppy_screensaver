@@ -2998,7 +2998,7 @@ def stop_watcher():
 # =============================================================================
 # Main Display Output with Overlay - OPTIMIZED
 # =============================================================================
-def start_display_output(pm, callback, meter_config_volumio, volumio_host='localhost', volumio_port=3000):
+def start_display_output(pm, callback, meter_config_volumio, volumio_host='localhost', volumio_port=3000, check_reload_callback=None):
     """Main display loop with integrated overlay rendering.
     OPTIMIZED: Uses dirty rectangle updates instead of full screen flip.
     
@@ -3007,6 +3007,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
     :param meter_config_volumio: Volumio meter configuration dict
     :param volumio_host: Volumio host for socket.io metadata (default: localhost)
     :param volumio_port: Volumio port for socket.io (default: 3000)
+    :param check_reload_callback: Optional callable(); if it returns True, loop exits for config reload (remote client).
     """
     
     pg.event.clear()
@@ -3401,6 +3402,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
     _dbg_last_progress = 0.0
     _dbg_frame_count = 0
     _dbg_log_time = 0  # Throttle periodic logging
+    last_reload_check = 0.0  # For check_reload_callback throttling
     
     while running:
         # CHECK PROFILING DURATION: Auto-stop cProfile if duration exceeded
@@ -3415,6 +3417,16 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             break
         
         current_time = time.time()
+        # CHECK RELOAD (remote client): exit so client can re-fetch config and restart
+        if check_reload_callback and (current_time - last_reload_check) >= 1.0:
+            last_reload_check = current_time
+            try:
+                if check_reload_callback():
+                    log_debug("Config reload requested - exiting display loop", "basic")
+                    running = False
+                    break
+            except Exception:
+                pass
         now_ticks = pg.time.get_ticks()  # OPTIMIZATION: For FPS-gated rendering
         dirty_rects = []  # OPTIMIZATION: Collect dirty rectangles
         frame_counter += 1
@@ -3608,6 +3620,26 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             frame_time_ms = clock.get_time()
             fps_actual = clock.get_fps()
             log_debug(f"[Frame] #{frame_counter}: time={frame_time_ms}ms, fps={fps_actual:.1f}, dirty_rects={len(dirty_rects)}", "trace", "frame")
+    
+    # Exiting for config reload (remote client): stop watchers but keep display alive for restart
+    if check_reload_callback:
+        try:
+            if check_reload_callback():
+                log_debug("Exiting for config reload - stopping watchers only", "basic")
+                if level_server:
+                    level_server.stop()
+                if discovery_announcer:
+                    discovery_announcer.stop()
+                final_handler = overlay_state.get("handler") if overlay_state else None
+                if final_handler:
+                    try:
+                        final_handler.cleanup()
+                    except Exception:
+                        pass
+                metadata_watcher.stop()
+                return
+        except Exception:
+            pass
     
     # Fade-out transition before cleanup (only if we did fade-in)
     if callback.did_fade_in:
