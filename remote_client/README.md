@@ -9,13 +9,13 @@ This client uses the **same rendering code** as the Volumio plugin (turntable, c
 One-liner installation:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/main/remote_client/install.sh | bash
 ```
 
 With server pre-configured:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash -s -- --server hanger
+curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/main/remote_client/install.sh | bash -s -- --server hanger
 ```
 
 ## Usage

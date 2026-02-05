@@ -18,7 +18,7 @@ Features:
 - Renders using full Volumio PeppyMeter code (turntable, cassette, meters)
 
 Installation:
-    curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash
+    curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/main/remote_client/install.sh | bash
 
 Usage:
     peppy_remote                    # Auto-discover server

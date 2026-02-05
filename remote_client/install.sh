@@ -3,10 +3,10 @@
 # PeppyMeter Remote Client Installer
 #
 # One-liner installation from GitHub:
-#   curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/main/remote_client/install.sh | bash
 #
 # Or with server pre-configured:
-#   curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash -s -- --server hanger
+#   curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/main/remote_client/install.sh | bash -s -- --server hanger
 #
 # This installs PeppyMeter Remote Client to ~/peppy_remote/
 # Everything is self-contained in that folder.
@@ -18,7 +18,7 @@ set -e
 # Configuration
 # =============================================================================
 REPO_URL="https://github.com/foonerd/peppy_screensaver"
-REPO_BRANCH="experimental-refactor"
+REPO_BRANCH="main"
 PEPPYMETER_REPO="https://github.com/project-owner/PeppyMeter"
 INSTALL_DIR="${PEPPY_REMOTE_DIR:-$HOME/peppy_remote}"
 SERVER_HOST=""
