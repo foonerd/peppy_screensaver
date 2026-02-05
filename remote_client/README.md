@@ -32,7 +32,70 @@ After installation, run:
 
 # Simple test display (VU bars only, no full PeppyMeter)
 ~/peppy_remote/peppy_remote --test
+
+# Interactive configuration wizard
+~/peppy_remote/peppy_remote --config
 ```
+
+## Configuration
+
+### Interactive Wizard (Recommended)
+
+Run the configuration wizard for easy setup:
+
+```bash
+~/peppy_remote/peppy_remote --config
+```
+
+This opens an interactive menu where you can configure:
+- Server connection (auto-discover or manual)
+- Display mode (windowed, frameless, fullscreen)
+- Window position
+- Template source (SMB or local)
+
+Settings are saved to `~/peppy_remote/config.json` and persist between runs.
+
+### Display Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **Windowed** | Normal window with title bar, movable/resizable | Desktop use, testing |
+| **Frameless** | No window decorations, fixed position | Kiosk displays, embedded |
+| **Fullscreen** | Full screen on selected monitor | Dedicated displays |
+
+Command-line overrides:
+```bash
+~/peppy_remote/peppy_remote --windowed      # Movable window
+~/peppy_remote/peppy_remote --fullscreen    # Full screen
+```
+
+### Configuration File
+
+Settings are stored in `~/peppy_remote/config.json`:
+
+```json
+{
+  "server": {
+    "host": null,           // null = auto-discover
+    "level_port": 5580,
+    "volumio_port": 3000,
+    "discovery_port": 5579,
+    "discovery_timeout": 10
+  },
+  "display": {
+    "windowed": true,       // true = movable window
+    "position": null,       // null = centered, or [x, y]
+    "fullscreen": false,
+    "monitor": 0
+  },
+  "templates": {
+    "use_smb": true,
+    "local_path": null
+  }
+}
+```
+
+Command-line arguments override config file settings.
 
 ## Requirements
 

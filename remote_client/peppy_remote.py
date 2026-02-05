@@ -48,6 +48,253 @@ DISCOVERY_TIMEOUT = 10  # seconds to wait for discovery
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SMB_MOUNT_BASE = os.path.join(SCRIPT_DIR, "mnt")  # Local mount point (portable)
 SMB_SHARE_PATH = "Internal Storage/peppy_screensaver"
+CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
+
+# Default configuration
+DEFAULT_CONFIG = {
+    "server": {
+        "host": None,           # None = auto-discover
+        "level_port": 5580,
+        "volumio_port": 3000,
+        "discovery_port": 5579,
+        "discovery_timeout": 10
+    },
+    "display": {
+        "windowed": True,       # True = movable window with title bar
+        "position": None,       # None = centered, or [x, y]
+        "fullscreen": False,
+        "monitor": 0
+    },
+    "templates": {
+        "use_smb": True,
+        "local_path": None      # Override path for templates
+    }
+}
+
+
+def load_config():
+    """Load configuration from file, return merged with defaults."""
+    config = json.loads(json.dumps(DEFAULT_CONFIG))  # Deep copy
+    
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                user_config = json.load(f)
+            # Deep merge user config into defaults
+            for section in config:
+                if section in user_config:
+                    if isinstance(config[section], dict):
+                        config[section].update(user_config[section])
+                    else:
+                        config[section] = user_config[section]
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Warning: Could not load config file: {e}")
+    
+    return config
+
+
+def save_config(config):
+    """Save configuration to file."""
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        return True
+    except IOError as e:
+        print(f"Error saving config: {e}")
+        return False
+
+
+def run_config_wizard():
+    """Interactive configuration wizard."""
+    config = load_config()
+    
+    def clear_screen():
+        os.system('clear' if os.name != 'nt' else 'cls')
+    
+    def show_menu():
+        clear_screen()
+        print("=" * 50)
+        print(" PeppyMeter Remote Client Configuration")
+        print("=" * 50)
+        print()
+        
+        # Server settings
+        host = config["server"]["host"] or "auto-discover"
+        print("Server Settings:")
+        print(f"  1. Server host:       {host}")
+        print(f"  2. Level port:        {config['server']['level_port']}")
+        print(f"  3. Volumio port:      {config['server']['volumio_port']}")
+        print(f"  4. Discovery timeout: {config['server']['discovery_timeout']}s")
+        print()
+        
+        # Display settings
+        mode = "fullscreen" if config["display"]["fullscreen"] else ("windowed" if config["display"]["windowed"] else "frameless")
+        pos = config["display"]["position"]
+        pos_str = f"{pos[0]}, {pos[1]}" if pos else "centered"
+        print("Display Settings:")
+        print(f"  5. Window mode:       {mode}")
+        print(f"  6. Position:          {pos_str}")
+        print(f"  7. Monitor:           {config['display']['monitor']}")
+        print()
+        
+        # Template settings
+        smb = "yes" if config["templates"]["use_smb"] else "no"
+        local = config["templates"]["local_path"] or "(none)"
+        print("Template Settings:")
+        print(f"  8. Use SMB mount:     {smb}")
+        print(f"  9. Local path:        {local}")
+        print()
+        
+        print("-" * 50)
+        print("  S = Save and exit")
+        print("  R = Run with these settings")
+        print("  D = Reset to defaults")
+        print("  Q = Quit without saving")
+        print()
+    
+    def get_input(prompt, default=None):
+        """Get user input with optional default."""
+        if default is not None:
+            result = input(f"{prompt} [{default}]: ").strip()
+            return result if result else str(default)
+        return input(f"{prompt}: ").strip()
+    
+    def config_server_host():
+        print()
+        print("Server host:")
+        print("  1. Auto-discover (recommended)")
+        print("  2. Enter hostname (e.g., volumio, hanger)")
+        print("  3. Enter IP address")
+        print()
+        choice = input("Choice [1]: ").strip() or "1"
+        
+        if choice == "1":
+            config["server"]["host"] = None
+        elif choice == "2":
+            host = input("Hostname: ").strip()
+            if host:
+                config["server"]["host"] = host
+        elif choice == "3":
+            ip = input("IP address: ").strip()
+            if ip:
+                config["server"]["host"] = ip
+    
+    def config_window_mode():
+        print()
+        print("Window mode:")
+        print("  1. Windowed (movable, with title bar)")
+        print("  2. Frameless (kiosk style, fixed position)")
+        print("  3. Fullscreen")
+        print()
+        choice = input("Choice [1]: ").strip() or "1"
+        
+        if choice == "1":
+            config["display"]["windowed"] = True
+            config["display"]["fullscreen"] = False
+        elif choice == "2":
+            config["display"]["windowed"] = False
+            config["display"]["fullscreen"] = False
+        elif choice == "3":
+            config["display"]["windowed"] = False
+            config["display"]["fullscreen"] = True
+    
+    def config_position():
+        print()
+        print("Window position:")
+        print("  1. Centered")
+        print("  2. Top-left (0, 0)")
+        print("  3. Custom coordinates")
+        print()
+        choice = input("Choice [1]: ").strip() or "1"
+        
+        if choice == "1":
+            config["display"]["position"] = None
+        elif choice == "2":
+            config["display"]["position"] = [0, 0]
+        elif choice == "3":
+            try:
+                x = int(input("X position: ").strip() or "0")
+                y = int(input("Y position: ").strip() or "0")
+                config["display"]["position"] = [x, y]
+            except ValueError:
+                print("Invalid input, using centered")
+                config["display"]["position"] = None
+    
+    def config_port(key, name):
+        print()
+        current = config["server"][key]
+        try:
+            value = int(get_input(f"{name}", current))
+            config["server"][key] = value
+        except ValueError:
+            print("Invalid port number")
+    
+    def config_smb():
+        print()
+        print("Use SMB mount for templates?")
+        print("  1. Yes (mount from Volumio server)")
+        print("  2. No (use local templates)")
+        print()
+        choice = input("Choice [1]: ").strip() or "1"
+        config["templates"]["use_smb"] = (choice == "1")
+        
+        if choice == "2":
+            path = input("Local templates path: ").strip()
+            if path:
+                config["templates"]["local_path"] = path
+    
+    # Main loop
+    while True:
+        show_menu()
+        choice = input("Choice: ").strip().upper()
+        
+        if choice == "1":
+            config_server_host()
+        elif choice == "2":
+            config_port("level_port", "Level port")
+        elif choice == "3":
+            config_port("volumio_port", "Volumio port")
+        elif choice == "4":
+            try:
+                value = int(get_input("Discovery timeout (seconds)", config["server"]["discovery_timeout"]))
+                config["server"]["discovery_timeout"] = value
+            except ValueError:
+                print("Invalid number")
+        elif choice == "5":
+            config_window_mode()
+        elif choice == "6":
+            config_position()
+        elif choice == "7":
+            try:
+                value = int(get_input("Monitor number", config["display"]["monitor"]))
+                config["display"]["monitor"] = value
+            except ValueError:
+                print("Invalid number")
+        elif choice == "8":
+            config_smb()
+        elif choice == "9":
+            path = input("Local templates path (empty to clear): ").strip()
+            config["templates"]["local_path"] = path if path else None
+        elif choice == "S":
+            if save_config(config):
+                print(f"\nConfiguration saved to: {CONFIG_FILE}")
+            input("Press Enter to continue...")
+            break
+        elif choice == "R":
+            save_config(config)
+            print("\nStarting PeppyMeter Remote Client...")
+            return config  # Return config to run with
+        elif choice == "D":
+            config = json.loads(json.dumps(DEFAULT_CONFIG))
+            print("\nReset to defaults")
+            input("Press Enter to continue...")
+        elif choice == "Q":
+            print("\nExiting without saving")
+            return None
+        else:
+            input("Invalid choice. Press Enter to continue...")
+    
+    return None  # Don't run after saving
 
 # =============================================================================
 # Server Discovery
@@ -579,17 +826,33 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
         pg.mouse.set_visible(False)
         pg.font.init()
         
-        flags = pg.NOFRAME
+        # Determine display flags from config (passed via environment)
+        is_windowed = os.environ.get('PEPPY_DISPLAY_WINDOWED', '1') == '1'
+        is_fullscreen = os.environ.get('PEPPY_DISPLAY_FULLSCREEN', '0') == '1'
+        
+        flags = 0
+        if is_fullscreen:
+            flags |= pg.FULLSCREEN
+        elif not is_windowed:
+            # Frameless kiosk mode
+            flags |= pg.NOFRAME
+        # If windowed, no special flags (default window with title bar)
+        
         if pm.util.meter_config[SDL_ENV][DOUBLE_BUFFER]:
             flags |= pg.DOUBLEBUF
         
         screen = pg.display.set_mode((screen_w, screen_h), flags, depth)
         pm.util.meter_config[SCREEN_RECT] = pg.Rect(0, 0, screen_w, screen_h)
         
+        # Set window title if windowed
+        if is_windowed and not is_fullscreen:
+            pg.display.set_caption("PeppyMeter Remote")
+        
         pm.util.PYGAME_SCREEN = screen
         pm.util.screen_copy = pm.util.PYGAME_SCREEN
         
-        print("Starting meter display...")
+        mode_str = "fullscreen" if is_fullscreen else ("windowed" if is_windowed else "frameless")
+        print(f"Starting meter display ({mode_str})...")
         print("Press ESC or Q to exit, or click/touch screen")
         
         # Create PeppyRunning file - start_display_output() checks for this
@@ -734,53 +997,104 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
+    parser.add_argument('--config', '-c', action='store_true',
+                       help='Run interactive configuration wizard')
     parser.add_argument('--server', '-s', 
                        help='Server hostname or IP (skip discovery)')
-    parser.add_argument('--level-port', type=int, default=5580,
-                       help='UDP port for level data (default: 5580)')
-    parser.add_argument('--volumio-port', type=int, default=3000,
-                       help='Volumio socket.io port (default: 3000)')
+    parser.add_argument('--level-port', type=int,
+                       help='UDP port for level data')
+    parser.add_argument('--volumio-port', type=int,
+                       help='Volumio socket.io port')
     parser.add_argument('--no-mount', action='store_true',
                        help='Skip SMB mount (use local templates)')
     parser.add_argument('--templates', 
                        help='Path to templates directory (overrides SMB mount)')
     parser.add_argument('--test', action='store_true',
                        help='Run simple test display instead of full PeppyMeter')
-    parser.add_argument('--discovery-timeout', type=int, default=DISCOVERY_TIMEOUT,
-                       help=f'Discovery timeout in seconds (default: {DISCOVERY_TIMEOUT})')
+    parser.add_argument('--discovery-timeout', type=int,
+                       help='Discovery timeout in seconds')
+    parser.add_argument('--windowed', action='store_true',
+                       help='Run in windowed mode (movable window)')
+    parser.add_argument('--fullscreen', action='store_true',
+                       help='Run in fullscreen mode')
     
     args = parser.parse_args()
     
+    # Run configuration wizard if requested
+    if args.config:
+        wizard_config = run_config_wizard()
+        if wizard_config is None:
+            # User quit without wanting to run
+            return
+        # wizard_config returned means user chose "Run"
+        config = wizard_config
+    else:
+        # Load config from file
+        config = load_config()
+    
+    # Command-line arguments override config file
+    if args.server:
+        config["server"]["host"] = args.server
+    if args.level_port:
+        config["server"]["level_port"] = args.level_port
+    if args.volumio_port:
+        config["server"]["volumio_port"] = args.volumio_port
+    if args.discovery_timeout:
+        config["server"]["discovery_timeout"] = args.discovery_timeout
+    if args.windowed:
+        config["display"]["windowed"] = True
+        config["display"]["fullscreen"] = False
+    if args.fullscreen:
+        config["display"]["fullscreen"] = True
+        config["display"]["windowed"] = False
+    if args.no_mount:
+        config["templates"]["use_smb"] = False
+    if args.templates:
+        config["templates"]["local_path"] = args.templates
+        config["templates"]["use_smb"] = False
+    
+    # Store display config in environment for use by display init
+    # (This is read by run_peppymeter_display)
+    os.environ['PEPPY_DISPLAY_WINDOWED'] = '1' if config["display"]["windowed"] else '0'
+    os.environ['PEPPY_DISPLAY_FULLSCREEN'] = '1' if config["display"]["fullscreen"] else '0'
+    if config["display"]["position"]:
+        os.environ['SDL_VIDEO_WINDOW_POS'] = f"{config['display']['position'][0]},{config['display']['position'][1]}"
+    
     # Server discovery or manual specification
     server_info = None
+    server_host = config["server"]["host"]
     
-    if args.server:
+    if server_host:
         # Manual server specification
         # Try to resolve hostname to IP
         try:
-            ip = socket.gethostbyname(args.server)
+            ip = socket.gethostbyname(server_host)
         except socket.gaierror:
             # Try with .local suffix
             try:
-                ip = socket.gethostbyname(f"{args.server}.local")
+                ip = socket.gethostbyname(f"{server_host}.local")
             except socket.gaierror:
-                ip = args.server  # Assume it's an IP
+                ip = server_host  # Assume it's an IP
         
         server_info = {
             'ip': ip,
-            'hostname': args.server,
-            'level_port': args.level_port,
-            'volumio_port': args.volumio_port
+            'hostname': server_host,
+            'level_port': config["server"]["level_port"],
+            'volumio_port': config["server"]["volumio_port"]
         }
-        print(f"Using server: {args.server} ({ip})")
+        print(f"Using server: {server_host} ({ip})")
     else:
         # Auto-discovery
-        discovery = ServerDiscovery(timeout=args.discovery_timeout)
+        discovery = ServerDiscovery(
+            port=config["server"]["discovery_port"],
+            timeout=config["server"]["discovery_timeout"]
+        )
         servers = discovery.discover()
         
         if not servers:
             print("No PeppyMeter servers found.")
             print("Use --server <hostname_or_ip> to specify manually.")
+            print("Or run --config to configure settings.")
             sys.exit(1)
         elif len(servers) == 1:
             server_info = list(servers.values())[0]
@@ -803,9 +1117,9 @@ def main():
                     print("\nCancelled.")
                     sys.exit(0)
     
-    # SMB mount for templates (if not disabled)
+    # SMB mount for templates (if enabled)
     smb_mount = None
-    if not args.no_mount and not args.templates:
+    if config["templates"]["use_smb"] and not config["templates"]["local_path"]:
         smb_mount = SMBMount(server_info['hostname'])
         if not smb_mount.mount():
             print("WARNING: Could not mount SMB share. Templates may not be available.")
@@ -833,8 +1147,8 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Determine templates path
-    if args.templates:
-        templates_path = args.templates
+    if config["templates"]["local_path"]:
+        templates_path = config["templates"]["local_path"]
     elif smb_mount and smb_mount._mounted:
         templates_path = str(smb_mount.templates_path)
     else:

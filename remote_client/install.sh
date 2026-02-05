@@ -332,27 +332,49 @@ echo "Creating configuration..."
 if [ -n "$SERVER_HOST" ]; then
     cat > "$INSTALL_DIR/config.json" << EOF
 {
-    "server": "$SERVER_HOST",
+  "server": {
+    "host": "$SERVER_HOST",
     "level_port": 5580,
     "volumio_port": 3000,
     "discovery_port": 5579,
-    "auto_discover": false,
-    "mount_smb": true
+    "discovery_timeout": 10
+  },
+  "display": {
+    "windowed": true,
+    "position": null,
+    "fullscreen": false,
+    "monitor": 0
+  },
+  "templates": {
+    "use_smb": true,
+    "local_path": null
+  }
 }
 EOF
     echo "  Server pre-configured: $SERVER_HOST"
 else
     cat > "$INSTALL_DIR/config.json" << EOF
 {
-    "server": null,
+  "server": {
+    "host": null,
     "level_port": 5580,
     "volumio_port": 3000,
     "discovery_port": 5579,
-    "auto_discover": true,
-    "mount_smb": true
+    "discovery_timeout": 10
+  },
+  "display": {
+    "windowed": true,
+    "position": null,
+    "fullscreen": false,
+    "monitor": 0
+  },
+  "templates": {
+    "use_smb": true,
+    "local_path": null
+  }
 }
 EOF
-    echo "  Auto-discovery enabled"
+    echo "  Auto-discovery enabled (default: windowed mode)"
 fi
 
 # =============================================================================
@@ -408,10 +430,15 @@ echo "To run PeppyMeter Remote Client:"
 echo ""
 echo "  $INSTALL_DIR/peppy_remote                    # Auto-discover server"
 echo "  $INSTALL_DIR/peppy_remote --server hanger    # Connect to specific server"
+echo "  $INSTALL_DIR/peppy_remote --config           # Interactive configuration"
 echo "  $INSTALL_DIR/peppy_remote --test             # Simple test display"
 echo ""
-echo "Or add to PATH:"
-echo "  export PATH=\"\$PATH:$INSTALL_DIR\""
+echo "Display options:"
+echo "  --windowed     Movable window with title bar (default)"
+echo "  --fullscreen   Fullscreen mode"
+echo ""
+echo "To configure settings interactively:"
+echo "  $INSTALL_DIR/peppy_remote --config"
 echo ""
 echo "To uninstall:"
 echo "  $INSTALL_DIR/uninstall.sh"
