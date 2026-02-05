@@ -457,13 +457,16 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
     
     # Set SDL environment for desktop BEFORE pygame import
     # This prevents volumio_peppymeter's init_display from setting framebuffer mode
-    os.environ.pop('SDL_FBDEV', None)
-    os.environ.pop('SDL_MOUSEDEV', None)
-    os.environ.pop('SDL_MOUSEDRV', None)
-    os.environ.pop('SDL_NOMOUSE', None)
-    if 'SDL_VIDEODRIVER' in os.environ:
-        if os.environ['SDL_VIDEODRIVER'] in ('dummy', 'fbcon', 'directfb'):
-            del os.environ['SDL_VIDEODRIVER']
+    # Remove ALL framebuffer-related SDL variables
+    for var in ['SDL_FBDEV', 'SDL_MOUSEDEV', 'SDL_MOUSEDRV', 'SDL_NOMOUSE']:
+        os.environ.pop(var, None)
+    
+    # Remove SDL_VIDEODRIVER if it's set to framebuffer/headless modes OR empty string
+    sdl_driver = os.environ.get('SDL_VIDEODRIVER', None)
+    if sdl_driver is not None and (sdl_driver == '' or sdl_driver in ('dummy', 'fbcon', 'directfb')):
+        del os.environ['SDL_VIDEODRIVER']
+    
+    # Ensure DISPLAY is set for X11
     if 'DISPLAY' not in os.environ:
         os.environ['DISPLAY'] = ':0'
     

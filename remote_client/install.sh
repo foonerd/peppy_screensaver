@@ -305,11 +305,12 @@ source "$SCRIPT_DIR/venv/bin/activate"
 export PYTHONPATH="$SCRIPT_DIR/screensaver:$SCRIPT_DIR/screensaver/peppymeter:$SCRIPT_DIR/screensaver/spectrum:$PYTHONPATH"
 
 # SDL environment for desktop display (not framebuffer)
-# Must be set BEFORE pygame import
-export SDL_VIDEODRIVER=""  # Let SDL auto-detect (x11, wayland)
+# Must be set BEFORE pygame import - unset lets SDL auto-detect (x11, wayland)
+unset SDL_VIDEODRIVER
 unset SDL_FBDEV
 unset SDL_MOUSEDEV
 unset SDL_MOUSEDRV
+unset SDL_NOMOUSE
 
 # Ensure DISPLAY is set for X11
 if [ -z "$DISPLAY" ]; then
