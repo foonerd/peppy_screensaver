@@ -12,10 +12,13 @@ Features:
 - Mounts templates via SMB from the server
 - Renders using standard PeppyMeter skins
 
+Installation:
+    curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash
+
 Usage:
-    ./run_peppy_remote.py                    # Auto-discover server
-    ./run_peppy_remote.py --server hanger    # Connect to specific server
-    ./run_peppy_remote.py --server 192.168.1.100
+    peppy_remote                    # Auto-discover server
+    peppy_remote --server hanger    # Connect to specific server
+    peppy_remote --test             # Simple test display
 """
 
 import argparse
@@ -391,22 +394,18 @@ class RemoteDataSource:
 def run_peppymeter_display(level_receiver, metadata_receiver, templates_path, smb_mount, server_info):
     """Run full PeppyMeter rendering with actual skins."""
     
-    # Set up paths for PeppyMeter
-    peppymeter_path = os.path.join(SCRIPT_DIR, "screensaver", "peppymeter")
+    # Set up paths for PeppyMeter (installed at ./peppymeter by install.sh)
+    peppymeter_path = os.path.join(SCRIPT_DIR, "peppymeter")
     
     if not os.path.exists(peppymeter_path):
         print(f"ERROR: PeppyMeter not found at {peppymeter_path}")
-        print("Run install_client.sh first to clone PeppyMeter.")
+        print("Run the installer first:")
+        print("  curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash")
         return
     
     # Add PeppyMeter to Python path
     if peppymeter_path not in sys.path:
         sys.path.insert(0, peppymeter_path)
-    
-    # Also add the screensaver directory for volumio modules
-    screensaver_path = os.path.join(SCRIPT_DIR, "screensaver")
-    if screensaver_path not in sys.path:
-        sys.path.insert(0, screensaver_path)
     
     # Change to PeppyMeter directory (it expects this)
     original_cwd = os.getcwd()
