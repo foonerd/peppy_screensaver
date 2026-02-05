@@ -2,6 +2,8 @@
 
 Display PeppyMeter visualizations on any Debian-based system by connecting to a Volumio server running the PeppyMeter plugin.
 
+This client uses the **same rendering code** as the Volumio plugin (turntable, cassette, meters) but receives audio data over the network.
+
 ## Quick Install
 
 One-liner installation:
@@ -28,7 +30,7 @@ After installation, run:
 ~/peppy_remote/peppy_remote --server hanger
 ~/peppy_remote/peppy_remote --server 192.168.1.100
 
-# Simple test display (no PeppyMeter, just VU bars)
+# Simple test display (VU bars only, no full PeppyMeter)
 ~/peppy_remote/peppy_remote --test
 ```
 
@@ -41,11 +43,35 @@ After installation, run:
 ## How It Works
 
 1. **Discovery**: Client listens for UDP broadcasts from PeppyMeter server (port 5579)
-2. **Config**: Fetches `config.txt` from server via SMB (Internal Storage share)
+   - Discovery packets include `config_version` for detecting config changes
+2. **Config**: Fetches `config.txt` from server via HTTP (Volumio plugin API)
+   - Uses direct IP address from discovery for reliable connectivity
+   - Endpoint: `/api/v1/pluginEndpoint?endpoint=peppy_screensaver&method=getRemoteConfig`
 3. **Templates**: Mounts template skins from server via SMB
 4. **Audio Levels**: Receives real-time level data via UDP (port 5580)
-5. **Metadata**: Connects to Volumio socket.io for track info
-6. **Rendering**: Uses PeppyMeter to render the visualization
+5. **Rendering**: Uses full Volumio PeppyMeter code (turntable, cassette, meters, indicators)
+
+## Installation Structure
+
+```
+~/peppy_remote/
+├── peppy_remote          # Launcher script
+├── peppy_remote.py       # Main client
+├── screensaver/          # Mirrors Volumio plugin structure
+│   ├── peppymeter/       # Upstream PeppyMeter (git clone)
+│   ├── volumio_peppymeter.py
+│   ├── volumio_turntable.py
+│   ├── volumio_cassette.py
+│   ├── volumio_compositor.py
+│   ├── volumio_indicators.py
+│   ├── volumio_spectrum.py
+│   ├── volumio_configfileparser.py
+│   ├── fonts/
+│   └── format-icons/
+├── mnt/                  # SMB mount for templates
+├── venv/                 # Python virtual environment
+└── config.json           # Client configuration
+```
 
 ## Server Setup
 
@@ -79,16 +105,28 @@ System packages are NOT removed (python3, SDL2, etc.).
 - Verify network connectivity: `ping hanger.local`
 - Try manual server: `peppy_remote --server <ip_address>`
 
-**SMB mount fails:**
+**SMB mount fails (templates):**
 - Ensure cifs-utils is installed
 - Check Volumio SMB is accessible: `smbclient -L //hanger.local -N`
 - Verify sudoers entry exists: `cat /etc/sudoers.d/peppy_remote`
+- Note: Config is fetched via HTTP, only templates use SMB
+
+**Config fetch fails:**
+- Ensure Volumio plugin is installed and running
+- Test endpoint manually: `curl "http://<server_ip>:3000/api/v1/pluginEndpoint?endpoint=peppy_screensaver&method=getRemoteConfig"`
+- Check Volumio logs for plugin errors
 
 **No audio levels:**
 - Check server is broadcasting: `nc -ul 5580`
 - Verify music is playing on Volumio
 - Check firewall allows UDP 5580
 
-**PeppyMeter import error:**
-- Verify PeppyMeter was cloned: `ls ~/peppy_remote/peppymeter`
-- Check Python packages: `~/peppy_remote/venv/bin/pip list`
+**Import errors:**
+- Verify screensaver directory exists: `ls ~/peppy_remote/screensaver/`
+- Check volumio_*.py files downloaded: `ls ~/peppy_remote/screensaver/volumio_*.py`
+- Check PeppyMeter cloned: `ls ~/peppy_remote/screensaver/peppymeter/`
+
+**Display issues ("windows not available"):**
+- Ensure DISPLAY environment variable is set: `echo $DISPLAY`
+- Check X11 is running: `xdpyinfo`
+- Try: `export DISPLAY=:0` before running

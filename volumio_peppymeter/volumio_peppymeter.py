@@ -941,15 +941,18 @@ class DiscoveryAnnouncer:
             "version": 1,
             "level_port": 5580,
             "volumio_port": 3000,
-            "hostname": "volumio"
+            "hostname": "volumio",
+            "config_version": "a1b2c3d4"
         }
     
     Clients can listen on the discovery port to find available servers
-    without needing to know the IP address in advance.
+    without needing to know the IP address in advance. The config_version
+    field changes when server configuration changes, allowing clients to
+    detect and re-fetch updated config.
     """
     
     def __init__(self, discovery_port=5579, level_port=5580, volumio_port=3000, 
-                 interval=5.0, enabled=True):
+                 interval=5.0, enabled=True, config_path=None):
         """Initialize the discovery announcer.
         
         :param discovery_port: UDP port for discovery broadcasts (default 5579)
@@ -957,28 +960,55 @@ class DiscoveryAnnouncer:
         :param volumio_port: Volumio socket.io port to advertise (default 3000)
         :param interval: Seconds between announcements (default 5.0)
         :param enabled: Whether announcements are enabled
+        :param config_path: Path to config.txt for version hashing
         """
         self.discovery_port = discovery_port
         self.level_port = level_port
         self.volumio_port = volumio_port
         self.interval = interval
         self.enabled = enabled
+        self.config_path = config_path
         self.run_flag = False
         self.thread = None
         self.sock = None
+        self._config_version = ""
+        self._last_config_check = 0
+        self._config_check_interval = 5.0  # Check config every 5 seconds
         
-        # Build announcement payload
+        # Get hostname
         try:
-            hostname = socket.gethostname()
+            self.hostname = socket.gethostname()
         except Exception:
-            hostname = "volumio"
+            self.hostname = "volumio"
         
-        self.announcement = json.dumps({
+        # Calculate initial config version
+        self._update_config_version()
+    
+    def _update_config_version(self):
+        """Calculate MD5 hash of config file for version tracking."""
+        if not self.config_path:
+            return
+        
+        try:
+            import hashlib
+            with open(self.config_path, 'rb') as f:
+                content = f.read()
+            new_hash = hashlib.md5(content).hexdigest()[:8]
+            if new_hash != self._config_version:
+                self._config_version = new_hash
+                log_debug(f"[DiscoveryAnnouncer] Config version: {self._config_version}", "verbose")
+        except Exception as e:
+            log_debug(f"[DiscoveryAnnouncer] Config hash error: {e}", "verbose")
+    
+    def _build_announcement(self):
+        """Build the announcement payload with current config version."""
+        return json.dumps({
             "service": "peppy_level_server",
             "version": 1,
             "level_port": self.level_port,
             "volumio_port": self.volumio_port,
-            "hostname": hostname
+            "hostname": self.hostname,
+            "config_version": self._config_version
         }).encode('utf-8')
     
     def start(self):
@@ -1001,8 +1031,15 @@ class DiscoveryAnnouncer:
     def _run(self):
         """Thread loop - broadcast announcements periodically."""
         while self.run_flag:
+            # Periodically re-check config version
+            now = time.time()
+            if now - self._last_config_check > self._config_check_interval:
+                self._update_config_version()
+                self._last_config_check = now
+            
             try:
-                self.sock.sendto(self.announcement, ('<broadcast>', self.discovery_port))
+                announcement = self._build_announcement()
+                self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
             except Exception as e:
                 log_debug(f"[DiscoveryAnnouncer] Send error: {e}", "verbose")
             
@@ -3021,13 +3058,15 @@ def start_display_output(pm, callback, meter_config_volumio):
         # Start level server
         level_server = NetworkLevelServer(port=level_port, enabled=True)
         
-        # Start discovery announcer
+        # Start discovery announcer (includes config version for change detection)
+        config_path = os.path.join(PeppyPath, 'config.txt')
         discovery_announcer = DiscoveryAnnouncer(
             discovery_port=discovery_port,
             level_port=level_port,
             volumio_port=3000,
             interval=5.0,
-            enabled=True
+            enabled=True,
+            config_path=config_path
         )
         discovery_announcer.start()
         

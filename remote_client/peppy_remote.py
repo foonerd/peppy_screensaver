@@ -5,12 +5,17 @@ PeppyMeter Remote Client
 Connects to a PeppyMeter server running on Volumio and displays
 the meter visualization on a remote display.
 
+This client uses the same rendering code as the Volumio plugin
+(volumio_peppymeter.py, volumio_turntable.py, etc.) but receives
+audio level data over the network instead of from local ALSA/pipe.
+
 Features:
 - Auto-discovery of PeppyMeter servers via UDP broadcast
 - Receives audio level data over UDP
 - Receives metadata via Volumio's socket.io
 - Mounts templates via SMB from the server
-- Renders using standard PeppyMeter skins
+- Fetches config.txt via HTTP from server
+- Renders using full Volumio PeppyMeter code (turntable, cassette, meters)
 
 Installation:
     curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash
@@ -31,6 +36,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 # =============================================================================
@@ -80,8 +87,14 @@ class ServerDiscovery:
                                 'hostname': hostname,
                                 'level_port': info.get('level_port', 5580),
                                 'volumio_port': info.get('volumio_port', 3000),
-                                'version': info.get('version', 1)
+                                'version': info.get('version', 1),
+                                'config_version': info.get('config_version', '')
                             }
+                        else:
+                            # Update config_version if changed
+                            new_version = info.get('config_version', '')
+                            if new_version and new_version != self.servers[ip].get('config_version'):
+                                self.servers[ip]['config_version'] = new_version
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     pass
             except socket.timeout:
@@ -95,6 +108,72 @@ class ServerDiscovery:
     
     def stop(self):
         self._stop = True
+
+
+# =============================================================================
+# Config Fetcher (HTTP)
+# =============================================================================
+class ConfigFetcher:
+    """
+    Fetches config.txt from server via HTTP.
+    
+    Uses Volumio plugin API endpoint to get config without SMB symlink issues.
+    The server IP address from discovery is used for robust connectivity.
+    """
+    
+    def __init__(self, server_ip, volumio_port=3000):
+        self.server_ip = server_ip
+        self.volumio_port = volumio_port
+        self.cached_config = None
+        self.cached_version = None
+    
+    def fetch(self):
+        """
+        Fetch config from server via HTTP.
+        
+        Returns (success, config_content, version) tuple.
+        """
+        # Use direct IP address for reliable connectivity
+        url = f"http://{self.server_ip}:{self.volumio_port}/api/v1/pluginEndpoint?endpoint=peppy_screensaver&method=getRemoteConfig"
+        
+        try:
+            req = urllib.request.Request(url, headers={'Accept': 'application/json'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode())
+                
+                # Volumio REST API wraps plugin response in 'data' field
+                # Response format: {"success": true, "data": {"success": true, "version": "...", "config": "..."}}
+                if data.get('success'):
+                    inner = data.get('data', {})
+                    if inner.get('success'):
+                        self.cached_config = inner.get('config', '')
+                        self.cached_version = inner.get('version', '')
+                        return True, self.cached_config, self.cached_version
+                    else:
+                        error = inner.get('error', 'Unknown error')
+                        print(f"  Plugin error fetching config: {error}")
+                        return False, None, None
+                else:
+                    error = data.get('error', 'Unknown error')
+                    print(f"  Server error fetching config: {error}")
+                    return False, None, None
+                    
+        except urllib.error.HTTPError as e:
+            print(f"  HTTP error fetching config: {e.code} {e.reason}")
+            return False, None, None
+        except urllib.error.URLError as e:
+            print(f"  URL error fetching config: {e.reason}")
+            return False, None, None
+        except json.JSONDecodeError as e:
+            print(f"  JSON error parsing config response: {e}")
+            return False, None, None
+        except Exception as e:
+            print(f"  Error fetching config: {e}")
+            return False, None, None
+    
+    def has_changed(self, new_version):
+        """Check if config version has changed."""
+        return new_version and new_version != self.cached_version
 
 
 # =============================================================================
@@ -166,11 +245,6 @@ class SMBMount:
     def templates_path(self):
         """Path to templates directory."""
         return self.mount_point / 'templates'
-    
-    @property
-    def config_path(self):
-        """Path to config.txt."""
-        return self.mount_point / 'config.txt'
 
 
 # =============================================================================
@@ -238,119 +312,6 @@ class LevelReceiver:
 
 
 # =============================================================================
-# Metadata Receiver (Socket.IO)
-# =============================================================================
-class MetadataReceiver:
-    """Receives metadata from Volumio via socket.io."""
-    
-    def __init__(self, server_ip, port=3000):
-        self.server_ip = server_ip
-        self.port = port
-        self.sio = None
-        self._running = False
-        
-        # Current metadata
-        self.metadata = {
-            'status': 'stop',
-            'title': '',
-            'artist': '',
-            'album': '',
-            'albumart': '',
-            'seek': 0,
-            'duration': 0,
-            'volume': 0,
-            'mute': False,
-            'random': False,
-            'repeat': False,
-            'repeatSingle': False,
-        }
-    
-    def start(self):
-        """Connect to Volumio socket.io."""
-        try:
-            import socketio
-        except ImportError:
-            print("WARNING: python-socketio not installed. Metadata will not be available.")
-            print("  Install with: pip install python-socketio[client]")
-            return False
-        
-        # Volumio uses socket.io v2, need to specify engineio_logger for debugging
-        # and use proper transport settings
-        self.sio = socketio.Client(logger=False, engineio_logger=False)
-        
-        @self.sio.on('pushState')
-        def on_push_state(data):
-            self._update_metadata(data)
-        
-        @self.sio.on('connect')
-        def on_connect():
-            print(f"Connected to Volumio at {self.server_ip}:{self.port}")
-            self.sio.emit('getState')
-        
-        @self.sio.on('disconnect')
-        def on_disconnect():
-            print("Disconnected from Volumio")
-        
-        try:
-            url = f"http://{self.server_ip}:{self.port}"
-            print(f"Connecting to Volumio at {url}...")
-            # Try different socket.io protocol versions
-            # Volumio typically uses v2/v3 with polling transport
-            try:
-                self.sio.connect(url, transports=['polling', 'websocket'])
-            except Exception:
-                # Fall back to websocket only
-                self.sio.connect(url, transports=['websocket'])
-            self._running = True
-            return True
-        except Exception as e:
-            print(f"Failed to connect to Volumio: {e}")
-            # Try alternative approach with requests-based polling
-            print("Trying alternative metadata approach...")
-            self._start_http_polling()
-            return False
-    
-    def _start_http_polling(self):
-        """Fall back to HTTP polling for metadata if socket.io fails."""
-        import threading
-        import urllib.request
-        import json
-        
-        def poll_loop():
-            url = f"http://{self.server_ip}:{self.port}/api/v1/getState"
-            while self._running:
-                try:
-                    with urllib.request.urlopen(url, timeout=5) as response:
-                        data = json.loads(response.read().decode())
-                        self._update_metadata(data)
-                except Exception:
-                    pass
-                time.sleep(1)  # Poll every second
-        
-        self._running = True
-        self._poll_thread = threading.Thread(target=poll_loop, daemon=True)
-        self._poll_thread.start()
-        print("Using HTTP polling for metadata")
-    
-    def _update_metadata(self, data):
-        """Update metadata from pushState event."""
-        if isinstance(data, dict):
-            for key in self.metadata:
-                if key in data:
-                    self.metadata[key] = data[key]
-    
-    def stop(self):
-        """Disconnect from Volumio."""
-        self._running = False
-        if self.sio and self.sio.connected:
-            self.sio.disconnect()
-    
-    def get_metadata(self):
-        """Get current metadata dict."""
-        return self.metadata.copy()
-
-
-# =============================================================================
 # Remote Data Source (for PeppyMeter integration)
 # =============================================================================
 class RemoteDataSource:
@@ -389,133 +350,33 @@ class RemoteDataSource:
 
 
 # =============================================================================
-# Full PeppyMeter Display
+# Setup Remote Config
 # =============================================================================
-def run_peppymeter_display(level_receiver, metadata_receiver, templates_path, smb_mount, server_info):
-    """Run full PeppyMeter rendering with actual skins."""
-    
-    # Set up paths for PeppyMeter (installed at ./peppymeter by install.sh)
-    peppymeter_path = os.path.join(SCRIPT_DIR, "peppymeter")
-    
-    if not os.path.exists(peppymeter_path):
-        print(f"ERROR: PeppyMeter not found at {peppymeter_path}")
-        print("Run the installer first:")
-        print("  curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash")
-        return
-    
-    # Add PeppyMeter to Python path
-    if peppymeter_path not in sys.path:
-        sys.path.insert(0, peppymeter_path)
-    
-    # Change to PeppyMeter directory (it expects this)
-    original_cwd = os.getcwd()
-    os.chdir(peppymeter_path)
-    
-    try:
-        # Import PeppyMeter components
-        print("Loading PeppyMeter...")
-        
-        import ctypes
-        try:
-            ctypes.CDLL('libX11.so.6').XInitThreads()
-        except Exception:
-            pass  # Not on X11 or library not found
-        
-        # Import PeppyMeter after path setup
-        from peppymeter import Peppymeter
-        from configfileparser import SCREEN_INFO, WIDTH, HEIGHT, FRAME_RATE, SCREEN_RECT
-        import pygame
-        
-        # Get config from server via SMB mount, or create default
-        config_path = os.path.join(peppymeter_path, "config.txt")
-        _setup_remote_config(config_path, templates_path, smb_mount)
-        
-        # Initialize PeppyMeter
-        print("Initializing PeppyMeter...")
-        pm = Peppymeter(standalone=True, timer_controlled_random_meter=False, 
-                       quit_pygame_on_stop=False)
-        
-        # Stop the default data source that was started during init
-        if hasattr(pm, 'data_source') and hasattr(pm.data_source, 'stop_data_source'):
-            pm.data_source.stop_data_source()
-        
-        # Replace the data source with our remote data source
-        print("Connecting remote data source...")
-        remote_ds = RemoteDataSource(level_receiver)
-        pm.data_source = remote_ds
-        
-        # Also update the meter's data source reference
-        if hasattr(pm, 'meter') and hasattr(pm.meter, 'data_source'):
-            pm.meter.data_source = remote_ds
-        
-        # Get screen dimensions from config
-        try:
-            screen_w = pm.util.meter_config[SCREEN_INFO][WIDTH]
-            screen_h = pm.util.meter_config[SCREEN_INFO][HEIGHT]
-            frame_rate = pm.util.meter_config.get(FRAME_RATE, 30)
-        except (KeyError, TypeError):
-            screen_w = 800
-            screen_h = 480
-            frame_rate = 30
-        
-        print(f"Display: {screen_w}x{screen_h} @ {frame_rate}fps")
-        
-        # Initialize display
-        pm.init_display()
-        
-        print("Starting meter display...")
-        print("Press ESC or Q to exit, or click/touch screen")
-        
-        # Use PeppyMeter's built-in display loop
-        pm.start_display_output()
-        
-    except ImportError as e:
-        print(f"ERROR: Could not import PeppyMeter: {e}")
-        import traceback
-        traceback.print_exc()
-        print("\nFalling back to test display...")
-        os.chdir(original_cwd)
-        run_test_display(level_receiver, metadata_receiver)
-        return
-    except Exception as e:
-        print(f"ERROR: PeppyMeter failed: {e}")
-        import traceback
-        traceback.print_exc()
-        print("\nFalling back to test display...")
-        os.chdir(original_cwd)
-        run_test_display(level_receiver, metadata_receiver)
-        return
-    finally:
-        os.chdir(original_cwd)
-
-
-def _setup_remote_config(config_path, templates_path, smb_mount):
+def setup_remote_config(peppymeter_path, templates_path, config_fetcher):
     """
     Set up config.txt for remote client mode.
     
-    Priority:
-    1. Copy from server via SMB mount (if available)
-    2. Fall back to generating default config
-    
-    After copying/creating, update paths for local use.
+    Fetches config from server via HTTP and adjusts paths for local use.
     """
     import configparser
-    import shutil
     
-    server_config_copied = False
+    config_path = os.path.join(peppymeter_path, "config.txt")
+    server_config_fetched = False
     
-    # Try to copy config from server via SMB
-    if smb_mount and smb_mount._mounted:
-        server_config = smb_mount.config_path
-        if server_config.exists():
+    # Try to fetch config from server via HTTP
+    if config_fetcher:
+        print("Fetching config from server via HTTP...")
+        success, config_content, version = config_fetcher.fetch()
+        if success and config_content:
             try:
-                print(f"Using config from server: {server_config}")
-                shutil.copy(str(server_config), config_path)
-                server_config_copied = True
+                with open(config_path, 'w') as f:
+                    f.write(config_content)
+                server_config_fetched = True
+                print(f"  Config fetched successfully (version: {version})")
             except Exception as e:
-                print(f"  Failed to copy server config: {e}")
+                print(f"  Failed to write fetched config: {e}")
     
-    if not server_config_copied:
+    if not server_config_fetched:
         print("Server config not available, using defaults")
     
     # Now read and adjust the config for local use
@@ -527,23 +388,27 @@ def _setup_remote_config(config_path, templates_path, smb_mount):
         except Exception:
             pass  # Start fresh if parse error
     
-    # Ensure all required sections exist with defaults
-    _ensure_config_defaults(config)
+    # Ensure all required sections exist
+    if 'current' not in config:
+        config['current'] = {}
+    if 'sdl.env' not in config:
+        config['sdl.env'] = {}
+    if 'data.source' not in config:
+        config['data.source'] = {}
     
-    # Update paths for local client:
-    # - base.folder must point to our local templates path
-    # - SDL settings for desktop (not framebuffer)
-    # - data.source set to noise (we override with RemoteDataSource anyway)
+    # Update paths for local client
     config['current']['base.folder'] = templates_path
     
     # SDL settings for windowed display (not embedded framebuffer)
+    # These will be read by volumio_peppymeter's init_display()
     config['sdl.env']['framebuffer.device'] = ''
-    config['sdl.env']['video.driver'] = ''  # Empty for X11/desktop
-    config['sdl.env']['video.display'] = ':0'
+    config['sdl.env']['video.driver'] = ''  # Empty for auto-detect (X11/Wayland)
+    config['sdl.env']['video.display'] = os.environ.get('DISPLAY', ':0')
     config['sdl.env']['mouse.enabled'] = 'False'
     config['sdl.env']['double.buffer'] = 'True'
+    config['sdl.env']['no.frame'] = 'False'  # Allow window frame on desktop
     
-    # Data source - we override anyway, but use noise to avoid pipe errors
+    # Data source - we override with RemoteDataSource anyway
     config['data.source']['type'] = 'noise'
     config['data.source']['smooth.buffer.size'] = '0'
     
@@ -551,96 +416,153 @@ def _setup_remote_config(config_path, templates_path, smb_mount):
     with open(config_path, 'w') as f:
         config.write(f)
     
-    if server_config_copied:
-        print(f"  Config adjusted for local use (meter: {config['current'].get('meter.folder', 'unknown')})")
-
-
-def _ensure_config_defaults(config):
-    """Ensure all required config sections exist with defaults."""
-    sections = {
-        'current': {
-            'meter': 'random',
-            'random.meter.interval': '60',
-            'base.folder': '',
-            'meter.folder': '800x480',
-            'screen.width': '',
-            'screen.height': '',
-            'exit.on.touch': 'False',
-            'stop.display.on.touch': 'False',
-            'output.display': 'True',
-            'output.serial': 'False',
-            'output.i2c': 'False',
-            'output.pwm': 'False',
-            'output.http': 'False',
-            'use.logging': 'False',
-            'use.cache': 'True',
-            'cache.size': '20',
-            'frame.rate': '30',
-        },
-        'sdl.env': {
-            'framebuffer.device': '',
-            'mouse.device': '',
-            'mouse.driver': 'TSLIB',
-            'mouse.enabled': 'False',
-            'video.driver': '',
-            'video.display': ':0',
-            'double.buffer': 'True',
-            'no.frame': 'False',
-        },
-        'serial.interface': {
-            'device.name': '/dev/serial0',
-            'baud.rate': '9600',
-            'include.time': 'False',
-            'update.period': '0.1',
-        },
-        'i2c.interface': {
-            'port': '1',
-            'left.channel.address': '0x21',
-            'right.channel.address': '0x20',
-            'output.size': '10',
-            'update.period': '0.1',
-        },
-        'pwm.interface': {
-            'frequency': '500',
-            'gpio.pin.left': '24',
-            'gpio.pin.right': '25',
-            'update.period': '0.1',
-        },
-        'http.interface': {
-            'target.url': 'http://localhost:8000/vumeter',
-            'update.period': '0.033',
-        },
-        'web.server': {
-            'http.port': '8001',
-        },
-        'data.source': {
-            'type': 'noise',
-            'polling.interval': '0.033',
-            'pipe.name': '/dev/null',
-            'volume.constant': '80.0',
-            'volume.min': '0.0',
-            'volume.max': '100.0',
-            'volume.max.in.pipe': '100.0',
-            'step': '6',
-            'mono.algorithm': 'average',
-            'stereo.algorithm': 'new',
-            'smooth.buffer.size': '0',
-        },
-    }
+    if server_config_fetched:
+        meter_folder = config['current'].get('meter.folder', 'unknown')
+        print(f"  Config adjusted for local use (meter: {meter_folder})")
     
-    for section, values in sections.items():
-        if section not in config:
-            config[section] = {}
-        for key, value in values.items():
-            if key not in config[section]:
-                config[section][key] = value
+    return config_path
+
+
+# =============================================================================
+# Full PeppyMeter Display (using volumio_peppymeter)
+# =============================================================================
+def run_peppymeter_display(level_receiver, server_info, templates_path, config_fetcher):
+    """Run full PeppyMeter rendering using volumio_peppymeter code."""
+    
+    import ctypes
+    
+    # Set up paths - mirrors Volumio plugin structure
+    screensaver_path = os.path.join(SCRIPT_DIR, "screensaver")
+    peppymeter_path = os.path.join(screensaver_path, "peppymeter")
+    
+    if not os.path.exists(peppymeter_path):
+        print(f"ERROR: PeppyMeter not found at {peppymeter_path}")
+        print("Run the installer first:")
+        print("  curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/experimental-refactor/remote_client/install.sh | bash")
+        return False
+    
+    if not os.path.exists(os.path.join(screensaver_path, "volumio_peppymeter.py")):
+        print(f"ERROR: volumio_peppymeter.py not found at {screensaver_path}")
+        print("Run the installer to download Volumio custom handlers.")
+        return False
+    
+    # Fetch and setup config BEFORE any imports that might read it
+    config_path = setup_remote_config(peppymeter_path, templates_path, config_fetcher)
+    
+    # Set SDL environment for desktop BEFORE pygame import
+    # This prevents volumio_peppymeter's init_display from setting framebuffer mode
+    os.environ.pop('SDL_FBDEV', None)
+    os.environ.pop('SDL_MOUSEDEV', None)
+    os.environ.pop('SDL_MOUSEDRV', None)
+    os.environ.pop('SDL_NOMOUSE', None)
+    if 'SDL_VIDEODRIVER' in os.environ:
+        if os.environ['SDL_VIDEODRIVER'] in ('dummy', 'fbcon', 'directfb'):
+            del os.environ['SDL_VIDEODRIVER']
+    if 'DISPLAY' not in os.environ:
+        os.environ['DISPLAY'] = ':0'
+    
+    print(f"  SDL environment configured for desktop (DISPLAY={os.environ.get('DISPLAY')})")
+    
+    # Add paths to Python path
+    if screensaver_path not in sys.path:
+        sys.path.insert(0, screensaver_path)
+    if peppymeter_path not in sys.path:
+        sys.path.insert(0, peppymeter_path)
+    
+    # Change to peppymeter directory (volumio_peppymeter expects this)
+    original_cwd = os.getcwd()
+    os.chdir(peppymeter_path)
+    
+    try:
+        # Enable X11 threading
+        try:
+            ctypes.CDLL('libX11.so.6').XInitThreads()
+        except Exception:
+            pass  # Not on X11 or library not found
+        
+        print("Loading PeppyMeter...")
+        
+        # Import PeppyMeter components
+        from peppymeter import Peppymeter
+        from configfileparser import SCREEN_INFO, WIDTH, HEIGHT
+        from volumio_configfileparser import Volumio_ConfigFileParser
+        
+        # Import volumio_peppymeter functions
+        from volumio_peppymeter import (
+            init_display, start_display_output, CallBack,
+            init_debug_config, log_debug, memory_limit
+        )
+        
+        # Initialize base PeppyMeter
+        print("Initializing PeppyMeter...")
+        pm = Peppymeter(standalone=True, timer_controlled_random_meter=False, 
+                       quit_pygame_on_stop=False)
+        
+        # Parse Volumio configuration
+        parser = Volumio_ConfigFileParser(pm.util)
+        meter_config_volumio = parser.meter_config_volumio
+        
+        # Initialize debug settings
+        init_debug_config(meter_config_volumio)
+        log_debug("=== PeppyMeter Remote Client starting ===", "basic")
+        
+        # Replace data source with remote data source
+        print("Connecting remote data source...")
+        remote_ds = RemoteDataSource(level_receiver)
+        pm.data_source = remote_ds
+        
+        # Stop the default data source if it was started
+        if hasattr(pm, 'data_source') and pm.data_source != remote_ds:
+            if hasattr(pm.data_source, 'stop_data_source'):
+                pm.data_source.stop_data_source()
+            pm.data_source = remote_ds
+        
+        # Create callback handler
+        callback = CallBack(pm.util, meter_config_volumio, pm.meter)
+        pm.meter.callback_start = callback.peppy_meter_start
+        pm.meter.callback_stop = callback.peppy_meter_stop
+        pm.dependent = callback.peppy_meter_update
+        pm.meter.malloc_trim = callback.trim_memory
+        pm.malloc_trim = callback.exit_trim_memory
+        
+        # Get screen dimensions
+        screen_w = pm.util.meter_config[SCREEN_INFO][WIDTH]
+        screen_h = pm.util.meter_config[SCREEN_INFO][HEIGHT]
+        print(f"Display: {screen_w}x{screen_h}")
+        
+        memory_limit()
+        
+        # Initialize display
+        pm.util.PYGAME_SCREEN = init_display(pm, meter_config_volumio, screen_w, screen_h)
+        pm.util.screen_copy = pm.util.PYGAME_SCREEN
+        
+        print("Starting meter display...")
+        print("Press ESC or Q to exit, or click/touch screen")
+        
+        # Run main display loop
+        start_display_output(pm, callback, meter_config_volumio)
+        
+        return True
+        
+    except ImportError as e:
+        print(f"ERROR: Could not import PeppyMeter components: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    except Exception as e:
+        print(f"ERROR: PeppyMeter failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    finally:
+        os.chdir(original_cwd)
 
 
 # =============================================================================
 # Simple Test Display (pygame)
 # =============================================================================
-def run_test_display(level_receiver, metadata_receiver):
-    """Simple pygame display for testing - shows VU bars and metadata."""
+def run_test_display(level_receiver):
+    """Simple pygame display for testing - shows VU bars."""
     try:
         import pygame
     except ImportError:
@@ -649,7 +571,7 @@ def run_test_display(level_receiver, metadata_receiver):
     
     pygame.init()
     screen = pygame.display.set_mode((800, 480))
-    pygame.display.set_caption("PeppyMeter Remote")
+    pygame.display.set_caption("PeppyMeter Remote - Test Mode")
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, 36)
     font_small = pygame.font.Font(None, 24)
@@ -660,7 +582,7 @@ def run_test_display(level_receiver, metadata_receiver):
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+                if event.key in (pygame.K_ESCAPE, pygame.K_q):
                     running = False
         
         # Clear screen
@@ -701,21 +623,13 @@ def run_test_display(level_receiver, metadata_receiver):
         mono_text = font_small.render(f"M: {mono:.1f}", True, (200, 200, 200))
         screen.blit(mono_text, (540, bar_y + bar_max_height + 10))
         
-        # Draw metadata
-        meta = metadata_receiver.get_metadata() if metadata_receiver else {}
-        
-        title = meta.get('title', 'No metadata')
-        artist = meta.get('artist', '')
-        status = meta.get('status', 'unknown')
-        
-        title_text = font.render(title[:50], True, (255, 255, 255))
+        # Title
+        title_text = font.render("PeppyMeter Remote - Test Display", True, (255, 255, 255))
         screen.blit(title_text, (50, 20))
         
-        artist_text = font_small.render(artist[:60], True, (180, 180, 180))
-        screen.blit(artist_text, (50, 55))
-        
-        status_text = font_small.render(f"Status: {status}", True, (150, 150, 150))
-        screen.blit(status_text, (650, 20))
+        # Instructions
+        info_text = font_small.render("Press ESC or Q to exit", True, (150, 150, 150))
+        screen.blit(info_text, (50, 60))
         
         # Sequence number (for debugging)
         seq_text = font_small.render(f"Seq: {level_receiver.seq}", True, (100, 100, 100))
@@ -805,26 +719,28 @@ def main():
                     print("\nCancelled.")
                     sys.exit(0)
     
-    # SMB mount (if not disabled)
+    # SMB mount for templates (if not disabled)
     smb_mount = None
     if not args.no_mount and not args.templates:
         smb_mount = SMBMount(server_info['hostname'])
         if not smb_mount.mount():
             print("WARNING: Could not mount SMB share. Templates may not be available.")
     
+    # Config fetcher (uses HTTP to get config from server)
+    config_fetcher = ConfigFetcher(server_info['ip'], server_info['volumio_port'])
+    
+    # Show config version if available from discovery
+    if server_info.get('config_version'):
+        print(f"Server config version: {server_info['config_version']}")
+    
     # Start level receiver
     level_receiver = LevelReceiver(server_info['ip'], server_info['level_port'])
     level_receiver.start()
-    
-    # Start metadata receiver
-    metadata_receiver = MetadataReceiver(server_info['ip'], server_info['volumio_port'])
-    metadata_receiver.start()
     
     # Handle graceful shutdown
     def signal_handler(sig, frame):
         print("\nShutting down...")
         level_receiver.stop()
-        metadata_receiver.stop()
         if smb_mount:
             smb_mount.unmount()
         sys.exit(0)
@@ -843,15 +759,17 @@ def main():
     # Run display
     if args.test:
         # Simple test display
-        run_test_display(level_receiver, metadata_receiver)
+        run_test_display(level_receiver)
     else:
         # Full PeppyMeter rendering
-        run_peppymeter_display(level_receiver, metadata_receiver, 
-                               templates_path, smb_mount, server_info)
+        success = run_peppymeter_display(level_receiver, server_info, 
+                                         templates_path, config_fetcher)
+        if not success:
+            print("\nFalling back to test display...")
+            run_test_display(level_receiver)
     
     # Cleanup
     level_receiver.stop()
-    metadata_receiver.stop()
     if smb_mount:
         smb_mount.unmount()
 

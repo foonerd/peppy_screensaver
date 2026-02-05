@@ -15,6 +15,7 @@ var config = new (require('v-conf'))();
 var exec = require('child_process').exec;
 var execSync = require('child_process').execSync;
 var sizeOf = require('image-size');
+var crypto = require('crypto');  // For config version hashing
 var use_SDL2 = false;
 var lt_4GB = false;
 
@@ -47,10 +48,8 @@ const AIRtmpl = '/volumio/app/plugins/music_service/airplay_emulation/shairport-
 const AIR = '/tmp/shairport-sync.conf.tmpl';
 const asound = '/Peppyalsa.postPeppyalsa.5.conf';
 
-// Remote client symlinks - expose config via Internal Storage SMB share
-const InternalStorage = '/data/INTERNAL';
-const RemoteSharePath = InternalStorage + '/peppy_screensaver';
-const RemoteConfigSymlink = RemoteSharePath + '/config.txt';
+// Remote client config serving
+var remoteConfigVersion = '';  // MD5 hash of config.txt for change detection
 
 var availMeters = '';
 var uiNeedsUpdate;
@@ -320,6 +319,20 @@ peppyScreensaver.prototype.onStart = function() {
         lastUri = state.uri || '';
     });
     
+    // Register REST endpoint for remote config access
+    // This allows remote clients to fetch config.txt via HTTP:
+    // GET /api/v1/pluginEndpoint?endpoint=peppy_screensaver&method=getRemoteConfig
+    self.commandRouter.addPluginRestEndpoint({
+        endpoint: 'peppy_screensaver',
+        type: 'user_interface',
+        name: 'peppy_screensaver',
+        method: 'getRemoteConfig'
+    });
+    self.logger.info(id + 'REST endpoint registered: peppy_screensaver');
+    
+    // Initialize config version on startup
+    self.updateConfigVersion();
+    
     // Once the Plugin has successfull started resolve the promise
 	defer.resolve();       
  
@@ -368,6 +381,11 @@ peppyScreensaver.prototype.onStop = function() {
         
         // remove old flag
         if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+        
+        // Unregister REST endpoint
+        self.commandRouter.removePluginRestEndpoint({
+            endpoint: 'peppy_screensaver'
+        });
         
         defer.resolve();                
           
@@ -1699,8 +1717,8 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
         if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
     }
     
-    // Manage symlink for remote client access to config via SMB
-    self.manageRemoteSymlink(confData.remoteServerEnabled);
+    // Update config version hash for remote clients
+    self.updateConfigVersion();
     
   } else {
       self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));
@@ -1715,50 +1733,64 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
   }, 500);
 }; // end saveRemoteConf -------------------------------------
 
-// Manage symlink for remote client config access via SMB
-peppyScreensaver.prototype.manageRemoteSymlink = function (enabled) {
+// Calculate and update config version hash (for remote client change detection)
+peppyScreensaver.prototype.updateConfigVersion = function () {
   const self = this;
   
   try {
-    if (enabled) {
-      // Create symlink directory if needed (inside Internal Storage)
-      if (!fs.existsSync(RemoteSharePath)) {
-        fs.mkdirSync(RemoteSharePath, { recursive: true });
-        self.logger.info(id + 'Created remote share directory: ' + RemoteSharePath);
-      }
+    if (fs.existsSync(PeppyConf)) {
+      var configContent = fs.readFileSync(PeppyConf, 'utf8');
+      var newHash = crypto.createHash('md5').update(configContent).digest('hex').substring(0, 8);
       
-      // Create symlink to config.txt if it doesn't exist or is wrong
-      if (fs.existsSync(RemoteConfigSymlink)) {
-        // Check if it's already the correct symlink
-        try {
-          var linkTarget = fs.readlinkSync(RemoteConfigSymlink);
-          if (linkTarget !== PeppyConf) {
-            // Wrong target, remove and recreate
-            fs.removeSync(RemoteConfigSymlink);
-            fs.symlinkSync(PeppyConf, RemoteConfigSymlink);
-            self.logger.info(id + 'Updated remote config symlink: ' + RemoteConfigSymlink + ' -> ' + PeppyConf);
-          }
-        } catch (e) {
-          // Not a symlink, remove and recreate
-          fs.removeSync(RemoteConfigSymlink);
-          fs.symlinkSync(PeppyConf, RemoteConfigSymlink);
-          self.logger.info(id + 'Replaced file with symlink: ' + RemoteConfigSymlink + ' -> ' + PeppyConf);
-        }
-      } else {
-        // Create new symlink
-        fs.symlinkSync(PeppyConf, RemoteConfigSymlink);
-        self.logger.info(id + 'Created remote config symlink: ' + RemoteConfigSymlink + ' -> ' + PeppyConf);
-      }
-    } else {
-      // Remote server disabled - remove symlink (but keep directory for templates)
-      if (fs.existsSync(RemoteConfigSymlink)) {
-        fs.removeSync(RemoteConfigSymlink);
-        self.logger.info(id + 'Removed remote config symlink: ' + RemoteConfigSymlink);
+      if (newHash !== remoteConfigVersion) {
+        remoteConfigVersion = newHash;
+        self.logger.info(id + 'Config version updated: ' + remoteConfigVersion);
       }
     }
   } catch (err) {
-    self.logger.error(id + 'Failed to manage remote symlink: ' + err.message);
+    self.logger.error(id + 'Failed to calculate config version: ' + err.message);
   }
+  
+  return remoteConfigVersion;
+};
+
+// Get current config version hash
+peppyScreensaver.prototype.getConfigVersion = function () {
+  return remoteConfigVersion;
+};
+
+// HTTP endpoint: Return config.txt contents for remote clients
+// Called via: GET /api/v1/pluginEndpoint?endpoint=peppy_screensaver&method=getRemoteConfig
+peppyScreensaver.prototype.getRemoteConfig = function () {
+  const self = this;
+  var defer = libQ.defer();
+  
+  try {
+    if (!fs.existsSync(PeppyConf)) {
+      defer.resolve({
+        success: false,
+        error: 'Config file not found'
+      });
+      return defer.promise;
+    }
+    
+    var configContent = fs.readFileSync(PeppyConf, 'utf8');
+    var configVersion = self.updateConfigVersion();
+    
+    defer.resolve({
+      success: true,
+      version: configVersion,
+      config: configContent
+    });
+  } catch (err) {
+    self.logger.error(id + 'Failed to read config for remote client: ' + err.message);
+    defer.resolve({
+      success: false,
+      error: err.message
+    });
+  }
+  
+  return defer.promise;
 };
 
 // global functions

@@ -160,19 +160,71 @@ echo "  Downloaded: peppy_remote.py"
 echo "  Downloaded: uninstall.sh"
 
 # =============================================================================
-# Clone PeppyMeter
+# Create screensaver directory structure (mirrors Volumio plugin layout)
 # =============================================================================
 echo ""
-echo "Cloning PeppyMeter..."
+echo "Creating screensaver directory structure..."
 
-if [ -d "$INSTALL_DIR/peppymeter" ]; then
+mkdir -p "$INSTALL_DIR/screensaver"
+
+# =============================================================================
+# Clone PeppyMeter (base rendering engine)
+# =============================================================================
+echo ""
+echo "Cloning PeppyMeter (base engine)..."
+
+PEPPYMETER_DIR="$INSTALL_DIR/screensaver/peppymeter"
+
+if [ -d "$PEPPYMETER_DIR" ]; then
     echo "  Updating existing PeppyMeter..."
-    cd "$INSTALL_DIR/peppymeter"
+    cd "$PEPPYMETER_DIR"
     git pull --ff-only 2>/dev/null || echo "  (Update failed, using existing)"
     cd "$INSTALL_DIR"
 else
-    git clone --depth 1 "$PEPPYMETER_REPO" "$INSTALL_DIR/peppymeter"
+    git clone --depth 1 "$PEPPYMETER_REPO" "$PEPPYMETER_DIR"
 fi
+
+# =============================================================================
+# Download Volumio custom handlers (turntable, cassette, compositor, etc.)
+# =============================================================================
+echo ""
+echo "Downloading Volumio custom handlers..."
+
+VOLUMIO_FILES=(
+    "volumio_peppymeter.py"
+    "volumio_configfileparser.py"
+    "volumio_turntable.py"
+    "volumio_cassette.py"
+    "volumio_compositor.py"
+    "volumio_indicators.py"
+    "volumio_spectrum.py"
+    "volumio_basic.py"
+    "screensaverspectrum.py"
+)
+
+for file in "${VOLUMIO_FILES[@]}"; do
+    echo "  Downloading: $file"
+    curl -sSL "$REPO_URL/raw/$REPO_BRANCH/volumio_peppymeter/$file" -o "$INSTALL_DIR/screensaver/$file"
+done
+
+# Download fonts directory
+echo "  Downloading fonts..."
+mkdir -p "$INSTALL_DIR/screensaver/fonts"
+for font in DSEG7Classic-Bold.ttf DSEG7Classic-BoldItalic.ttf DSEG7Classic-Italic.ttf DSEG7Classic-Regular.ttf; do
+    curl -sSL "$REPO_URL/raw/$REPO_BRANCH/volumio_peppymeter/fonts/$font" -o "$INSTALL_DIR/screensaver/fonts/$font"
+done
+
+# Download format-icons directory
+echo "  Downloading format icons..."
+mkdir -p "$INSTALL_DIR/screensaver/format-icons"
+for icon in cd.svg dab.svg fm.svg qobuz.svg radio.svg tidal.svg; do
+    curl -sSL "$REPO_URL/raw/$REPO_BRANCH/volumio_peppymeter/format-icons/$icon" -o "$INSTALL_DIR/screensaver/format-icons/$icon"
+done
+
+echo "  All Volumio handlers downloaded"
+
+# Create backward-compatible symlink for peppymeter at root level
+ln -sf "$INSTALL_DIR/screensaver/peppymeter" "$INSTALL_DIR/peppymeter" 2>/dev/null || true
 
 # =============================================================================
 # Create Python virtual environment
@@ -207,8 +259,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Activate virtual environment
 source "$SCRIPT_DIR/venv/bin/activate"
 
-# Set PYTHONPATH
-export PYTHONPATH="$SCRIPT_DIR/peppymeter:$PYTHONPATH"
+# Set PYTHONPATH to include:
+# 1. screensaver/ - for volumio_*.py modules
+# 2. screensaver/peppymeter/ - for base PeppyMeter modules
+export PYTHONPATH="$SCRIPT_DIR/screensaver:$SCRIPT_DIR/screensaver/peppymeter:$PYTHONPATH"
+
+# SDL environment for desktop display (not framebuffer)
+# Must be set BEFORE pygame import
+export SDL_VIDEODRIVER=""  # Let SDL auto-detect (x11, wayland)
+unset SDL_FBDEV
+unset SDL_MOUSEDEV
+unset SDL_MOUSEDRV
+
+# Ensure DISPLAY is set for X11
+if [ -z "$DISPLAY" ]; then
+    export DISPLAY=:0
+fi
 
 # Run client
 python3 "$SCRIPT_DIR/peppy_remote.py" "$@"
