@@ -581,8 +581,23 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
         print("Starting meter display...")
         print("Press ESC or Q to exit, or click/touch screen")
         
-        # Run main display loop
-        start_display_output(pm, callback, meter_config_volumio)
+        # Create PeppyRunning file - start_display_output() checks for this
+        # and exits if it doesn't exist (it's used by Volumio plugin to signal stop)
+        peppy_running_file = '/tmp/peppyrunning'
+        from pathlib import Path
+        Path(peppy_running_file).touch()
+        Path(peppy_running_file).chmod(0o777)
+        
+        try:
+            # Run main display loop
+            # Pass server IP for socket.io metadata connection (not localhost)
+            start_display_output(pm, callback, meter_config_volumio,
+                               volumio_host=server_info['ip'],
+                               volumio_port=server_info['volumio_port'])
+        finally:
+            # Clean up PeppyRunning file
+            if os.path.exists(peppy_running_file):
+                os.remove(peppy_running_file)
         
         return True
         

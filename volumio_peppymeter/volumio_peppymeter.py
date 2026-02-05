@@ -586,9 +586,10 @@ class MetadataWatcher:
     Eliminates HTTP polling - state updates are event-driven.
     """
     
-    def __init__(self, metadata_dict, title_changed_callback=None):
+    def __init__(self, metadata_dict, title_changed_callback=None, volumio_host='localhost', volumio_port=3000):
         self.metadata = metadata_dict
         self.title_callback = title_changed_callback
+        self.volumio_url = f'http://{volumio_host}:{volumio_port}'
         self.sio = socketio.Client(logger=False, engineio_logger=False)
         self.run_flag = True
         self.thread = None
@@ -777,7 +778,7 @@ class MetadataWatcher:
         # Socket connection loop - must be at end of _run() method
         while self.run_flag:
             try:
-                self.sio.connect('http://localhost:3000', transports=['websocket'])
+                self.sio.connect(self.volumio_url, transports=['websocket'])
                 while self.run_flag and self.sio.connected:
                     self.sio.sleep(0.5)
             except Exception as e:
@@ -2991,9 +2992,16 @@ def stop_watcher():
 # =============================================================================
 # Main Display Output with Overlay - OPTIMIZED
 # =============================================================================
-def start_display_output(pm, callback, meter_config_volumio):
+def start_display_output(pm, callback, meter_config_volumio, volumio_host='localhost', volumio_port=3000):
     """Main display loop with integrated overlay rendering.
-    OPTIMIZED: Uses dirty rectangle updates instead of full screen flip."""
+    OPTIMIZED: Uses dirty rectangle updates instead of full screen flip.
+    
+    :param pm: Peppymeter instance
+    :param callback: CallBack instance
+    :param meter_config_volumio: Volumio meter configuration dict
+    :param volumio_host: Volumio host for socket.io metadata (default: localhost)
+    :param volumio_port: Volumio port for socket.io (default: 3000)
+    """
     
     pg.event.clear()
     screen = pm.util.PYGAME_SCREEN
@@ -3039,7 +3047,9 @@ def start_display_output(pm, callback, meter_config_volumio):
     # Start MetadataWatcher - handles both metadata updates and title change detection
     metadata_watcher = MetadataWatcher(
         last_metadata,
-        title_changed_callback=on_title_change if random_title else None
+        title_changed_callback=on_title_change if random_title else None,
+        volumio_host=volumio_host,
+        volumio_port=volumio_port
     )
     metadata_watcher.start()
     
