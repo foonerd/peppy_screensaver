@@ -446,6 +446,12 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
         print("Run the installer to download Volumio custom handlers.")
         return False
     
+    spectrum_path = os.path.join(screensaver_path, "spectrum")
+    if not os.path.exists(spectrum_path):
+        print(f"ERROR: PeppySpectrum not found at {spectrum_path}")
+        print("Run the installer to download PeppySpectrum.")
+        return False
+    
     # Fetch and setup config BEFORE any imports that might read it
     config_path = setup_remote_config(peppymeter_path, templates_path, config_fetcher)
     
@@ -464,10 +470,14 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
     print(f"  SDL environment configured for desktop (DISPLAY={os.environ.get('DISPLAY')})")
     
     # Add paths to Python path
+    # Order matters: screensaver first (volumio_*.py), then peppymeter, then spectrum
+    spectrum_path = os.path.join(screensaver_path, "spectrum")
     if screensaver_path not in sys.path:
         sys.path.insert(0, screensaver_path)
     if peppymeter_path not in sys.path:
         sys.path.insert(0, peppymeter_path)
+    if spectrum_path not in sys.path:
+        sys.path.insert(0, spectrum_path)
     
     # Change to peppymeter directory (volumio_peppymeter expects this)
     original_cwd = os.getcwd()

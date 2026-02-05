@@ -185,6 +185,24 @@ else
 fi
 
 # =============================================================================
+# Clone PeppySpectrum (spectrum analyzer engine)
+# =============================================================================
+echo ""
+echo "Cloning PeppySpectrum (spectrum engine)..."
+
+SPECTRUM_REPO="https://github.com/project-owner/PeppySpectrum"
+SPECTRUM_DIR="$INSTALL_DIR/screensaver/spectrum"
+
+if [ -d "$SPECTRUM_DIR" ]; then
+    echo "  Updating existing PeppySpectrum..."
+    cd "$SPECTRUM_DIR"
+    git pull --ff-only 2>/dev/null || echo "  (Update failed, using existing)"
+    cd "$INSTALL_DIR"
+else
+    git clone --depth 1 "$SPECTRUM_REPO" "$SPECTRUM_DIR"
+fi
+
+# =============================================================================
 # Download Volumio custom handlers (turntable, cassette, compositor, etc.)
 # =============================================================================
 echo ""
@@ -260,8 +278,9 @@ source "$SCRIPT_DIR/venv/bin/activate"
 
 # Set PYTHONPATH to include:
 # 1. screensaver/ - for volumio_*.py modules
-# 2. screensaver/peppymeter/ - for base PeppyMeter modules
-export PYTHONPATH="$SCRIPT_DIR/screensaver:$SCRIPT_DIR/screensaver/peppymeter:$PYTHONPATH"
+# 2. screensaver/peppymeter/ - for base PeppyMeter modules (configfileparser, etc.)
+# 3. screensaver/spectrum/ - for PeppySpectrum modules (spectrum.py, spectrumutil.py, etc.)
+export PYTHONPATH="$SCRIPT_DIR/screensaver:$SCRIPT_DIR/screensaver/peppymeter:$SCRIPT_DIR/screensaver/spectrum:$PYTHONPATH"
 
 # SDL environment for desktop display (not framebuffer)
 # Must be set BEFORE pygame import

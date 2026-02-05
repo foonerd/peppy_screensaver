@@ -58,13 +58,22 @@ After installation, run:
 ├── peppy_remote          # Launcher script
 ├── peppy_remote.py       # Main client
 ├── screensaver/          # Mirrors Volumio plugin structure
-│   ├── peppymeter/       # Upstream PeppyMeter (git clone)
-│   ├── volumio_peppymeter.py
-│   ├── volumio_turntable.py
-│   ├── volumio_cassette.py
-│   ├── volumio_compositor.py
-│   ├── volumio_indicators.py
-│   ├── volumio_spectrum.py
+│   ├── peppymeter/       # PeppyMeter base engine (git clone)
+│   │   ├── peppymeter.py
+│   │   ├── configfileparser.py
+│   │   ├── meter.py, needle.py, etc.
+│   │   └── ...
+│   ├── spectrum/         # PeppySpectrum engine (git clone)
+│   │   ├── spectrum.py
+│   │   ├── spectrumutil.py
+│   │   ├── spectrumconfigparser.py
+│   │   └── ...
+│   ├── volumio_peppymeter.py   # Volumio main handler
+│   ├── volumio_turntable.py    # Turntable/vinyl animations
+│   ├── volumio_cassette.py     # Cassette deck animations
+│   ├── volumio_compositor.py   # Layer compositing
+│   ├── volumio_indicators.py   # Volume/mute/shuffle icons
+│   ├── volumio_spectrum.py     # Spectrum integration
 │   ├── volumio_configfileparser.py
 │   ├── fonts/
 │   └── format-icons/
