@@ -908,6 +908,10 @@ class NetworkLevelServer:
         if not self.enabled or not self.sock:
             return
         
+        # Guard against None values (can occur during meter transitions or when data source has no data)
+        if left is None or right is None or mono is None:
+            return
+        
         try:
             # Pack as: sequence (uint32) + 3 floats (left, right, mono)
             data = struct.pack('<Ifff', self.seq, float(left), float(right), float(mono))
