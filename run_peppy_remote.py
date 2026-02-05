@@ -427,9 +427,9 @@ def run_peppymeter_display(level_receiver, metadata_receiver, templates_path, sm
         from configfileparser import SCREEN_INFO, WIDTH, HEIGHT, FRAME_RATE, SCREEN_RECT
         import pygame
         
-        # Create config.txt for remote mode if needed
+        # Get config from server via SMB mount, or create default
         config_path = os.path.join(peppymeter_path, "config.txt")
-        _create_remote_config(config_path, templates_path)
+        _setup_remote_config(config_path, templates_path, smb_mount)
         
         # Initialize PeppyMeter
         print("Initializing PeppyMeter...")
@@ -490,13 +490,38 @@ def run_peppymeter_display(level_receiver, metadata_receiver, templates_path, sm
         os.chdir(original_cwd)
 
 
-def _create_remote_config(config_path, templates_path):
-    """Create/update config.txt for remote client mode."""
-    import configparser
+def _setup_remote_config(config_path, templates_path, smb_mount):
+    """
+    Set up config.txt for remote client mode.
     
+    Priority:
+    1. Copy from server via SMB mount (if available)
+    2. Fall back to generating default config
+    
+    After copying/creating, update paths for local use.
+    """
+    import configparser
+    import shutil
+    
+    server_config_copied = False
+    
+    # Try to copy config from server via SMB
+    if smb_mount and smb_mount._mounted:
+        server_config = smb_mount.config_path
+        if server_config.exists():
+            try:
+                print(f"Using config from server: {server_config}")
+                shutil.copy(str(server_config), config_path)
+                server_config_copied = True
+            except Exception as e:
+                print(f"  Failed to copy server config: {e}")
+    
+    if not server_config_copied:
+        print("Server config not available, using defaults")
+    
+    # Now read and adjust the config for local use
     config = configparser.ConfigParser()
     
-    # Read existing config if present
     if os.path.exists(config_path):
         try:
             config.read(config_path)
@@ -504,11 +529,40 @@ def _create_remote_config(config_path, templates_path):
             pass  # Start fresh if parse error
     
     # Ensure all required sections exist with defaults
+    _ensure_config_defaults(config)
+    
+    # Update paths for local client:
+    # - base.folder must point to our local templates path
+    # - SDL settings for desktop (not framebuffer)
+    # - data.source set to noise (we override with RemoteDataSource anyway)
+    config['current']['base.folder'] = templates_path
+    
+    # SDL settings for windowed display (not embedded framebuffer)
+    config['sdl.env']['framebuffer.device'] = ''
+    config['sdl.env']['video.driver'] = ''  # Empty for X11/desktop
+    config['sdl.env']['video.display'] = ':0'
+    config['sdl.env']['mouse.enabled'] = 'False'
+    config['sdl.env']['double.buffer'] = 'True'
+    
+    # Data source - we override anyway, but use noise to avoid pipe errors
+    config['data.source']['type'] = 'noise'
+    config['data.source']['smooth.buffer.size'] = '0'
+    
+    # Write adjusted config
+    with open(config_path, 'w') as f:
+        config.write(f)
+    
+    if server_config_copied:
+        print(f"  Config adjusted for local use (meter: {config['current'].get('meter.folder', 'unknown')})")
+
+
+def _ensure_config_defaults(config):
+    """Ensure all required config sections exist with defaults."""
     sections = {
         'current': {
             'meter': 'random',
             'random.meter.interval': '60',
-            'base.folder': templates_path,
+            'base.folder': '',
             'meter.folder': '800x480',
             'screen.width': '',
             'screen.height': '',
@@ -529,7 +583,7 @@ def _create_remote_config(config_path, templates_path):
             'mouse.device': '',
             'mouse.driver': 'TSLIB',
             'mouse.enabled': 'False',
-            'video.driver': '',  # Empty for X11/desktop
+            'video.driver': '',
             'video.display': ':0',
             'double.buffer': 'True',
             'no.frame': 'False',
@@ -561,7 +615,7 @@ def _create_remote_config(config_path, templates_path):
             'http.port': '8001',
         },
         'data.source': {
-            'type': 'noise',  # Use noise type - we override data_source anyway
+            'type': 'noise',
             'polling.interval': '0.033',
             'pipe.name': '/dev/null',
             'volume.constant': '80.0',
@@ -571,7 +625,7 @@ def _create_remote_config(config_path, templates_path):
             'step': '6',
             'mono.algorithm': 'average',
             'stereo.algorithm': 'new',
-            'smooth.buffer.size': '0',  # No smoothing, data already processed
+            'smooth.buffer.size': '0',
         },
     }
     
@@ -579,16 +633,8 @@ def _create_remote_config(config_path, templates_path):
         if section not in config:
             config[section] = {}
         for key, value in values.items():
-            # Only set if not already present (preserve user customizations)
             if key not in config[section]:
                 config[section][key] = value
-    
-    # Always update base.folder to use templates path
-    config['current']['base.folder'] = templates_path
-    
-    # Write config
-    with open(config_path, 'w') as f:
-        config.write(f)
 
 
 # =============================================================================

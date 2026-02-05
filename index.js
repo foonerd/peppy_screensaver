@@ -47,6 +47,11 @@ const AIRtmpl = '/volumio/app/plugins/music_service/airplay_emulation/shairport-
 const AIR = '/tmp/shairport-sync.conf.tmpl';
 const asound = '/Peppyalsa.postPeppyalsa.5.conf';
 
+// Remote client symlinks - expose config via Internal Storage SMB share
+const InternalStorage = '/data/INTERNAL';
+const RemoteSharePath = InternalStorage + '/peppy_screensaver';
+const RemoteConfigSymlink = RemoteSharePath + '/config.txt';
+
 var availMeters = '';
 var uiNeedsUpdate;
 const spotify_config = '/data/plugins/music_service/spop/config.yml.tmpl';
@@ -1693,6 +1698,10 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
         // Restart meter to apply new remote settings
         if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
     }
+    
+    // Manage symlink for remote client access to config via SMB
+    self.manageRemoteSymlink(confData.remoteServerEnabled);
+    
   } else {
       self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));
   }
@@ -1705,6 +1714,52 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
     }
   }, 500);
 }; // end saveRemoteConf -------------------------------------
+
+// Manage symlink for remote client config access via SMB
+peppyScreensaver.prototype.manageRemoteSymlink = function (enabled) {
+  const self = this;
+  
+  try {
+    if (enabled) {
+      // Create symlink directory if needed (inside Internal Storage)
+      if (!fs.existsSync(RemoteSharePath)) {
+        fs.mkdirSync(RemoteSharePath, { recursive: true });
+        self.logger.info(id + 'Created remote share directory: ' + RemoteSharePath);
+      }
+      
+      // Create symlink to config.txt if it doesn't exist or is wrong
+      if (fs.existsSync(RemoteConfigSymlink)) {
+        // Check if it's already the correct symlink
+        try {
+          var linkTarget = fs.readlinkSync(RemoteConfigSymlink);
+          if (linkTarget !== PeppyConf) {
+            // Wrong target, remove and recreate
+            fs.removeSync(RemoteConfigSymlink);
+            fs.symlinkSync(PeppyConf, RemoteConfigSymlink);
+            self.logger.info(id + 'Updated remote config symlink: ' + RemoteConfigSymlink + ' -> ' + PeppyConf);
+          }
+        } catch (e) {
+          // Not a symlink, remove and recreate
+          fs.removeSync(RemoteConfigSymlink);
+          fs.symlinkSync(PeppyConf, RemoteConfigSymlink);
+          self.logger.info(id + 'Replaced file with symlink: ' + RemoteConfigSymlink + ' -> ' + PeppyConf);
+        }
+      } else {
+        // Create new symlink
+        fs.symlinkSync(PeppyConf, RemoteConfigSymlink);
+        self.logger.info(id + 'Created remote config symlink: ' + RemoteConfigSymlink + ' -> ' + PeppyConf);
+      }
+    } else {
+      // Remote server disabled - remove symlink (but keep directory for templates)
+      if (fs.existsSync(RemoteConfigSymlink)) {
+        fs.removeSync(RemoteConfigSymlink);
+        self.logger.info(id + 'Removed remote config symlink: ' + RemoteConfigSymlink);
+      }
+    }
+  } catch (err) {
+    self.logger.error(id + 'Failed to manage remote symlink: ' + err.message);
+  }
+};
 
 // global functions
 //-------------------------------------------------------------
