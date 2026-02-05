@@ -28,6 +28,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import signal
 import socket
@@ -39,6 +40,7 @@ import time
 import urllib.request
 import urllib.error
 from pathlib import Path
+from datetime import datetime
 
 # =============================================================================
 # Configuration
@@ -48,6 +50,25 @@ DISCOVERY_TIMEOUT = 10  # seconds to wait for discovery
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SMB_MOUNT_BASE = os.path.join(SCRIPT_DIR, "mnt")  # Local mount point (portable)
 SMB_SHARE_PATH = "Internal Storage/peppy_screensaver"
+LOG_FILE = os.path.join(SCRIPT_DIR, "peppy_remote.log")
+
+
+def setup_logging(to_file=False):
+    """Setup logging - to file when running without terminal, stdout otherwise."""
+    if to_file:
+        # Redirect stdout/stderr to log file
+        log_file = open(LOG_FILE, 'a')
+        log_file.write(f"\n{'='*60}\n")
+        log_file.write(f"PeppyMeter Remote Client started at {datetime.now()}\n")
+        log_file.write(f"{'='*60}\n")
+        sys.stdout = log_file
+        sys.stderr = log_file
+    # Also setup logging module for any libraries that use it
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 
 # Default configuration
@@ -83,14 +104,40 @@ def load_config():
             # Deep merge user config into defaults
             for section in config:
                 if section in user_config:
-                    if isinstance(config[section], dict):
+                    if isinstance(config[section], dict) and isinstance(user_config[section], dict):
+                        # Only update if user_config section is also a dict
                         config[section].update(user_config[section])
-                    else:
+                    elif user_config[section] is not None:
+                        # Replace if not None (handles old format or scalar values)
                         config[section] = user_config[section]
+                    # If user_config[section] is None, keep the default
         except (json.JSONDecodeError, IOError) as e:
             print(f"Warning: Could not load config file: {e}")
     
     return config
+
+
+def is_first_run():
+    """Check if this is first run (no config or default/unconfigured config)."""
+    if not os.path.exists(CONFIG_FILE):
+        return True
+    
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            user_config = json.load(f)
+        
+        # Check for old format (flat structure with "server" as string/null)
+        if "server" in user_config and not isinstance(user_config["server"], dict):
+            return True
+        
+        # Check for new format but unconfigured (server.host is null)
+        if isinstance(user_config.get("server"), dict):
+            if user_config["server"].get("host") is None:
+                return True
+        
+        return False
+    except (json.JSONDecodeError, IOError):
+        return True
 
 
 def save_config(config):
@@ -992,6 +1039,12 @@ def run_test_display(level_receiver):
 # Main
 # =============================================================================
 def main():
+    # Check if we're running with a terminal (for interactive features)
+    has_terminal = sys.stdin.isatty() and sys.stdout.isatty()
+    
+    # Setup logging - to file if no terminal, stdout if terminal
+    setup_logging(to_file=not has_terminal)
+    
     parser = argparse.ArgumentParser(
         description='PeppyMeter Remote Client',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1020,8 +1073,30 @@ def main():
     
     args = parser.parse_args()
     
-    # Run configuration wizard if requested
-    if args.config:
+    # Run configuration wizard if requested OR on first run (only if we have a terminal)
+    run_wizard = args.config
+    
+    if not run_wizard and has_terminal and is_first_run():
+        print("=" * 50)
+        print(" Welcome to PeppyMeter Remote Client!")
+        print("=" * 50)
+        print()
+        print("This appears to be your first run.")
+        print("Let's configure your settings.")
+        print()
+        input("Press Enter to continue...")
+        run_wizard = True
+    elif not run_wizard and not has_terminal and is_first_run():
+        # No terminal and first run - just print message and use defaults
+        print("First run detected but no terminal available.")
+        print("Using auto-discovery with default settings.")
+        print(f"Run with --config flag to configure, or edit {CONFIG_FILE}")
+    
+    if run_wizard:
+        if not has_terminal:
+            print("ERROR: --config requires a terminal for interactive input.")
+            print("Run from a terminal window to configure settings.")
+            return
         wizard_config = run_config_wizard()
         if wizard_config is None:
             # User quit without wanting to run

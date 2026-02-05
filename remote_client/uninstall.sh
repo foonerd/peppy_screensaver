@@ -46,12 +46,18 @@ if [ -f "$SUDOERS_FILE" ]; then
 fi
 
 # =============================================================================
-# Remove desktop shortcut
+# Remove desktop shortcuts and icon
 # =============================================================================
-DESKTOP_FILE="$HOME/.local/share/applications/peppy-remote.desktop"
-if [ -f "$DESKTOP_FILE" ]; then
-    echo "  Removing desktop shortcut..."
-    rm -f "$DESKTOP_FILE"
+echo "  Removing desktop shortcuts..."
+rm -f "$HOME/.local/share/applications/peppy-remote.desktop"
+rm -f "$HOME/.local/share/applications/peppy-remote-config.desktop"
+
+echo "  Removing icon..."
+rm -f "$HOME/.local/share/icons/hicolor/scalable/apps/peppy-remote.svg"
+
+# Update icon cache if available
+if command -v gtk-update-icon-cache > /dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 fi
 
 # =============================================================================

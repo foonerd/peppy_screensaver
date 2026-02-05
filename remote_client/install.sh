@@ -156,8 +156,12 @@ chmod +x "$INSTALL_DIR/peppy_remote.py"
 curl -sSL "$REPO_URL/raw/$REPO_BRANCH/remote_client/uninstall.sh" -o "$INSTALL_DIR/uninstall.sh"
 chmod +x "$INSTALL_DIR/uninstall.sh"
 
+# Download icon
+curl -sSL "$REPO_URL/raw/$REPO_BRANCH/remote_client/peppy_remote.svg" -o "$INSTALL_DIR/peppy_remote.svg"
+
 echo "  Downloaded: peppy_remote.py"
 echo "  Downloaded: uninstall.sh"
+echo "  Downloaded: peppy_remote.svg"
 
 # =============================================================================
 # Create screensaver directory structure (mirrors Volumio plugin layout)
@@ -400,21 +404,46 @@ fi
 # =============================================================================
 if [ -d "$HOME/Desktop" ] || [ -d "$HOME/.local/share/applications" ]; then
     echo ""
-    echo "Creating desktop shortcut..."
+    echo "Creating desktop shortcuts..."
     
+    # Install icon to standard location
+    mkdir -p "$HOME/.local/share/icons/hicolor/scalable/apps"
+    cp "$INSTALL_DIR/peppy_remote.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/peppy-remote.svg"
+    
+    # Main launcher (windowed mode, no terminal - starts directly)
     DESKTOP_FILE="[Desktop Entry]
 Type=Application
 Name=PeppyMeter Remote
-Comment=Remote VU meter display
-Exec=$INSTALL_DIR/peppy_remote
-Icon=audio-x-generic
-Terminal=true
+Comment=Remote VU meter display for Volumio
+Exec=$INSTALL_DIR/peppy_remote --windowed
+Icon=peppy-remote
+Terminal=false
 Categories=AudioVideo;Audio;
+StartupWMClass=PeppyMeter
+"
+    
+    # Configuration launcher (needs terminal for interactive wizard)
+    DESKTOP_FILE_CONFIG="[Desktop Entry]
+Type=Application
+Name=PeppyMeter Remote (Configure)
+Comment=Configure PeppyMeter Remote Client
+Exec=$INSTALL_DIR/peppy_remote --config
+Icon=peppy-remote
+Terminal=true
+Categories=AudioVideo;Audio;Settings;
 "
     
     if [ -d "$HOME/.local/share/applications" ]; then
         echo "$DESKTOP_FILE" > "$HOME/.local/share/applications/peppy-remote.desktop"
-        echo "  Created: ~/.local/share/applications/peppy-remote.desktop"
+        echo "$DESKTOP_FILE_CONFIG" > "$HOME/.local/share/applications/peppy-remote-config.desktop"
+        echo "  Created: peppy-remote.desktop (main launcher)"
+        echo "  Created: peppy-remote-config.desktop (configuration)"
+        echo "  Installed icon: peppy-remote.svg"
+        
+        # Update icon cache if available
+        if command -v gtk-update-icon-cache > /dev/null 2>&1; then
+            gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+        fi
     fi
 fi
 
