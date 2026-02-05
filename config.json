@@ -46,5 +46,21 @@
   "displayOutput": {
     "value":"0",
     "type":"number"
+  },
+  "remoteServerEnabled": {
+    "value": false,
+    "type": "boolean"
+  },
+  "remoteServerMode": {
+    "value": "server_local",
+    "type": "string"
+  },
+  "remoteServerPort": {
+    "value": 5580,
+    "type": "number"
+  },
+  "remoteDiscoveryPort": {
+    "value": 5579,
+    "type": "number"
   }
 }

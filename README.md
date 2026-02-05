@@ -758,7 +758,7 @@ The remote client uses the **same rendering code** as the Volumio plugin - all s
 ### Quick Install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/main/remote_client/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/foonerd/peppy_remote/main/install.sh | bash
 ```
 
 ### Usage
@@ -792,8 +792,8 @@ curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/main/remot
 
 ### Documentation
 
-For detailed documentation, troubleshooting, and configuration options, see:
-[Remote Client README](remote_client/README.md)
+For detailed documentation, troubleshooting, and configuration options, see the separate repository:
+**https://github.com/foonerd/peppy_remote**
 
 ## Directory Structure
 
