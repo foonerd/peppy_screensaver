@@ -108,6 +108,14 @@ peppyScreensaver.prototype.onStart = function() {
         peppy_config = ini.parse(fs.readFileSync(PeppyConf, 'utf-8'));
         base_folder_P = peppy_config.current['base.folder'] + '/';
         if (base_folder_P == '/') {base_folder_P = PeppyPath + '/';}
+        
+        // One-time sync: copy remote settings from config.txt into Volumio config so UI state survives restart
+        if (self.config.get('remoteServerEnabled') === undefined && peppy_config.current['remote.server.enabled'] !== undefined) {
+            self.config.set('remoteServerEnabled', peppy_config.current['remote.server.enabled'] === 'true');
+            self.config.set('remoteServerMode', peppy_config.current['remote.server.mode'] || 'server_local');
+            self.config.set('remoteServerPort', parseInt(peppy_config.current['remote.server.port'], 10) || 5580);
+            self.config.set('remoteDiscoveryPort', parseInt(peppy_config.current['remote.discovery.port'], 10) || 5579);
+        }
     }
 
     // get peppySpectrum config and new baseFolder
@@ -859,12 +867,19 @@ peppyScreensaver.prototype.getUIConfig = function() {
             uiconf.sections[8].content[3].value = profilingDuration;
             
             // section 9 - Remote display server settings -----------------------------
+            // Read from Volumio config (persists across restart); fallback to config.txt for backward compat
             // server enabled
-            var remoteServerEnabled = peppy_config.current['remote.server.enabled'] === 'true';
+            var remoteServerEnabled = self.config.get('remoteServerEnabled');
+            if (remoteServerEnabled === undefined) {
+                remoteServerEnabled = peppy_config && peppy_config.current ? peppy_config.current['remote.server.enabled'] === 'true' : false;
+            }
             uiconf.sections[9].content[0].value = remoteServerEnabled;
             
             // server mode
-            var remoteServerMode = peppy_config.current['remote.server.mode'] || 'server_local';
+            var remoteServerMode = self.config.get('remoteServerMode');
+            if (remoteServerMode === undefined) {
+                remoteServerMode = peppy_config && peppy_config.current ? (peppy_config.current['remote.server.mode'] || 'server_local') : 'server_local';
+            }
             var remoteServerModeOptions = uiconf.sections[9].content[1].options;
             for (var i = 0; i < remoteServerModeOptions.length; i++) {
                 if (remoteServerModeOptions[i].value === remoteServerMode) {
@@ -874,11 +889,17 @@ peppyScreensaver.prototype.getUIConfig = function() {
             }
             
             // server port
-            var remoteServerPort = parseInt(peppy_config.current['remote.server.port'], 10) || 5580;
+            var remoteServerPort = self.config.get('remoteServerPort');
+            if (remoteServerPort === undefined) {
+                remoteServerPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.server.port'], 10) || 5580) : 5580;
+            }
             uiconf.sections[9].content[2].value = remoteServerPort;
             
             // discovery port
-            var remoteDiscoveryPort = parseInt(peppy_config.current['remote.discovery.port'], 10) || 5579;
+            var remoteDiscoveryPort = self.config.get('remoteDiscoveryPort');
+            if (remoteDiscoveryPort === undefined) {
+                remoteDiscoveryPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.discovery.port'], 10) || 5579) : 5579;
+            }
             uiconf.sections[9].content[3].value = remoteDiscoveryPort;
             
         } else {
@@ -1681,34 +1702,45 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
   const self = this;
   let noChanges = true;
   
+  // Persist to Volumio config (survives restart, UI state aligned with other sections)
+  var remoteServerEnabled = !!confData.remoteServerEnabled;
+  if (self.config.get('remoteServerEnabled') !== remoteServerEnabled) {
+      self.config.set('remoteServerEnabled', remoteServerEnabled);
+      noChanges = false;
+  }
+  
+  var remoteServerMode = confData.remoteServerMode.value;
+  if (self.config.get('remoteServerMode') !== remoteServerMode) {
+      self.config.set('remoteServerMode', remoteServerMode);
+      noChanges = false;
+  }
+  
+  var remoteServerPort = self.minmax('remote_server_port', confData.remoteServerPort, [1024, 65535, 5580]);
+  if (self.config.get('remoteServerPort') !== remoteServerPort) {
+      self.config.set('remoteServerPort', remoteServerPort);
+      noChanges = false;
+  }
+  
+  var remoteDiscoveryPort = self.minmax('remote_discovery_port', confData.remoteDiscoveryPort, [1024, 65535, 5579]);
+  if (self.config.get('remoteDiscoveryPort') !== remoteDiscoveryPort) {
+      self.config.set('remoteDiscoveryPort', remoteDiscoveryPort);
+      noChanges = false;
+  }
+  
+  // Also update config.txt for Python/runtime
   if (fs.existsSync(PeppyConf)){
-    
-    // server enabled
-    var remoteServerEnabled = confData.remoteServerEnabled ? 'true' : 'false';
-    if (peppy_config.current['remote.server.enabled'] != remoteServerEnabled) {
-        peppy_config.current['remote.server.enabled'] = remoteServerEnabled;
-        noChanges = false;
+    var remoteServerEnabledStr = remoteServerEnabled ? 'true' : 'false';
+    if (peppy_config.current['remote.server.enabled'] != remoteServerEnabledStr) {
+        peppy_config.current['remote.server.enabled'] = remoteServerEnabledStr;
     }
-    
-    // server mode
-    var remoteServerMode = confData.remoteServerMode.value;
     if (peppy_config.current['remote.server.mode'] != remoteServerMode) {
         peppy_config.current['remote.server.mode'] = remoteServerMode;
-        noChanges = false;
     }
-    
-    // server port
-    var remoteServerPort = self.minmax('remote_server_port', confData.remoteServerPort, [1024, 65535, 5580]);
     if (peppy_config.current['remote.server.port'] != remoteServerPort) {
         peppy_config.current['remote.server.port'] = remoteServerPort;
-        noChanges = false;
     }
-    
-    // discovery port
-    var remoteDiscoveryPort = self.minmax('remote_discovery_port', confData.remoteDiscoveryPort, [1024, 65535, 5579]);
     if (peppy_config.current['remote.discovery.port'] != remoteDiscoveryPort) {
         peppy_config.current['remote.discovery.port'] = remoteDiscoveryPort;
-        noChanges = false;
     }
     
     if (!noChanges) {
@@ -1721,6 +1753,7 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
     self.updateConfigVersion();
     
   } else {
+      noChanges = true;  // Don't show success when config.txt is missing
       self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));
   }
   
