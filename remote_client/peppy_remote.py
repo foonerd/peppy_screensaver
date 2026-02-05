@@ -1039,6 +1039,36 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
                 pm.dependent = callback.peppy_meter_update
                 pm.meter.malloc_trim = callback.trim_memory
                 pm.malloc_trim = callback.exit_trim_memory
+                
+                # Use new config dimensions; recreate window if resolution changed
+                new_screen_w = pm.util.meter_config[SCREEN_INFO][WIDTH]
+                new_screen_h = pm.util.meter_config[SCREEN_INFO][HEIGHT]
+                new_depth = meter_config_volumio[COLOR_DEPTH]
+                
+                if (new_screen_w, new_screen_h) != (screen_w, screen_h):
+                    print(f"Display resizing: {screen_w}x{screen_h} -> {new_screen_w}x{new_screen_h}")
+                    # Recompute display flags for new window
+                    new_flags = 0
+                    if is_fullscreen:
+                        new_flags |= pg.FULLSCREEN
+                    elif not is_windowed:
+                        new_flags |= pg.NOFRAME
+                    if pm.util.meter_config[SDL_ENV][DOUBLE_BUFFER]:
+                        new_flags |= pg.DOUBLEBUF
+                    
+                    screen = pg.display.set_mode((new_screen_w, new_screen_h), new_flags, new_depth)
+                    screen_w = new_screen_w
+                    screen_h = new_screen_h
+                    depth = new_depth
+                    
+                    if is_windowed and not is_fullscreen:
+                        pg.display.set_caption("PeppyMeter Remote")
+                    print(f"Display resized to {screen_w}x{screen_h}")
+                else:
+                    # Update depth even if size unchanged
+                    depth = new_depth
+                
+                # Attach current window to the new pm
                 pm.util.meter_config[SCREEN_INFO][WIDTH] = screen_w
                 pm.util.meter_config[SCREEN_INFO][HEIGHT] = screen_h
                 pm.util.meter_config[SCREEN_INFO][DEPTH] = depth
