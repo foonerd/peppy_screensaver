@@ -483,7 +483,8 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
         print("Loading PeppyMeter...")
         
         # Import PeppyMeter components
-        from peppymeter import Peppymeter
+        # Note: peppymeter.peppymeter because Peppymeter class is in peppymeter/peppymeter.py
+        from peppymeter.peppymeter import Peppymeter
         from configfileparser import SCREEN_INFO, WIDTH, HEIGHT
         from volumio_configfileparser import Volumio_ConfigFileParser
         
@@ -563,11 +564,27 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
 # =============================================================================
 def run_test_display(level_receiver):
     """Simple pygame display for testing - shows VU bars."""
+    
+    # Ensure SDL environment is set for desktop (in case we're falling back after failure)
+    os.environ.pop('SDL_FBDEV', None)
+    os.environ.pop('SDL_MOUSEDEV', None)
+    os.environ.pop('SDL_MOUSEDRV', None)
+    os.environ.pop('SDL_NOMOUSE', None)
+    os.environ.pop('SDL_VIDEODRIVER', None)  # Remove any driver setting
+    if 'DISPLAY' not in os.environ:
+        os.environ['DISPLAY'] = ':0'
+    
     try:
         import pygame
     except ImportError:
         print("pygame not installed. Install with: pip install pygame")
         return
+    
+    # Quit pygame if it was partially initialized
+    try:
+        pygame.quit()
+    except:
+        pass
     
     pygame.init()
     screen = pygame.display.set_mode((800, 480))

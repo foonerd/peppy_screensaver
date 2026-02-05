@@ -223,8 +223,7 @@ done
 
 echo "  All Volumio handlers downloaded"
 
-# Create backward-compatible symlink for peppymeter at root level
-ln -sf "$INSTALL_DIR/screensaver/peppymeter" "$INSTALL_DIR/peppymeter" 2>/dev/null || true
+# Note: No symlink at root level - imports use screensaver/peppymeter path directly
 
 # =============================================================================
 # Create Python virtual environment
