@@ -658,7 +658,13 @@ class MetadataWatcher:
             self.metadata["artist"] = data.get("artist", "") or ""
             self.metadata["title"] = title
             self.metadata["album"] = data.get("album", "") or ""
-            self.metadata["albumart"] = data.get("albumart", "") or ""
+            
+            # Handle albumart URL - convert relative paths to absolute for remote clients
+            albumart = data.get("albumart", "") or ""
+            if albumart and not albumart.startswith(('http://', 'https://')):
+                # Relative path - prepend Volumio URL for remote access
+                albumart = f"{self.volumio_url}{albumart}" if albumart.startswith('/') else f"{self.volumio_url}/{albumart}"
+            self.metadata["albumart"] = albumart
             self.metadata["samplerate"] = str(data.get("samplerate", "") or "")
             self.metadata["bitdepth"] = str(data.get("bitdepth", "") or "")
             self.metadata["trackType"] = data.get("trackType", "") or ""
