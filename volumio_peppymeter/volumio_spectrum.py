@@ -190,19 +190,13 @@ class SpectrumOutput(Thread):
         """
         if not hasattr(self, 'sp') or self.sp is None:
             _log_debug("[Spectrum] get_current_bins: sp is None", "verbose")
-            return getattr(self, '_last_good_bins', None)
+            return None
         
         # Get bar heights from Spectrum object
         if hasattr(self.sp, '_prev_bar_heights'):
             # Return a copy to avoid threading issues
+            # Always return current values - no caching, remote needs real-time data
             heights = list(self.sp._prev_bar_heights)
-            
-            # Cache last good values (non-zero) to reduce flicker
-            if any(h > 0 for h in heights):
-                self._last_good_bins = heights
-            elif hasattr(self, '_last_good_bins'):
-                # Return cached values if current frame is all zeros
-                return self._last_good_bins
             
             # Only log first successful retrieval
             if not hasattr(self, '_logged_first_bins'):
@@ -211,7 +205,7 @@ class SpectrumOutput(Thread):
             return heights
         
         _log_debug("[Spectrum] get_current_bins: _prev_bar_heights not found", "verbose")
-        return getattr(self, '_last_good_bins', None)
+        return None
 
     
     def stop_thread(self):

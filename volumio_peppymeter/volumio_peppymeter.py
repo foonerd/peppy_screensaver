@@ -2967,11 +2967,14 @@ class CallBack:
             if not meter_section_volumio[METER_VISIBLE]:
                 meter.stop()
             
-            # Start spectrum if visible
+            # Start spectrum if visible (but not if already set by remote client)
             if meter_section_volumio[SPECTRUM_VISIBLE]:
-                init_spectrum_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
-                self.spectrum_output = SpectrumOutput(self.util, self.meter_config_volumio, CurDir)
-                self.spectrum_output.start()
+                # Check if spectrum_output was pre-injected (e.g., RemoteSpectrumOutput)
+                # If so, don't create a new SpectrumOutput - use the injected one
+                if self.spectrum_output is None:
+                    init_spectrum_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
+                    self.spectrum_output = SpectrumOutput(self.util, self.meter_config_volumio, CurDir)
+                    self.spectrum_output.start()
         
         # Volume fade-in
         meter.set_volume(0.0)
