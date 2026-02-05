@@ -336,6 +336,7 @@ echo "Creating configuration..."
 if [ -n "$SERVER_HOST" ]; then
     cat > "$INSTALL_DIR/config.json" << EOF
 {
+  "wizard_completed": false,
   "server": {
     "host": "$SERVER_HOST",
     "level_port": 5580,
@@ -359,6 +360,7 @@ EOF
 else
     cat > "$INSTALL_DIR/config.json" << EOF
 {
+  "wizard_completed": false,
   "server": {
     "host": null,
     "level_port": 5580,

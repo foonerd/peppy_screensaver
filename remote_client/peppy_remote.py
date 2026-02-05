@@ -73,6 +73,7 @@ CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 
 # Default configuration
 DEFAULT_CONFIG = {
+    "wizard_completed": False,  # True after user saves from config wizard (stops first-run prompt)
     "server": {
         "host": None,           # None = auto-discover
         "level_port": 5580,
@@ -107,10 +108,10 @@ def load_config():
                     if isinstance(config[section], dict) and isinstance(user_config[section], dict):
                         # Only update if user_config section is also a dict
                         config[section].update(user_config[section])
-                    elif user_config[section] is not None:
-                        # Replace if not None (handles old format or scalar values)
+                    elif user_config[section] is not None or section == "wizard_completed":
+                        # Replace (handles old format, scalar values, and wizard_completed bool)
                         config[section] = user_config[section]
-                    # If user_config[section] is None, keep the default
+                    # If user_config[section] is None (and not wizard_completed), keep the default
         except (json.JSONDecodeError, IOError) as e:
             print(f"Warning: Could not load config file: {e}")
     
@@ -118,7 +119,7 @@ def load_config():
 
 
 def is_first_run():
-    """Check if this is first run (no config or default/unconfigured config)."""
+    """Check if this is first run (no config, invalid/old format, or wizard not yet completed)."""
     if not os.path.exists(CONFIG_FILE):
         return True
     
@@ -126,14 +127,14 @@ def is_first_run():
         with open(CONFIG_FILE, 'r') as f:
             user_config = json.load(f)
         
-        # Check for old format (flat structure with "server" as string/null)
+        # Old format: "server" is string/null, not a dict
         if "server" in user_config and not isinstance(user_config["server"], dict):
             return True
         
-        # Check for new format but unconfigured (server.host is null)
-        if isinstance(user_config.get("server"), dict):
-            if user_config["server"].get("host") is None:
-                return True
+        # Explicit flag: wizard_completed False means user has not completed wizard yet
+        # Missing key = existing config (backward compat), treat as not first run
+        if "wizard_completed" in user_config and user_config["wizard_completed"] is False:
+            return True
         
         return False
     except (json.JSONDecodeError, IOError):
@@ -323,11 +324,13 @@ def run_config_wizard():
             path = input("Local templates path (empty to clear): ").strip()
             config["templates"]["local_path"] = path if path else None
         elif choice == "S":
+            config["wizard_completed"] = True
             if save_config(config):
                 print(f"\nConfiguration saved to: {CONFIG_FILE}")
             input("Press Enter to continue...")
             break
         elif choice == "R":
+            config["wizard_completed"] = True
             save_config(config)
             print("\nStarting PeppyMeter Remote Client...")
             return config  # Return config to run with
