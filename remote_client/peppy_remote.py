@@ -498,12 +498,14 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
         # Import PeppyMeter components
         # Note: peppymeter.peppymeter because Peppymeter class is in peppymeter/peppymeter.py
         from peppymeter.peppymeter import Peppymeter
-        from configfileparser import SCREEN_INFO, WIDTH, HEIGHT
-        from volumio_configfileparser import Volumio_ConfigFileParser
+        from configfileparser import (
+            SCREEN_INFO, WIDTH, HEIGHT, DEPTH, SDL_ENV, DOUBLE_BUFFER, SCREEN_RECT
+        )
+        from volumio_configfileparser import Volumio_ConfigFileParser, COLOR_DEPTH
         
-        # Import volumio_peppymeter functions
+        # Import volumio_peppymeter functions (NOT init_display - we have our own for desktop)
         from volumio_peppymeter import (
-            init_display, start_display_output, CallBack,
+            start_display_output, CallBack,
             init_debug_config, log_debug, memory_limit
         )
         
@@ -542,12 +544,38 @@ def run_peppymeter_display(level_receiver, server_info, templates_path, config_f
         # Get screen dimensions
         screen_w = pm.util.meter_config[SCREEN_INFO][WIDTH]
         screen_h = pm.util.meter_config[SCREEN_INFO][HEIGHT]
+        depth = meter_config_volumio[COLOR_DEPTH]
+        pm.util.meter_config[SCREEN_INFO][DEPTH] = depth
         print(f"Display: {screen_w}x{screen_h}")
         
         memory_limit()
         
-        # Initialize display
-        pm.util.PYGAME_SCREEN = init_display(pm, meter_config_volumio, screen_w, screen_h)
+        # Initialize display - CLIENT SPECIFIC (not using init_display from volumio_peppymeter)
+        # volumio_peppymeter.init_display() sets SDL_FBDEV which breaks X11 desktop display
+        # We initialize pygame directly for desktop use
+        import pygame as pg
+        
+        # Ensure clean SDL environment for X11/Wayland desktop
+        # These must be unset/correct BEFORE pg.display.init()
+        for var in ['SDL_FBDEV', 'SDL_MOUSEDEV', 'SDL_MOUSEDRV', 'SDL_NOMOUSE']:
+            os.environ.pop(var, None)
+        # Don't set SDL_VIDEODRIVER - let SDL auto-detect (x11, wayland)
+        os.environ.pop('SDL_VIDEODRIVER', None)
+        if 'DISPLAY' not in os.environ:
+            os.environ['DISPLAY'] = ':0'
+        
+        pg.display.init()
+        pg.mouse.set_visible(False)
+        pg.font.init()
+        
+        flags = pg.NOFRAME
+        if pm.util.meter_config[SDL_ENV][DOUBLE_BUFFER]:
+            flags |= pg.DOUBLEBUF
+        
+        screen = pg.display.set_mode((screen_w, screen_h), flags, depth)
+        pm.util.meter_config[SCREEN_RECT] = pg.Rect(0, 0, screen_w, screen_h)
+        
+        pm.util.PYGAME_SCREEN = screen
         pm.util.screen_copy = pm.util.PYGAME_SCREEN
         
         print("Starting meter display...")
