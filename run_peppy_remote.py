@@ -353,11 +353,27 @@ class MetadataReceiver:
 class RemoteDataSource:
     """
     A DataSource implementation that gets data from the LevelReceiver.
-    This mimics PeppyMeter's DataSource interface.
+    This mimics PeppyMeter's DataSource interface for seamless integration.
     """
     
     def __init__(self, level_receiver):
         self.level_receiver = level_receiver
+        self.volume = 100  # Used by some meters
+        self.data = (0.0, 0.0, 0.0)  # (left, right, mono)
+    
+    def start_data_source(self):
+        """Start the data source (already running via LevelReceiver)."""
+        pass
+    
+    def stop_data_source(self):
+        """Stop the data source."""
+        pass
+    
+    def get_current_data(self):
+        """Return current data as tuple (left, right, mono)."""
+        return (self.level_receiver.left, 
+                self.level_receiver.right, 
+                self.level_receiver.mono)
     
     def get_current_left_channel_data(self):
         return self.level_receiver.left
@@ -367,6 +383,212 @@ class RemoteDataSource:
     
     def get_current_mono_channel_data(self):
         return self.level_receiver.mono
+
+
+# =============================================================================
+# Full PeppyMeter Display
+# =============================================================================
+def run_peppymeter_display(level_receiver, metadata_receiver, templates_path, smb_mount, server_info):
+    """Run full PeppyMeter rendering with actual skins."""
+    
+    # Set up paths for PeppyMeter
+    peppymeter_path = os.path.join(SCRIPT_DIR, "screensaver", "peppymeter")
+    
+    if not os.path.exists(peppymeter_path):
+        print(f"ERROR: PeppyMeter not found at {peppymeter_path}")
+        print("Run install_client.sh first to clone PeppyMeter.")
+        return
+    
+    # Add PeppyMeter to Python path
+    if peppymeter_path not in sys.path:
+        sys.path.insert(0, peppymeter_path)
+    
+    # Also add the screensaver directory for volumio modules
+    screensaver_path = os.path.join(SCRIPT_DIR, "screensaver")
+    if screensaver_path not in sys.path:
+        sys.path.insert(0, screensaver_path)
+    
+    # Change to PeppyMeter directory (it expects this)
+    original_cwd = os.getcwd()
+    os.chdir(peppymeter_path)
+    
+    try:
+        # Import PeppyMeter components
+        print("Loading PeppyMeter...")
+        
+        import ctypes
+        try:
+            ctypes.CDLL('libX11.so.6').XInitThreads()
+        except Exception:
+            pass  # Not on X11 or library not found
+        
+        # Import PeppyMeter after path setup
+        from peppymeter import Peppymeter
+        from configfileparser import SCREEN_INFO, WIDTH, HEIGHT, FRAME_RATE, SCREEN_RECT
+        import pygame
+        
+        # Create config.txt for remote mode if needed
+        config_path = os.path.join(peppymeter_path, "config.txt")
+        _create_remote_config(config_path, templates_path)
+        
+        # Initialize PeppyMeter
+        print("Initializing PeppyMeter...")
+        pm = Peppymeter(standalone=True, timer_controlled_random_meter=False, 
+                       quit_pygame_on_stop=False)
+        
+        # Stop the default data source that was started during init
+        if hasattr(pm, 'data_source') and hasattr(pm.data_source, 'stop_data_source'):
+            pm.data_source.stop_data_source()
+        
+        # Replace the data source with our remote data source
+        print("Connecting remote data source...")
+        remote_ds = RemoteDataSource(level_receiver)
+        pm.data_source = remote_ds
+        
+        # Also update the meter's data source reference
+        if hasattr(pm, 'meter') and hasattr(pm.meter, 'data_source'):
+            pm.meter.data_source = remote_ds
+        
+        # Get screen dimensions from config
+        try:
+            screen_w = pm.util.meter_config[SCREEN_INFO][WIDTH]
+            screen_h = pm.util.meter_config[SCREEN_INFO][HEIGHT]
+            frame_rate = pm.util.meter_config.get(FRAME_RATE, 30)
+        except (KeyError, TypeError):
+            screen_w = 800
+            screen_h = 480
+            frame_rate = 30
+        
+        print(f"Display: {screen_w}x{screen_h} @ {frame_rate}fps")
+        
+        # Initialize display
+        pm.init_display()
+        
+        print("Starting meter display...")
+        print("Press ESC or Q to exit, or click/touch screen")
+        
+        # Use PeppyMeter's built-in display loop
+        pm.start_display_output()
+        
+    except ImportError as e:
+        print(f"ERROR: Could not import PeppyMeter: {e}")
+        import traceback
+        traceback.print_exc()
+        print("\nFalling back to test display...")
+        os.chdir(original_cwd)
+        run_test_display(level_receiver, metadata_receiver)
+        return
+    except Exception as e:
+        print(f"ERROR: PeppyMeter failed: {e}")
+        import traceback
+        traceback.print_exc()
+        print("\nFalling back to test display...")
+        os.chdir(original_cwd)
+        run_test_display(level_receiver, metadata_receiver)
+        return
+    finally:
+        os.chdir(original_cwd)
+
+
+def _create_remote_config(config_path, templates_path):
+    """Create/update config.txt for remote client mode."""
+    import configparser
+    
+    config = configparser.ConfigParser()
+    
+    # Read existing config if present
+    if os.path.exists(config_path):
+        try:
+            config.read(config_path)
+        except Exception:
+            pass  # Start fresh if parse error
+    
+    # Ensure all required sections exist with defaults
+    sections = {
+        'current': {
+            'meter': 'random',
+            'random.meter.interval': '60',
+            'base.folder': templates_path,
+            'meter.folder': '800x480',
+            'screen.width': '',
+            'screen.height': '',
+            'exit.on.touch': 'False',
+            'stop.display.on.touch': 'False',
+            'output.display': 'True',
+            'output.serial': 'False',
+            'output.i2c': 'False',
+            'output.pwm': 'False',
+            'output.http': 'False',
+            'use.logging': 'False',
+            'use.cache': 'True',
+            'cache.size': '20',
+            'frame.rate': '30',
+        },
+        'sdl.env': {
+            'framebuffer.device': '',
+            'mouse.device': '',
+            'mouse.driver': 'TSLIB',
+            'mouse.enabled': 'False',
+            'video.driver': '',  # Empty for X11/desktop
+            'video.display': ':0',
+            'double.buffer': 'True',
+            'no.frame': 'False',
+        },
+        'serial.interface': {
+            'device.name': '/dev/serial0',
+            'baud.rate': '9600',
+            'include.time': 'False',
+            'update.period': '0.1',
+        },
+        'i2c.interface': {
+            'port': '1',
+            'left.channel.address': '0x21',
+            'right.channel.address': '0x20',
+            'output.size': '10',
+            'update.period': '0.1',
+        },
+        'pwm.interface': {
+            'frequency': '500',
+            'gpio.pin.left': '24',
+            'gpio.pin.right': '25',
+            'update.period': '0.1',
+        },
+        'http.interface': {
+            'target.url': 'http://localhost:8000/vumeter',
+            'update.period': '0.033',
+        },
+        'web.server': {
+            'http.port': '8001',
+        },
+        'data.source': {
+            'type': 'noise',  # Use noise type - we override data_source anyway
+            'polling.interval': '0.033',
+            'pipe.name': '/dev/null',
+            'volume.constant': '80.0',
+            'volume.min': '0.0',
+            'volume.max': '100.0',
+            'volume.max.in.pipe': '100.0',
+            'step': '6',
+            'mono.algorithm': 'average',
+            'stereo.algorithm': 'new',
+            'smooth.buffer.size': '0',  # No smoothing, data already processed
+        },
+    }
+    
+    for section, values in sections.items():
+        if section not in config:
+            config[section] = {}
+        for key, value in values.items():
+            # Only set if not already present (preserve user customizations)
+            if key not in config[section]:
+                config[section][key] = value
+    
+    # Always update base.folder to use templates path
+    config['current']['base.folder'] = templates_path
+    
+    # Write config
+    with open(config_path, 'w') as f:
+        config.write(f)
 
 
 # =============================================================================
@@ -565,25 +787,22 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
+    # Determine templates path
+    if args.templates:
+        templates_path = args.templates
+    elif smb_mount and smb_mount._mounted:
+        templates_path = str(smb_mount.templates_path)
+    else:
+        templates_path = os.path.join(SCRIPT_DIR, "data", "templates")
+    
     # Run display
     if args.test:
         # Simple test display
         run_test_display(level_receiver, metadata_receiver)
     else:
-        # TODO: Full PeppyMeter integration
-        print("\nFull PeppyMeter rendering not yet implemented.")
-        print("Use --test flag for simple test display.")
-        print("\nReceiving data... (Ctrl+C to exit)")
-        
-        # Just print data for now
-        try:
-            while True:
-                left, right, mono = level_receiver.get_levels()
-                meta = metadata_receiver.get_metadata()
-                print(f"\rL:{left:6.1f} R:{right:6.1f} M:{mono:6.1f} | {meta.get('status', '?'):6} | {meta.get('title', '')[:40]:40}", end='')
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            pass
+        # Full PeppyMeter rendering
+        run_peppymeter_display(level_receiver, metadata_receiver, 
+                               templates_path, smb_mount, server_info)
     
     # Cleanup
     level_receiver.stop()
