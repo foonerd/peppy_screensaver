@@ -217,6 +217,8 @@
     "REMOTE_SERVER_PORT":"Level data port",
     "REMOTE_SERVER_PORT_DOC":"UDP port for streaming audio level data to remote displays.<br /><br /><b>Default: 5580</b><br /><br />Change if this port conflicts with other services.",
     "REMOTE_DISCOVERY_PORT":"Discovery port",
-    "REMOTE_DISCOVERY_PORT_DOC":"UDP port for auto-discovery broadcasts.<br /><br /><b>Default: 5579</b><br /><br />Remote clients listen on this port to find the server automatically."
+    "REMOTE_DISCOVERY_PORT_DOC":"UDP port for auto-discovery broadcasts.<br /><br /><b>Default: 5579</b><br /><br />Remote clients listen on this port to find the server automatically.",
+    "REMOTE_SPECTRUM_PORT":"Spectrum port",
+    "REMOTE_SPECTRUM_PORT_DOC":"UDP port for streaming spectrum analyzer data to remote displays.<br /><br /><b>Default: 5581</b><br /><br />Change if this port conflicts with other services."
   }
 }

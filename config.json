@@ -62,5 +62,9 @@
   "remoteDiscoveryPort": {
     "value": 5579,
     "type": "number"
+  },
+  "remoteSpectrumPort": {
+    "value": 5581,
+    "type": "number"
   }
 }
