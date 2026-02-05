@@ -25,6 +25,8 @@ import math
 import json
 import hashlib
 import requests
+import socket
+import struct
 import pygame as pg
 import socketio
 import cProfile
@@ -82,7 +84,8 @@ from volumio_configfileparser import (
     TIME_REMAINING_POS, TIMECOLOR,
     FONTSIZE_LIGHT, FONTSIZE_REGULAR, FONTSIZE_BOLD, FONTSIZE_DIGI, FONTCOLOR,
     FONT_STYLE_B, FONT_STYLE_R, FONT_STYLE_L,
-    METER_BKP, RANDOM_TITLE, SPECTRUM, SPECTRUM_SIZE
+    METER_BKP, RANDOM_TITLE, SPECTRUM, SPECTRUM_SIZE,
+    REMOTE_SERVER_ENABLED, REMOTE_SERVER_MODE, REMOTE_SERVER_PORT, REMOTE_DISCOVERY_PORT
 )
 
 # Indicator configuration constants - import with fallback for backward compatibility
@@ -583,9 +586,10 @@ class MetadataWatcher:
     Eliminates HTTP polling - state updates are event-driven.
     """
     
-    def __init__(self, metadata_dict, title_changed_callback=None):
+    def __init__(self, metadata_dict, title_changed_callback=None, volumio_host='localhost', volumio_port=3000):
         self.metadata = metadata_dict
         self.title_callback = title_changed_callback
+        self.volumio_url = f'http://{volumio_host}:{volumio_port}'
         self.sio = socketio.Client(logger=False, engineio_logger=False)
         self.run_flag = True
         self.thread = None
@@ -654,7 +658,13 @@ class MetadataWatcher:
             self.metadata["artist"] = data.get("artist", "") or ""
             self.metadata["title"] = title
             self.metadata["album"] = data.get("album", "") or ""
-            self.metadata["albumart"] = data.get("albumart", "") or ""
+            
+            # Handle albumart URL - convert relative paths to absolute for remote clients
+            albumart = data.get("albumart", "") or ""
+            if albumart and not albumart.startswith(('http://', 'https://')):
+                # Relative path - prepend Volumio URL for remote access
+                albumart = f"{self.volumio_url}{albumart}" if albumart.startswith('/') else f"{self.volumio_url}/{albumart}"
+            self.metadata["albumart"] = albumart
             self.metadata["samplerate"] = str(data.get("samplerate", "") or "")
             self.metadata["bitdepth"] = str(data.get("bitdepth", "") or "")
             self.metadata["trackType"] = data.get("trackType", "") or ""
@@ -774,7 +784,7 @@ class MetadataWatcher:
         # Socket connection loop - must be at end of _run() method
         while self.run_flag:
             try:
-                self.sio.connect('http://localhost:3000', transports=['websocket'])
+                self.sio.connect(self.volumio_url, transports=['websocket'])
                 while self.run_flag and self.sio.connected:
                     self.sio.sleep(0.5)
             except Exception as e:
@@ -843,6 +853,219 @@ class MetadataWatcher:
                 self.sio.disconnect()
             except Exception:
                 pass
+
+
+# =============================================================================
+# NetworkLevelServer - Broadcasts audio levels over UDP for remote displays
+# =============================================================================
+class NetworkLevelServer:
+    """
+    Broadcasts audio level data over UDP for remote display clients.
+    
+    Packet format (16 bytes, little-endian):
+        - seq (uint32): Sequence number for loss detection
+        - left (float32): Left channel level (0-100)
+        - right (float32): Right channel level (0-100)
+        - mono (float32): Mono level (0-100)
+    
+    Modes:
+        - 'local': Server disabled, normal local display only
+        - 'server': Server enabled, no local display (headless)
+        - 'server_local': Server enabled AND local display
+    """
+    
+    def __init__(self, port=5580, enabled=True):
+        """Initialize the level server.
+        
+        :param port: UDP port to broadcast on (default 5580)
+        :param enabled: Whether broadcasting is enabled
+        """
+        self.port = port
+        self.enabled = enabled
+        self.seq = 0
+        self.sock = None
+        self._last_error_time = 0
+        
+        if self.enabled:
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                # Set non-blocking to avoid stalling the render loop
+                self.sock.setblocking(False)
+                log_debug(f"[NetworkLevelServer] Started on UDP port {port}", "basic")
+            except Exception as e:
+                log_debug(f"[NetworkLevelServer] Failed to create socket: {e}", "basic")
+                self.sock = None
+                self.enabled = False
+    
+    def broadcast(self, left, right, mono):
+        """Broadcast current level data to all clients.
+        
+        :param left: Left channel level (0-100)
+        :param right: Right channel level (0-100)
+        :param mono: Mono level (0-100)
+        """
+        if not self.enabled or not self.sock:
+            return
+        
+        try:
+            # Pack as: sequence (uint32) + 3 floats (left, right, mono)
+            data = struct.pack('<Ifff', self.seq, float(left), float(right), float(mono))
+            self.sock.sendto(data, ('<broadcast>', self.port))
+            self.seq = (self.seq + 1) & 0xFFFFFFFF  # Wrap at 32-bit
+        except BlockingIOError:
+            # Non-blocking socket would block - skip this frame
+            pass
+        except Exception as e:
+            # Rate-limit error logging
+            now = time.time()
+            if now - self._last_error_time > 10:
+                log_debug(f"[NetworkLevelServer] Broadcast error: {e}", "basic")
+                self._last_error_time = now
+    
+    def stop(self):
+        """Stop the server and close the socket."""
+        self.enabled = False
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+        log_debug("[NetworkLevelServer] Stopped", "basic")
+
+
+# =============================================================================
+# DiscoveryAnnouncer - Broadcasts server presence for client discovery
+# =============================================================================
+class DiscoveryAnnouncer:
+    """
+    Periodically broadcasts server presence for client auto-discovery.
+    
+    Announcement format (JSON):
+        {
+            "service": "peppy_level_server",
+            "version": 1,
+            "level_port": 5580,
+            "volumio_port": 3000,
+            "hostname": "volumio",
+            "config_version": "a1b2c3d4"
+        }
+    
+    Clients can listen on the discovery port to find available servers
+    without needing to know the IP address in advance. The config_version
+    field changes when server configuration changes, allowing clients to
+    detect and re-fetch updated config.
+    """
+    
+    def __init__(self, discovery_port=5579, level_port=5580, volumio_port=3000, 
+                 interval=5.0, enabled=True, config_path=None):
+        """Initialize the discovery announcer.
+        
+        :param discovery_port: UDP port for discovery broadcasts (default 5579)
+        :param level_port: Level data port to advertise (default 5580)
+        :param volumio_port: Volumio socket.io port to advertise (default 3000)
+        :param interval: Seconds between announcements (default 5.0)
+        :param enabled: Whether announcements are enabled
+        :param config_path: Path to config.txt for version hashing
+        """
+        self.discovery_port = discovery_port
+        self.level_port = level_port
+        self.volumio_port = volumio_port
+        self.interval = interval
+        self.enabled = enabled
+        self.config_path = config_path
+        self.run_flag = False
+        self.thread = None
+        self.sock = None
+        self._config_version = ""
+        self._last_config_check = 0
+        self._config_check_interval = 5.0  # Check config every 5 seconds
+        
+        # Get hostname
+        try:
+            self.hostname = socket.gethostname()
+        except Exception:
+            self.hostname = "volumio"
+        
+        # Calculate initial config version
+        self._update_config_version()
+    
+    def _update_config_version(self):
+        """Calculate MD5 hash of config file for version tracking."""
+        if not self.config_path:
+            return
+        
+        try:
+            import hashlib
+            with open(self.config_path, 'rb') as f:
+                content = f.read()
+            new_hash = hashlib.md5(content).hexdigest()[:8]
+            if new_hash != self._config_version:
+                self._config_version = new_hash
+                log_debug(f"[DiscoveryAnnouncer] Config version: {self._config_version}", "verbose")
+        except Exception as e:
+            log_debug(f"[DiscoveryAnnouncer] Config hash error: {e}", "verbose")
+    
+    def _build_announcement(self):
+        """Build the announcement payload with current config version."""
+        return json.dumps({
+            "service": "peppy_level_server",
+            "version": 1,
+            "level_port": self.level_port,
+            "volumio_port": self.volumio_port,
+            "hostname": self.hostname,
+            "config_version": self._config_version
+        }).encode('utf-8')
+    
+    def start(self):
+        """Start the announcer thread."""
+        if not self.enabled:
+            return
+        
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self.run_flag = True
+            self.thread = Thread(target=self._run, daemon=True)
+            self.thread.start()
+            log_debug(f"[DiscoveryAnnouncer] Started on UDP port {self.discovery_port}, "
+                     f"announcing level_port={self.level_port}", "basic")
+        except Exception as e:
+            log_debug(f"[DiscoveryAnnouncer] Failed to start: {e}", "basic")
+            self.enabled = False
+    
+    def _run(self):
+        """Thread loop - broadcast announcements periodically."""
+        while self.run_flag:
+            # Periodically re-check config version
+            now = time.time()
+            if now - self._last_config_check > self._config_check_interval:
+                self._update_config_version()
+                self._last_config_check = now
+            
+            try:
+                announcement = self._build_announcement()
+                self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
+            except Exception as e:
+                log_debug(f"[DiscoveryAnnouncer] Send error: {e}", "verbose")
+            
+            # Sleep in small increments to allow faster shutdown
+            sleep_remaining = self.interval
+            while sleep_remaining > 0 and self.run_flag:
+                time.sleep(min(0.5, sleep_remaining))
+                sleep_remaining -= 0.5
+    
+    def stop(self):
+        """Stop the announcer thread."""
+        self.run_flag = False
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+        log_debug("[DiscoveryAnnouncer] Stopped", "basic")
 
 
 # =============================================================================
@@ -2775,9 +2998,16 @@ def stop_watcher():
 # =============================================================================
 # Main Display Output with Overlay - OPTIMIZED
 # =============================================================================
-def start_display_output(pm, callback, meter_config_volumio):
+def start_display_output(pm, callback, meter_config_volumio, volumio_host='localhost', volumio_port=3000):
     """Main display loop with integrated overlay rendering.
-    OPTIMIZED: Uses dirty rectangle updates instead of full screen flip."""
+    OPTIMIZED: Uses dirty rectangle updates instead of full screen flip.
+    
+    :param pm: Peppymeter instance
+    :param callback: CallBack instance
+    :param meter_config_volumio: Volumio meter configuration dict
+    :param volumio_host: Volumio host for socket.io metadata (default: localhost)
+    :param volumio_port: Volumio port for socket.io (default: 3000)
+    """
     
     pg.event.clear()
     screen = pm.util.PYGAME_SCREEN
@@ -2823,9 +3053,40 @@ def start_display_output(pm, callback, meter_config_volumio):
     # Start MetadataWatcher - handles both metadata updates and title change detection
     metadata_watcher = MetadataWatcher(
         last_metadata,
-        title_changed_callback=on_title_change if random_title else None
+        title_changed_callback=on_title_change if random_title else None,
+        volumio_host=volumio_host,
+        volumio_port=volumio_port
     )
     metadata_watcher.start()
+    
+    # -------------------------------------------------------------------------
+    # Remote Display Server - broadcasts level data for remote clients
+    # -------------------------------------------------------------------------
+    remote_enabled = meter_config_volumio.get(REMOTE_SERVER_ENABLED, False)
+    remote_mode = meter_config_volumio.get(REMOTE_SERVER_MODE, "server_local")
+    level_server = None
+    discovery_announcer = None
+    
+    if remote_enabled:
+        level_port = meter_config_volumio.get(REMOTE_SERVER_PORT, 5580)
+        discovery_port = meter_config_volumio.get(REMOTE_DISCOVERY_PORT, 5579)
+        
+        # Start level server
+        level_server = NetworkLevelServer(port=level_port, enabled=True)
+        
+        # Start discovery announcer (includes config version for change detection)
+        config_path = os.path.join(PeppyPath, 'config.txt')
+        discovery_announcer = DiscoveryAnnouncer(
+            discovery_port=discovery_port,
+            level_port=level_port,
+            volumio_port=3000,
+            interval=5.0,
+            enabled=True,
+            config_path=config_path
+        )
+        discovery_announcer.start()
+        
+        log_debug(f"Remote display server enabled, mode: {remote_mode}", "basic")
     
     # -------------------------------------------------------------------------
     # Resolve active meter name
@@ -3280,6 +3541,29 @@ def start_display_output(pm, callback, meter_config_volumio):
                     fps_actual = clock.get_fps()
                     log_debug(f"[Frame] #{frame_counter}: time={frame_time_ms}ms, fps={fps_actual:.1f}, dirty_rects={len(dirty_rects)}", "trace", "frame")
                 
+                # Broadcast level data to remote clients (handler path)
+                if level_server and level_server.enabled:
+                    try:
+                        ds = pm.data_source
+                        if ds:
+                            left = ds.get_current_left_channel_data()
+                            right = ds.get_current_right_channel_data()
+                            mono = ds.get_current_mono_channel_data()
+                            level_server.broadcast(left, right, mono)
+                            # Log first successful broadcast
+                            if not hasattr(level_server, '_logged_first'):
+                                log_debug(f"[NetworkLevelServer] First broadcast: L={left}, R={right}, M={mono}", "basic")
+                                level_server._logged_first = True
+                        else:
+                            if not hasattr(level_server, '_logged_no_ds'):
+                                log_debug("[NetworkLevelServer] No data_source available", "basic")
+                                level_server._logged_no_ds = True
+                    except Exception as e:
+                        # Log first error only to avoid spam
+                        if not hasattr(level_server, '_logged_error'):
+                            log_debug(f"[NetworkLevelServer] Broadcast exception: {e}", "basic")
+                            level_server._logged_error = True
+                
                 continue
         
         # Handle events
@@ -3293,6 +3577,29 @@ def start_display_output(pm, callback, meter_config_volumio):
             elif event.type in exit_events:
                 if cfg.get(EXIT_ON_TOUCH, False) or cfg.get(STOP_DISPLAY_ON_TOUCH, False):
                     running = False
+        
+        # Broadcast level data to remote clients (if server mode enabled)
+        if level_server and level_server.enabled:
+            try:
+                ds = pm.data_source
+                if ds:
+                    left = ds.get_current_left_channel_data()
+                    right = ds.get_current_right_channel_data()
+                    mono = ds.get_current_mono_channel_data()
+                    level_server.broadcast(left, right, mono)
+                    # Log first successful broadcast
+                    if not hasattr(level_server, '_logged_first'):
+                        log_debug(f"[NetworkLevelServer] First broadcast: L={left}, R={right}, M={mono}", "basic")
+                        level_server._logged_first = True
+                else:
+                    if not hasattr(level_server, '_logged_no_ds'):
+                        log_debug("[NetworkLevelServer] No data_source available", "basic")
+                        level_server._logged_no_ds = True
+            except Exception as e:
+                # Log first error only to avoid spam
+                if not hasattr(level_server, '_logged_error'):
+                    log_debug(f"[NetworkLevelServer] Broadcast exception: {e}", "basic")
+                    level_server._logged_error = True
         
         clock.tick(MAIN_LOOP_FRAME_RATE)
         
@@ -3321,6 +3628,14 @@ def start_display_output(pm, callback, meter_config_volumio):
     
     # Cleanup
     log_debug("=== Shutting down ===", "basic")
+    
+    # Stop remote display server components
+    if level_server:
+        log_debug("  Stopping level server", "verbose")
+        level_server.stop()
+    if discovery_announcer:
+        log_debug("  Stopping discovery announcer", "verbose")
+        discovery_announcer.stop()
     
     # Cleanup handler resources
     final_handler = overlay_state.get("handler") if overlay_state else None

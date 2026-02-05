@@ -15,6 +15,7 @@ var config = new (require('v-conf'))();
 var exec = require('child_process').exec;
 var execSync = require('child_process').execSync;
 var sizeOf = require('image-size');
+var crypto = require('crypto');  // For config version hashing
 var use_SDL2 = false;
 var lt_4GB = false;
 
@@ -46,6 +47,9 @@ const MPD_include = '/data/configuration/music_service/mpd/mpd_custom.conf';
 const AIRtmpl = '/volumio/app/plugins/music_service/airplay_emulation/shairport-sync.conf.tmpl';
 const AIR = '/tmp/shairport-sync.conf.tmpl';
 const asound = '/Peppyalsa.postPeppyalsa.5.conf';
+
+// Remote client config serving
+var remoteConfigVersion = '';  // MD5 hash of config.txt for change detection
 
 var availMeters = '';
 var uiNeedsUpdate;
@@ -315,6 +319,20 @@ peppyScreensaver.prototype.onStart = function() {
         lastUri = state.uri || '';
     });
     
+    // Register REST endpoint for remote config access
+    // This allows remote clients to fetch config.txt via HTTP:
+    // GET /api/v1/pluginEndpoint?endpoint=peppy_screensaver&method=getRemoteConfig
+    self.commandRouter.addPluginRestEndpoint({
+        endpoint: 'peppy_screensaver',
+        type: 'user_interface',
+        name: 'peppy_screensaver',
+        method: 'getRemoteConfig'
+    });
+    self.logger.info(id + 'REST endpoint registered: peppy_screensaver');
+    
+    // Initialize config version on startup
+    self.updateConfigVersion();
+    
     // Once the Plugin has successfull started resolve the promise
 	defer.resolve();       
  
@@ -363,6 +381,11 @@ peppyScreensaver.prototype.onStop = function() {
         
         // remove old flag
         if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+        
+        // Unregister REST endpoint
+        self.commandRouter.removePluginRestEndpoint({
+            endpoint: 'peppy_screensaver'
+        });
         
         defer.resolve();                
           
@@ -834,6 +857,29 @@ peppyScreensaver.prototype.getUIConfig = function() {
             // profile duration
             var profilingDuration = parseInt(peppy_config.current['profiling.duration'], 10) || 60;
             uiconf.sections[8].content[3].value = profilingDuration;
+            
+            // section 9 - Remote display server settings -----------------------------
+            // server enabled
+            var remoteServerEnabled = peppy_config.current['remote.server.enabled'] === 'true';
+            uiconf.sections[9].content[0].value = remoteServerEnabled;
+            
+            // server mode
+            var remoteServerMode = peppy_config.current['remote.server.mode'] || 'server_local';
+            var remoteServerModeOptions = uiconf.sections[9].content[1].options;
+            for (var i = 0; i < remoteServerModeOptions.length; i++) {
+                if (remoteServerModeOptions[i].value === remoteServerMode) {
+                    uiconf.sections[9].content[1].value = remoteServerModeOptions[i];
+                    break;
+                }
+            }
+            
+            // server port
+            var remoteServerPort = parseInt(peppy_config.current['remote.server.port'], 10) || 5580;
+            uiconf.sections[9].content[2].value = remoteServerPort;
+            
+            // discovery port
+            var remoteDiscoveryPort = parseInt(peppy_config.current['remote.discovery.port'], 10) || 5579;
+            uiconf.sections[9].content[3].value = remoteDiscoveryPort;
             
         } else {
             self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));            
@@ -1630,6 +1676,122 @@ peppyScreensaver.prototype.saveProfilingConf = function (confData) {
     }
   }, 500);
 }; // end saveProfilingConf -------------------------------------
+
+peppyScreensaver.prototype.saveRemoteConf = function (confData) {
+  const self = this;
+  let noChanges = true;
+  
+  if (fs.existsSync(PeppyConf)){
+    
+    // server enabled
+    var remoteServerEnabled = confData.remoteServerEnabled ? 'true' : 'false';
+    if (peppy_config.current['remote.server.enabled'] != remoteServerEnabled) {
+        peppy_config.current['remote.server.enabled'] = remoteServerEnabled;
+        noChanges = false;
+    }
+    
+    // server mode
+    var remoteServerMode = confData.remoteServerMode.value;
+    if (peppy_config.current['remote.server.mode'] != remoteServerMode) {
+        peppy_config.current['remote.server.mode'] = remoteServerMode;
+        noChanges = false;
+    }
+    
+    // server port
+    var remoteServerPort = self.minmax('remote_server_port', confData.remoteServerPort, [1024, 65535, 5580]);
+    if (peppy_config.current['remote.server.port'] != remoteServerPort) {
+        peppy_config.current['remote.server.port'] = remoteServerPort;
+        noChanges = false;
+    }
+    
+    // discovery port
+    var remoteDiscoveryPort = self.minmax('remote_discovery_port', confData.remoteDiscoveryPort, [1024, 65535, 5579]);
+    if (peppy_config.current['remote.discovery.port'] != remoteDiscoveryPort) {
+        peppy_config.current['remote.discovery.port'] = remoteDiscoveryPort;
+        noChanges = false;
+    }
+    
+    if (!noChanges) {
+        fs.writeFileSync(PeppyConf, ini.stringify(peppy_config, {whitespace: true}));
+        // Restart meter to apply new remote settings
+        if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+    }
+    
+    // Update config version hash for remote clients
+    self.updateConfigVersion();
+    
+  } else {
+      self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));
+  }
+  
+  setTimeout(function () {
+    if (noChanges) {
+        self.commandRouter.pushToastMessage('info', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_CHANGES'));
+    } else {
+        self.commandRouter.pushToastMessage('success', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('COMMON.SETTINGS_SAVED_SUCCESSFULLY'));
+    }
+  }, 500);
+}; // end saveRemoteConf -------------------------------------
+
+// Calculate and update config version hash (for remote client change detection)
+peppyScreensaver.prototype.updateConfigVersion = function () {
+  const self = this;
+  
+  try {
+    if (fs.existsSync(PeppyConf)) {
+      var configContent = fs.readFileSync(PeppyConf, 'utf8');
+      var newHash = crypto.createHash('md5').update(configContent).digest('hex').substring(0, 8);
+      
+      if (newHash !== remoteConfigVersion) {
+        remoteConfigVersion = newHash;
+        self.logger.info(id + 'Config version updated: ' + remoteConfigVersion);
+      }
+    }
+  } catch (err) {
+    self.logger.error(id + 'Failed to calculate config version: ' + err.message);
+  }
+  
+  return remoteConfigVersion;
+};
+
+// Get current config version hash
+peppyScreensaver.prototype.getConfigVersion = function () {
+  return remoteConfigVersion;
+};
+
+// HTTP endpoint: Return config.txt contents for remote clients
+// Called via: GET /api/v1/pluginEndpoint?endpoint=peppy_screensaver&method=getRemoteConfig
+peppyScreensaver.prototype.getRemoteConfig = function () {
+  const self = this;
+  var defer = libQ.defer();
+  
+  try {
+    if (!fs.existsSync(PeppyConf)) {
+      defer.resolve({
+        success: false,
+        error: 'Config file not found'
+      });
+      return defer.promise;
+    }
+    
+    var configContent = fs.readFileSync(PeppyConf, 'utf8');
+    var configVersion = self.updateConfigVersion();
+    
+    defer.resolve({
+      success: true,
+      version: configVersion,
+      config: configContent
+    });
+  } catch (err) {
+    self.logger.error(id + 'Failed to read config for remote client: ' + err.message);
+    defer.resolve({
+      success: false,
+      error: err.message
+    });
+  }
+  
+  return defer.promise;
+};
 
 // global functions
 //-------------------------------------------------------------

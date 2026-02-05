@@ -74,6 +74,7 @@ After installation, enable and configure the plugin:
 - Configurable frame rate and update interval for CPU tuning
 - Meter window positioning (centered or manual coordinates)
 - Configurable text scrolling speeds
+- **Remote display server** - Stream visualization to other devices on your network
 
 ## Plugin Settings
 
@@ -257,6 +258,30 @@ Performance analysis tools for developers and advanced users.
 **cProfile Profiling:** Runs Python's cProfile module for detailed function-level timing. Results are written to `/tmp/peppy_profile.txt` after the specified duration. Use for deep performance analysis.
 
 **Note:** Both profiling options add overhead. Disable after troubleshooting.
+
+### Remote Display Settings
+
+Stream visualization data to remote displays on your network.
+
+| Setting | Options | Default | Description |
+|---------|---------|---------|-------------|
+| Enable Remote Server | On/Off | Off | Enable network streaming of visualization data |
+| Server Mode | Server Only / Server + Local | Server + Local | Display mode when server is enabled |
+| Level Port | 1024-65535 | 5580 | UDP port for audio level data |
+| Discovery Port | 1024-65535 | 5579 | UDP port for server discovery broadcasts |
+
+**Server modes:**
+- **Server Only**: Headless mode - streams data but shows no local display (for dedicated servers)
+- **Server + Local**: Streams data AND shows visualization locally (default)
+
+**How it works:**
+1. Server broadcasts discovery packets on UDP (default port 5579)
+2. Clients discover server automatically or connect by hostname/IP
+3. Audio level data streams via UDP (default port 5580)
+4. Clients fetch configuration and templates from server
+5. Metadata comes from Volumio's socket.io interface
+
+See [Remote Client](#remote-display-client) section for client installation.
 
 ## Performance Tuning
 
@@ -723,6 +748,52 @@ If CPU usage is higher than expected:
 4. Use basic templates instead of turntable templates (no rotation overhead)
 5. Disable spectrum visualization if not needed
 6. Disable album art rotation if enabled
+
+## Remote Display Client
+
+Display PeppyMeter visualizations on any Debian-based system (Ubuntu, Raspberry Pi OS, etc.) by connecting to a Volumio server running PeppyMeter with Remote Display Server enabled.
+
+The remote client uses the **same rendering code** as the Volumio plugin - all skins work identically.
+
+### Quick Install
+
+```bash
+curl -sSL https://raw.githubusercontent.com/foonerd/peppy_screensaver/main/remote_client/install.sh | bash
+```
+
+### Usage
+
+```bash
+# Auto-discover server on network
+~/peppy_remote/peppy_remote
+
+# Connect to specific server
+~/peppy_remote/peppy_remote --server volumio
+
+# Interactive configuration wizard
+~/peppy_remote/peppy_remote --config
+```
+
+### Features
+
+- Auto-discovery of PeppyMeter servers via UDP broadcast
+- Full meter rendering (turntable, cassette, spectrum, indicators)
+- Album art and metadata from Volumio
+- Windowed, frameless, or fullscreen display modes
+- Interactive configuration wizard
+- Templates loaded via SMB from server
+
+### Server Setup
+
+1. Install PeppyMeter plugin on Volumio
+2. Enable "Remote Display Server" in plugin settings
+3. Choose mode: Server Only (headless) or Server + Local
+4. Save settings
+
+### Documentation
+
+For detailed documentation, troubleshooting, and configuration options, see:
+[Remote Client README](remote_client/README.md)
 
 ## Directory Structure
 

@@ -255,6 +255,12 @@ SPECTRUM = "spectrum.name"
 SPECTRUM_SIZE = "spectrum.size"
 SPECTRUM_POS = "spectrum.pos"
 
+# Remote display server settings
+REMOTE_SERVER_ENABLED = "remote.server.enabled"     # true/false - enable remote server
+REMOTE_SERVER_MODE = "remote.server.mode"           # 'server', 'server_local'
+REMOTE_SERVER_PORT = "remote.server.port"           # UDP port for level data (default 5580)
+REMOTE_DISCOVERY_PORT = "remote.discovery.port"     # UDP port for discovery (default 5579)
+
 class Volumio_ConfigFileParser(object):
     """ Configuration file parser """
     
@@ -387,6 +393,24 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[SPOOL_ADAPTIVE] = c.getboolean(CURRENT, SPOOL_ADAPTIVE)
         except:
             self.meter_config_volumio[SPOOL_ADAPTIVE] = False
+
+        # Remote display server settings
+        try:
+            self.meter_config_volumio[REMOTE_SERVER_ENABLED] = c.getboolean(CURRENT, REMOTE_SERVER_ENABLED)
+        except:
+            self.meter_config_volumio[REMOTE_SERVER_ENABLED] = False
+        try:
+            self.meter_config_volumio[REMOTE_SERVER_MODE] = c.get(CURRENT, REMOTE_SERVER_MODE)
+        except:
+            self.meter_config_volumio[REMOTE_SERVER_MODE] = "server_local"
+        try:
+            self.meter_config_volumio[REMOTE_SERVER_PORT] = c.getint(CURRENT, REMOTE_SERVER_PORT)
+        except:
+            self.meter_config_volumio[REMOTE_SERVER_PORT] = 5580
+        try:
+            self.meter_config_volumio[REMOTE_DISCOVERY_PORT] = c.getint(CURRENT, REMOTE_DISCOVERY_PORT)
+        except:
+            self.meter_config_volumio[REMOTE_DISCOVERY_PORT] = 5579
         try:
             self.meter_config_volumio[QUEUE_MODE] = c.get(CURRENT, QUEUE_MODE)
         except:

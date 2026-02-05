@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Background circle -->
+  <circle cx="64" cy="64" r="60" fill="#1a1a2e"/>
+  <circle cx="64" cy="64" r="56" fill="#16213e" stroke="#0f3460" stroke-width="2"/>
+  
+  <!-- VU meter scale arc (behind colored zones) -->
+  <path d="M 22 78 A 48 48 0 0 1 106 78" 
+        fill="none" stroke="#252540" stroke-width="12" stroke-linecap="round"/>
+  
+  <!-- Green zone (-20 to -7 dB) -->
+  <path d="M 22 78 A 48 48 0 0 1 44 40" 
+        fill="none" stroke="#27ae60" stroke-width="10" stroke-linecap="round"/>
+  
+  <!-- Yellow zone (-7 to 0 dB) -->
+  <path d="M 44 40 A 48 48 0 0 1 74 32" 
+        fill="none" stroke="#f39c12" stroke-width="10" stroke-linecap="round"/>
+  
+  <!-- Red zone (0 to +3 dB) -->
+  <path d="M 74 32 A 48 48 0 0 1 106 78" 
+        fill="none" stroke="#c0392b" stroke-width="10" stroke-linecap="round"/>
+  
+  <!-- Tick marks on scale -->
+  <g stroke="#666" stroke-width="2" stroke-linecap="round">
+    <line x1="26" y1="74" x2="32" y2="70"/>
+    <line x1="34" y1="54" x2="40" y2="52"/>
+    <line x1="52" y1="38" x2="56" y2="42"/>
+    <line x1="72" y1="36" x2="72" y2="42"/>
+    <line x1="92" y1="50" x2="88" y2="54"/>
+    <line x1="102" y1="74" x2="96" y2="70"/>
+  </g>
+  
+  <!-- Needle pivot base -->
+  <circle cx="64" cy="82" r="10" fill="#1a1a2e"/>
+  <circle cx="64" cy="82" r="8" fill="#2c2c4a"/>
+  
+  <!-- Meter needle (pointing to ~+1 dB in red zone) -->
+  <g transform="rotate(20, 64, 82)">
+    <polygon points="64,32 61,78 67,78" fill="#e74c3c"/>
+    <polygon points="64,32 62,70 66,70" fill="#ff6b6b"/>
+  </g>
+  
+  <!-- Needle pivot cap -->
+  <circle cx="64" cy="82" r="5" fill="#e74c3c"/>
+  <circle cx="64" cy="82" r="2.5" fill="#fff"/>
+  
+  <!-- VU label -->
+  <text x="64" y="102" 
+        font-family="Arial, sans-serif" font-size="12" font-weight="bold"
+        fill="#666" text-anchor="middle">VU</text>
+  
+  <!-- Network/Remote icon (bottom right) -->
+  <g transform="translate(88, 88)">
+    <!-- Wifi arcs -->
+    <path d="M 4 18 Q 12 6, 20 18" fill="none" stroke="#3498db" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M 7 15 Q 12 8, 17 15" fill="none" stroke="#3498db" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M 10 12 Q 12 10, 14 12" fill="none" stroke="#3498db" stroke-width="2.5" stroke-linecap="round"/>
+    <!-- Dot -->
+    <circle cx="12" cy="18" r="2.5" fill="#3498db"/>
+  </g>
+</svg>

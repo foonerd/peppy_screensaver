@@ -203,6 +203,18 @@
     "PROFILING_CPROFILE":"Activer cProfile",
     "PROFILING_CPROFILE_DOC":"Profilage complet au niveau fonction Python.<br /><br /><b>ATTENTION:</b> Surcharge CPU significative (10-30%). Utiliser uniquement pour de courtes sessions de diagnostic.<br /><br />Crée /tmp/peppy_profile.prof et /tmp/peppy_profile_summary.txt à la fermeture.",
     "PROFILING_DURATION":"Durée du profilage (secondes)",
-    "PROFILING_DURATION_DOC":"Arrêter automatiquement cProfile après ce délai.<br /><br /><b>0:</b> Exécuter jusqu'à l'arrêt du compteur (non recommandé)<br /><b>60:</b> Une minute (défaut)<br /><b>300:</b> Cinq minutes<br /><br />Empêche la croissance incontrôlée du fichier de profil."
+    "PROFILING_DURATION_DOC":"Arrêter automatiquement cProfile après ce délai.<br /><br /><b>0:</b> Exécuter jusqu'à l'arrêt du compteur (non recommandé)<br /><b>60:</b> Une minute (défaut)<br /><b>300:</b> Cinq minutes<br /><br />Empêche la croissance incontrôlée du fichier de profil.",
+    "REMOTE_CONF":"Serveur d'affichage distant",
+    "REMOTE_DESC":"Diffuser les niveaux audio vers des affichages distants sur le réseau",
+    "REMOTE_SERVER_ENABLED":"Activer le serveur distant",
+    "REMOTE_SERVER_ENABLED_DOC":"Activer la diffusion des niveaux audio vers les affichages distants.<br /><br />Lorsqu'activé, cet appareil diffusera les données de niveau audio sur le réseau pour que les affichages PeppyMeter distants puissent les recevoir.",
+    "REMOTE_SERVER_MODE":"Mode serveur",
+    "REMOTE_SERVER_MODE_DOC":"Comment fonctionner lorsque le serveur distant est activé.<br /><br /><b>Serveur uniquement:</b> Diffuser les niveaux vers les affichages distants, pas d'affichage local (sans écran)<br /><b>Serveur + Local:</b> Diffuser vers les affichages distants ET afficher localement<br /><br />Les affichages distants se connectent via run_peppy_remote.py sur un autre Pi.",
+    "REMOTE_MODE_SERVER":"Serveur uniquement (sans écran)",
+    "REMOTE_MODE_SERVER_LOCAL":"Serveur + Local",
+    "REMOTE_SERVER_PORT":"Port données de niveau",
+    "REMOTE_SERVER_PORT_DOC":"Port UDP pour diffuser les données de niveau audio vers les affichages distants.<br /><br /><b>Par défaut: 5580</b><br /><br />Modifier si ce port entre en conflit avec d'autres services.",
+    "REMOTE_DISCOVERY_PORT":"Port de découverte",
+    "REMOTE_DISCOVERY_PORT_DOC":"Port UDP pour les diffusions de découverte automatique.<br /><br /><b>Par défaut: 5579</b><br /><br />Les clients distants écoutent sur ce port pour trouver automatiquement le serveur."
   }
 }

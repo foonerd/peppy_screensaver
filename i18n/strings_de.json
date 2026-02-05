@@ -203,6 +203,18 @@
     "PROFILING_CPROFILE":"cProfile aktivieren",
     "PROFILING_CPROFILE_DOC":"Vollständiges Python-Funktionslevel-Profiling.<br /><br /><b>WARNUNG:</b> Erheblicher CPU-Overhead (10-30%). Nur für kurze Diagnosesitzungen verwenden.<br /><br />Erstellt /tmp/peppy_profile.prof und /tmp/peppy_profile_summary.txt beim Beenden.",
     "PROFILING_DURATION":"Profiling-Dauer (Sekunden)",
-    "PROFILING_DURATION_DOC":"cProfile nach dieser Zeit automatisch stoppen.<br /><br /><b>0:</b> Bis zum Meter-Stopp ausführen (nicht empfohlen)<br /><b>60:</b> Eine Minute (Standard)<br /><b>300:</b> Fünf Minuten<br /><br />Verhindert unkontrolliertes Wachstum der Profildatei."
+    "PROFILING_DURATION_DOC":"cProfile nach dieser Zeit automatisch stoppen.<br /><br /><b>0:</b> Bis zum Meter-Stopp ausführen (nicht empfohlen)<br /><b>60:</b> Eine Minute (Standard)<br /><b>300:</b> Fünf Minuten<br /><br />Verhindert unkontrolliertes Wachstum der Profildatei.",
+    "REMOTE_CONF":"Remote-Anzeige-Server",
+    "REMOTE_DESC":"Audio-Pegel über das Netzwerk an entfernte Anzeigen streamen",
+    "REMOTE_SERVER_ENABLED":"Remote-Server aktivieren",
+    "REMOTE_SERVER_ENABLED_DOC":"Streaming von Audio-Pegeln an entfernte Anzeigen aktivieren.<br /><br />Wenn aktiviert, sendet dieses Gerät Audio-Pegeldaten über das Netzwerk, damit entfernte PeppyMeter-Anzeigen sie empfangen können.",
+    "REMOTE_SERVER_MODE":"Server-Modus",
+    "REMOTE_SERVER_MODE_DOC":"Wie zu arbeiten ist, wenn der Remote-Server aktiviert ist.<br /><br /><b>Nur Server:</b> Pegel an Remote-Anzeigen streamen, keine lokale Anzeige (Headless)<br /><b>Server + Lokal:</b> Sowohl an Remote-Anzeigen streamen ALS AUCH lokal anzeigen<br /><br />Remote-Anzeigen verbinden sich über run_peppy_remote.py auf einem anderen Pi.",
+    "REMOTE_MODE_SERVER":"Nur Server (Headless)",
+    "REMOTE_MODE_SERVER_LOCAL":"Server + Lokal",
+    "REMOTE_SERVER_PORT":"Pegel-Daten-Port",
+    "REMOTE_SERVER_PORT_DOC":"UDP-Port zum Streamen von Audio-Pegeldaten an Remote-Anzeigen.<br /><br /><b>Standard: 5580</b><br /><br />Ändern, wenn dieser Port mit anderen Diensten kollidiert.",
+    "REMOTE_DISCOVERY_PORT":"Erkennungs-Port",
+    "REMOTE_DISCOVERY_PORT_DOC":"UDP-Port für Auto-Erkennungs-Broadcasts.<br /><br /><b>Standard: 5579</b><br /><br />Remote-Clients hören auf diesem Port, um den Server automatisch zu finden."
   }
 }
