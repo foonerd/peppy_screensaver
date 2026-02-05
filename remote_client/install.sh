@@ -257,7 +257,29 @@ source "$INSTALL_DIR/venv/bin/activate"
 
 echo "  Installing Python packages..."
 pip install --upgrade pip wheel > /dev/null 2>&1
-pip install pygame python-socketio[client] websocket-client > /dev/null 2>&1
+# Install all packages matching Volumio plugin's bundled Python packages
+pip install \
+    pillow \
+    pygame \
+    cairosvg \
+    cssselect2 \
+    tinycss2 \
+    defusedxml \
+    webencodings \
+    python-socketio[client] \
+    python-engineio \
+    bidict \
+    requests \
+    certifi \
+    charset-normalizer \
+    idna \
+    urllib3 \
+    websocket-client \
+    mss \
+    pyscreenshot \
+    easyprocess \
+    entrypoint2 \
+    > /dev/null 2>&1
 
 deactivate
 
