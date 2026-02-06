@@ -1450,7 +1450,8 @@ class DiscoveryAnnouncer:
     """
     
     def __init__(self, discovery_port=5579, level_port=5580, spectrum_port=5581,
-                 volumio_port=3000, interval=5.0, enabled=True, config_path=None):
+                 volumio_port=3000, interval=5.0, enabled=True, config_path=None,
+                 config_check_interval=1.0):
         """Initialize the discovery announcer.
         
         :param discovery_port: UDP port for discovery broadcasts (default 5579)
@@ -1460,6 +1461,7 @@ class DiscoveryAnnouncer:
         :param interval: Seconds between announcements (default 5.0)
         :param enabled: Whether announcements are enabled
         :param config_path: Path to config.txt for version hashing
+        :param config_check_interval: Seconds between config file checks (default 1.0)
         """
         self.discovery_port = discovery_port
         self.level_port = level_port
@@ -1473,7 +1475,7 @@ class DiscoveryAnnouncer:
         self.sock = None
         self._config_version = ""
         self._last_config_check = 0
-        self._config_check_interval = 5.0  # Check config every 5 seconds
+        self._config_check_interval = config_check_interval  # Configurable check interval (default 1s)
         self._broadcast_count = 0
         self._unknown_traffic = {}  # {ip: {"count": int, "last_seen": float}}
         self._local_ips = set()
@@ -1502,7 +1504,11 @@ class DiscoveryAnnouncer:
         self._update_config_version()
     
     def _update_config_version(self):
-        """Calculate MD5 hash of config file for version tracking."""
+        """Calculate MD5 hash of config file for version tracking.
+        
+        If a config change is detected, sends an immediate broadcast to notify
+        remote clients without waiting for the next scheduled interval.
+        """
         if not self.config_path:
             return
         
@@ -1516,8 +1522,11 @@ class DiscoveryAnnouncer:
                 self._config_version = new_hash
                 if old_version:
                     log_debug(f"[REMOTE:DISCOVERY] Config version changed: {old_version} -> {self._config_version}", "verbose")
+                    # Send immediate notification to clients (don't wait for next interval)
+                    self._send_immediate_broadcast()
                 else:
                     log_debug(f"[REMOTE:DISCOVERY] Config version: {self._config_version}", "verbose")
+            self._last_config_check = time.time()
         except Exception as e:
             log_debug(f"[REMOTE:DISCOVERY] Config hash error: {e}", "verbose")
     
@@ -3711,6 +3720,8 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
         level_port = meter_config_volumio.get(REMOTE_SERVER_PORT, 5580)
         discovery_port = meter_config_volumio.get(REMOTE_DISCOVERY_PORT, 5579)
         spectrum_port = meter_config_volumio.get(REMOTE_SPECTRUM_PORT, 5581)
+        # Use string literal for backward compatibility with clients that may not have the constant
+        config_sync_interval = meter_config_volumio.get("remote.config.sync.interval", 1)
         
         # Start level server
         level_server = NetworkLevelServer(port=level_port, enabled=True)
@@ -3732,7 +3743,8 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             volumio_port=3000,
             interval=5.0,
             enabled=True,
-            config_path=config_path
+            config_path=config_path,
+            config_check_interval=float(config_sync_interval)
         )
         discovery_announcer.start()
         
@@ -4102,6 +4114,11 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
         if current_status != last_status:
             last_status = current_status
             idle_frame_skip = 0
+        
+        # PERSIST MANAGER: Check for persist file management (remote client feature)
+        # If callback has a persist_manager, let it handle /tmp/peppy_persist based on status
+        if hasattr(callback, 'persist_manager') and callback.persist_manager:
+            callback.persist_manager.check_metadata_status(last_metadata)
         
         if current_status in ("stop", "pause", ""):
             # When idle, skip every other frame to reduce CPU

@@ -739,7 +739,8 @@
                                       "remoteServerMode",
                                       "remoteDiscoveryPort",
                                       "remoteServerPort",
-                                      "remoteSpectrumPort"
+                                      "remoteSpectrumPort",
+                                      "configSyncInterval"
                                       ]
                               },
                 "content": [
@@ -806,6 +807,21 @@
                                              {"max": 65535}
                                            ],
                              "value": 5581
+                            },
+                            {
+                             "id": "configSyncInterval",
+                             "element": "input",
+                             "type": "number",
+                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.CONFIG_SYNC_INTERVAL_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.CONFIG_SYNC_INTERVAL",
+                             "attributes": [
+                                             {"placeholder": 1},
+                                             {"maxlength": 2},
+                                             {"min": 1},
+                                             {"max": 60}
+                                           ],
+                             "value": 1
                             }
                             ]
                 },

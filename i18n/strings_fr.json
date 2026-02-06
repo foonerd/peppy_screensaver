@@ -221,6 +221,8 @@
     "REMOTE_SERVER_PORT":"Port données des mètres",
     "REMOTE_SERVER_PORT_DOC":"Port UDP pour diffuser les données de niveau audio vers les affichages distants.<br /><br /><b>Par défaut: 5580</b><br /><br />Modifier si ce port entre en conflit avec d'autres services.",
     "REMOTE_SPECTRUM_PORT":"Port données du spectre",
-    "REMOTE_SPECTRUM_PORT_DOC":"Port UDP pour diffuser les données de l'analyseur de spectre vers les affichages distants.<br /><br /><b>Par défaut: 5581</b><br /><br />Modifier si ce port entre en conflit avec d'autres services."
+    "REMOTE_SPECTRUM_PORT_DOC":"Port UDP pour diffuser les données de l'analyseur de spectre vers les affichages distants.<br /><br /><b>Par défaut: 5581</b><br /><br />Modifier si ce port entre en conflit avec d'autres services.",
+    "CONFIG_SYNC_INTERVAL":"Intervalle de sync config (secondes)",
+    "CONFIG_SYNC_INTERVAL_DOC":"Fréquence de vérification des changements de configuration et notification des clients distants.<br /><br /><b>Par défaut: 1 seconde</b><br /><br />Des valeurs plus basses permettent aux clients distants de détecter les changements plus rapidement. Plage: 1-60 secondes."
   }
 }
