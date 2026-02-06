@@ -85,7 +85,8 @@ from volumio_configfileparser import (
     FONTSIZE_LIGHT, FONTSIZE_REGULAR, FONTSIZE_BOLD, FONTSIZE_DIGI, FONTCOLOR,
     FONT_STYLE_B, FONT_STYLE_R, FONT_STYLE_L,
     METER_BKP, RANDOM_TITLE, SPECTRUM, SPECTRUM_SIZE,
-    REMOTE_SERVER_ENABLED, REMOTE_SERVER_MODE, REMOTE_SERVER_PORT, REMOTE_DISCOVERY_PORT
+    REMOTE_SERVER_ENABLED, REMOTE_SERVER_MODE, REMOTE_SERVER_PORT, REMOTE_DISCOVERY_PORT,
+    REMOTE_SPECTRUM_PORT
 )
 
 # Indicator configuration constants - import with fallback for backward compatibility
@@ -908,6 +909,10 @@ class NetworkLevelServer:
         if not self.enabled or not self.sock:
             return
         
+        # Guard against None values (can occur during meter transitions or when data source has no data)
+        if left is None or right is None or mono is None:
+            return
+        
         try:
             # Pack as: sequence (uint32) + 3 floats (left, right, mono)
             data = struct.pack('<Ifff', self.seq, float(left), float(right), float(mono))
@@ -936,6 +941,189 @@ class NetworkLevelServer:
 
 
 # =============================================================================
+# NetworkSpectrumServer - Broadcasts spectrum FFT data for remote displays
+# =============================================================================
+class NetworkSpectrumServer:
+    """
+    Broadcasts spectrum analyzer data over UDP for remote display clients.
+    
+    Supports two modes:
+    - Standalone (read_pipe=True): Reads FFT data directly from the spectrum pipe.
+      Use this in 'server' mode where there's no local display.
+    - Injected (read_pipe=False): Receives data via set_bins() from SpectrumOutput.
+      Use this in 'server_local' mode to avoid pipe contention with local Spectrum.
+    
+    Packet format (variable size, little-endian):
+        - seq (uint32): Sequence number for loss detection
+        - size (uint16): Number of frequency bins
+        - bins (float32 * size): Frequency bin values (0-100)
+    
+    Default spectrum_size is 20 bins (matching peppyalsa default).
+    """
+    
+    SPECTRUM_PIPE_PATH = '/tmp/myfifosa'
+    
+    def __init__(self, port=5581, enabled=True, spectrum_size=20, read_pipe=True):
+        """Initialize the spectrum server.
+        
+        :param port: UDP port to broadcast on (default 5581)
+        :param enabled: Whether broadcasting is enabled
+        :param spectrum_size: Number of frequency bins (default 20)
+        :param read_pipe: If True, read from pipe directly; if False, use set_bins()
+        """
+        self.port = port
+        self.enabled = enabled
+        self.spectrum_size = spectrum_size
+        self.read_pipe = read_pipe
+        self.seq = 0
+        self.sock = None
+        self.pipe = None
+        self._last_error_time = 0
+        self._first_broadcast_logged = False
+        self._pipe_size = 4 * spectrum_size  # 4 bytes per bin (int32)
+        self._injected_bins = None  # For injected mode
+        self._switched_to_pipe = False  # Track if we switched from injected to pipe mode
+        
+        if self.enabled:
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                self.sock.setblocking(False)
+                mode_str = "pipe" if read_pipe else "injected"
+                log_debug(f"[NetworkSpectrumServer] Started on UDP port {port}, size={spectrum_size}, mode={mode_str}", "basic")
+            except Exception as e:
+                log_debug(f"[NetworkSpectrumServer] Failed to create socket: {e}", "basic")
+                self.sock = None
+                self.enabled = False
+            
+            # Only open pipe in standalone mode
+            if read_pipe:
+                self._open_pipe()
+    
+    def _open_pipe(self):
+        """Open the spectrum pipe for reading."""
+        try:
+            if os.path.exists(self.SPECTRUM_PIPE_PATH):
+                self.pipe = os.open(self.SPECTRUM_PIPE_PATH, os.O_RDONLY | os.O_NONBLOCK)
+                log_debug(f"[NetworkSpectrumServer] Opened pipe: {self.SPECTRUM_PIPE_PATH}", "basic")
+            else:
+                log_debug(f"[NetworkSpectrumServer] Pipe not found: {self.SPECTRUM_PIPE_PATH}", "basic")
+        except Exception as e:
+            log_debug(f"[NetworkSpectrumServer] Failed to open pipe: {e}", "basic")
+            self.pipe = None
+    
+    def _read_pipe_data(self):
+        """Read latest FFT data from the spectrum pipe.
+        
+        :return: List of frequency bin values, or None if no data
+        """
+        if self.pipe is None:
+            # Try to open pipe if it wasn't available at startup
+            if os.path.exists(self.SPECTRUM_PIPE_PATH):
+                self._open_pipe()
+            if self.pipe is None:
+                return None
+        
+        try:
+            # Read all available data, keep only the latest frame
+            data = None
+            while True:
+                try:
+                    tmp_data = os.read(self.pipe, self._pipe_size)
+                    if len(tmp_data) == self._pipe_size:
+                        data = tmp_data
+                    else:
+                        break
+                except BlockingIOError:
+                    break
+            
+            if data is None:
+                return None
+            
+            # Unpack as int32 values (same format peppyalsa writes)
+            # Each bin is a 4-byte little-endian integer
+            bins = []
+            for i in range(self.spectrum_size):
+                offset = i * 4
+                val = data[offset] + (data[offset + 1] << 8) + (data[offset + 2] << 16) + (data[offset + 3] << 24)
+                bins.append(float(val))
+            
+            return bins
+            
+        except Exception as e:
+            now = time.time()
+            if now - self._last_error_time > 10:
+                log_debug(f"[NetworkSpectrumServer] Pipe read error: {e}", "basic")
+                self._last_error_time = now
+            return None
+    
+    def set_bins(self, bins):
+        """Set spectrum bins for injected mode (called by SpectrumOutput).
+        
+        :param bins: List of frequency bin values
+        """
+        self._injected_bins = bins
+    
+    def broadcast(self):
+        """Broadcast spectrum data to all clients.
+        
+        In pipe mode, reads from pipe. In injected mode, uses set_bins() data.
+        """
+        if not self.enabled or not self.sock:
+            return
+        
+        # Get bins based on mode
+        if self.read_pipe:
+            bins = self._read_pipe_data()
+        else:
+            # In injected mode, keep broadcasting last known data
+            # Don't clear - this ensures consistent data even if set_bins()
+            # isn't called every frame
+            bins = self._injected_bins
+        
+        if bins is None:
+            return
+        
+        try:
+            # Pack as: sequence (uint32) + size (uint16) + bins (float32 * size)
+            num_bins = len(bins)
+            fmt = '<IH' + str(num_bins) + 'f'
+            data = struct.pack(fmt, self.seq, num_bins, *bins)
+            self.sock.sendto(data, ('<broadcast>', self.port))
+            self.seq = (self.seq + 1) & 0xFFFFFFFF
+            
+            # Log first successful broadcast
+            if not self._first_broadcast_logged:
+                log_debug(f"[NetworkSpectrumServer] First broadcast: {num_bins} bins", "basic")
+                self._first_broadcast_logged = True
+                
+        except BlockingIOError:
+            pass
+        except Exception as e:
+            now = time.time()
+            if now - self._last_error_time > 10:
+                log_debug(f"[NetworkSpectrumServer] Broadcast error: {e}", "basic")
+                self._last_error_time = now
+    
+    def stop(self):
+        """Stop the server and close resources."""
+        self.enabled = False
+        if self.pipe is not None:
+            try:
+                os.close(self.pipe)
+            except Exception:
+                pass
+            self.pipe = None
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+        log_debug("[NetworkSpectrumServer] Stopped", "basic")
+
+
+# =============================================================================
 # DiscoveryAnnouncer - Broadcasts server presence for client discovery
 # =============================================================================
 class DiscoveryAnnouncer:
@@ -947,6 +1135,7 @@ class DiscoveryAnnouncer:
             "service": "peppy_level_server",
             "version": 1,
             "level_port": 5580,
+            "spectrum_port": 5581,
             "volumio_port": 3000,
             "hostname": "volumio",
             "config_version": "a1b2c3d4"
@@ -958,12 +1147,13 @@ class DiscoveryAnnouncer:
     detect and re-fetch updated config.
     """
     
-    def __init__(self, discovery_port=5579, level_port=5580, volumio_port=3000, 
-                 interval=5.0, enabled=True, config_path=None):
+    def __init__(self, discovery_port=5579, level_port=5580, spectrum_port=5581,
+                 volumio_port=3000, interval=5.0, enabled=True, config_path=None):
         """Initialize the discovery announcer.
         
         :param discovery_port: UDP port for discovery broadcasts (default 5579)
         :param level_port: Level data port to advertise (default 5580)
+        :param spectrum_port: Spectrum data port to advertise (default 5581)
         :param volumio_port: Volumio socket.io port to advertise (default 3000)
         :param interval: Seconds between announcements (default 5.0)
         :param enabled: Whether announcements are enabled
@@ -971,6 +1161,7 @@ class DiscoveryAnnouncer:
         """
         self.discovery_port = discovery_port
         self.level_port = level_port
+        self.spectrum_port = spectrum_port
         self.volumio_port = volumio_port
         self.interval = interval
         self.enabled = enabled
@@ -1013,6 +1204,7 @@ class DiscoveryAnnouncer:
             "service": "peppy_level_server",
             "version": 1,
             "level_port": self.level_port,
+            "spectrum_port": self.spectrum_port,
             "volumio_port": self.volumio_port,
             "hostname": self.hostname,
             "config_version": self._config_version
@@ -2777,11 +2969,14 @@ class CallBack:
             if not meter_section_volumio[METER_VISIBLE]:
                 meter.stop()
             
-            # Start spectrum if visible
+            # Start spectrum if visible (but not if already set by remote client)
             if meter_section_volumio[SPECTRUM_VISIBLE]:
-                init_spectrum_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
-                self.spectrum_output = SpectrumOutput(self.util, self.meter_config_volumio, CurDir)
-                self.spectrum_output.start()
+                # Check if spectrum_output was pre-injected (e.g., RemoteSpectrumOutput)
+                # If so, don't create a new SpectrumOutput - use the injected one
+                if self.spectrum_output is None:
+                    init_spectrum_debug(DEBUG_LEVEL_CURRENT, DEBUG_TRACE)
+                    self.spectrum_output = SpectrumOutput(self.util, self.meter_config_volumio, CurDir)
+                    self.spectrum_output.start()
         
         # Volume fade-in
         meter.set_volume(0.0)
@@ -3068,18 +3263,29 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
     level_server = None
     discovery_announcer = None
     
+    spectrum_server = None
+    
     if remote_enabled:
         level_port = meter_config_volumio.get(REMOTE_SERVER_PORT, 5580)
         discovery_port = meter_config_volumio.get(REMOTE_DISCOVERY_PORT, 5579)
+        spectrum_port = meter_config_volumio.get(REMOTE_SPECTRUM_PORT, 5581)
         
         # Start level server
         level_server = NetworkLevelServer(port=level_port, enabled=True)
+        
+        # Start spectrum server
+        # In server mode (headless): read from pipe directly (no local display to conflict)
+        # In server_local mode: use injected mode initially, will get data from SpectrumOutput
+        #                       if no local spectrum is active, will switch to pipe mode dynamically
+        read_pipe_mode = (remote_mode == "server")
+        spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=read_pipe_mode)
         
         # Start discovery announcer (includes config version for change detection)
         config_path = os.path.join(PeppyPath, 'config.txt')
         discovery_announcer = DiscoveryAnnouncer(
             discovery_port=discovery_port,
             level_port=level_port,
+            spectrum_port=spectrum_port,
             volumio_port=3000,
             interval=5.0,
             enabled=True,
@@ -3278,8 +3484,12 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
         
         # Draw static assets and initial meter state
         draw_static_assets(mc)
-        pm.meter.run()
+        pm.meter.run()  # Just runs meter animation, does NOT trigger callbacks
         pg.display.update()
+        
+        # Note: SpectrumOutput is created by pm.meter.start() -> callback_start -> peppy_meter_start()
+        # which happens BEFORE overlay_init_for_meter() is called (see line 3577).
+        # We tap into callback.spectrum_output for network broadcast.
         
         # Store handler in overlay state
         overlay_state = {
@@ -3576,6 +3786,41 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                             log_debug(f"[NetworkLevelServer] Broadcast exception: {e}", "basic")
                             level_server._logged_error = True
                 
+                # Broadcast spectrum data to remote clients (handler path)
+                if spectrum_server and spectrum_server.enabled:
+                    # In injected mode, get bins from SpectrumOutput (which reads the pipe)
+                    if not spectrum_server.read_pipe:
+                        bins = None
+                        source = "none"
+                        
+                        # First try: SpectrumOutput (for handler-based meters with spectrum overlay)
+                        if callback.spectrum_output:
+                            bins = callback.spectrum_output.get_current_bins()
+                            source = "spectrum_output"
+                        
+                        # Second try: Direct from pm.meter if it IS a Spectrum (spectrum-only meters)
+                        # This avoids pipe contention when the meter itself is the spectrum renderer
+                        if not bins or all(b == 0 for b in bins):
+                            if hasattr(pm.meter, '_prev_bar_heights') and pm.meter._prev_bar_heights:
+                                meter_bins = list(pm.meter._prev_bar_heights)
+                                if any(b > 0 for b in meter_bins):
+                                    bins = meter_bins
+                                    source = "pm.meter"
+                                    if not hasattr(spectrum_server, '_logged_meter_fallback'):
+                                        log_debug("[NetworkSpectrumServer] Using pm.meter._prev_bar_heights as source", "basic")
+                                        spectrum_server._logged_meter_fallback = True
+                        
+                        if bins:
+                            spectrum_server.set_bins(bins)
+                        elif not callback.spectrum_output:
+                            # No local spectrum active - switch to pipe mode
+                            if not spectrum_server._switched_to_pipe:
+                                log_debug("[NetworkSpectrumServer] No local spectrum, switching to pipe mode", "basic")
+                                spectrum_server.read_pipe = True
+                                spectrum_server._open_pipe()
+                                spectrum_server._switched_to_pipe = True
+                    spectrum_server.broadcast()
+                
                 continue
         
         # Handle events
@@ -3613,6 +3858,39 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                     log_debug(f"[NetworkLevelServer] Broadcast exception: {e}", "basic")
                     level_server._logged_error = True
         
+        # Broadcast spectrum data to remote clients (if server mode enabled)
+        # NOTE: This is the NON-HANDLER path - only runs when no handler is active
+        if spectrum_server and spectrum_server.enabled:
+            # In injected mode, get bins from SpectrumOutput (which reads the pipe)
+            if not spectrum_server.read_pipe:
+                bins = None
+                
+                # First try: SpectrumOutput (for handler-based meters with spectrum overlay)
+                if callback.spectrum_output:
+                    bins = callback.spectrum_output.get_current_bins()
+                
+                # Second try: Direct from pm.meter if it IS a Spectrum (spectrum-only meters)
+                # This avoids pipe contention when the meter itself is the spectrum renderer
+                if not bins or all(b == 0 for b in bins):
+                    if hasattr(pm.meter, '_prev_bar_heights') and pm.meter._prev_bar_heights:
+                        meter_bins = list(pm.meter._prev_bar_heights)
+                        if any(b > 0 for b in meter_bins):
+                            bins = meter_bins
+                            if not hasattr(spectrum_server, '_logged_meter_fallback'):
+                                log_debug("[NetworkSpectrumServer] Using pm.meter._prev_bar_heights as source", "basic")
+                                spectrum_server._logged_meter_fallback = True
+                
+                if bins:
+                    spectrum_server.set_bins(bins)
+                elif not callback.spectrum_output:
+                    # No local spectrum active - switch to pipe mode
+                    if not spectrum_server._switched_to_pipe:
+                        log_debug("[NetworkSpectrumServer] No local spectrum, switching to pipe mode", "basic")
+                        spectrum_server.read_pipe = True
+                        spectrum_server._open_pipe()
+                        spectrum_server._switched_to_pipe = True
+            spectrum_server.broadcast()
+        
         clock.tick(MAIN_LOOP_FRAME_RATE)
         
         # Frame timing trace
@@ -3628,6 +3906,8 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                 log_debug("Exiting for config reload - stopping watchers only", "basic")
                 if level_server:
                     level_server.stop()
+                if spectrum_server:
+                    spectrum_server.stop()
                 if discovery_announcer:
                     discovery_announcer.stop()
                 final_handler = overlay_state.get("handler") if overlay_state else None
@@ -3665,6 +3945,9 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
     if level_server:
         log_debug("  Stopping level server", "verbose")
         level_server.stop()
+    if spectrum_server:
+        log_debug("  Stopping spectrum server", "verbose")
+        spectrum_server.stop()
     if discovery_announcer:
         log_debug("  Stopping discovery announcer", "verbose")
         discovery_announcer.stop()

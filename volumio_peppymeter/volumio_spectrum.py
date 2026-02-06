@@ -150,7 +150,13 @@ class SpectrumOutput(Thread):
 
 
     def update(self):
-        """ Update method, called from meters display output """
+        """ Update method, called from meters display output 
+        
+        IMPORTANT: We call spectrum.draw() directly instead of dirty_draw_update()
+        because dirty_draw_update() calls pygame.display.update() internally,
+        which conflicts with the parent's display update cycle and causes flicker.
+        The parent (volumio_peppymeter) handles display updates.
+        """
         
         if hasattr(self, 'sp') and self.sp is not None:
             # if background is ready
@@ -159,14 +165,68 @@ class SpectrumOutput(Thread):
                 prev_clip = self.util.pygame_screen.get_clip()
                 self.util.pygame_screen.set_clip(self.util.screen_rect)
                 
-                self.sp.dirty_draw_update()
+                # Clean dirty areas and draw WITHOUT calling display.update()
+                # This prevents double display updates that cause flicker
+                if hasattr(self.sp, '_dirty_rects') and self.sp._dirty_rects:
+                    for rect in self.sp._dirty_rects:
+                        self.sp.draw_area(rect)
+                    self.sp._dirty_rects = []
+                self.sp.draw()
                 
                 # Restore previous clip
                 self.util.pygame_screen.set_clip(prev_clip)
                 
                 # TRACE: Log update (only occasionally to reduce noise)
                 if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("spectrum", False):
-                    _log_debug(f"[Spectrum] OUTPUT: dirty_draw_update, clip={self.util.screen_rect}", "trace", "spectrum")
+                    _log_debug(f"[Spectrum] OUTPUT: draw (no display.update), clip={self.util.screen_rect}", "trace", "spectrum")
+    
+    def get_current_bins(self):
+        """Get current spectrum bin values for network broadcast.
+        
+        Returns the bar heights which represent the processed FFT values.
+        These are scaled/normalized values suitable for remote display.
+        
+        :return: List of bin values, or None if not available
+        """
+        if not hasattr(self, 'sp') or self.sp is None:
+            _log_debug("[Spectrum] get_current_bins: sp is None", "verbose")
+            return None
+        
+        # Read from components directly - this is the most reliable source
+        # as it reflects the actual visual state being rendered
+        if hasattr(self.sp, 'components') and hasattr(self.sp, 'config'):
+            try:
+                size = self.sp.config.get('size', 30)
+                heights = []
+                for i in range(size):
+                    idx = i + 1  # Components are 1-indexed (0 is background)
+                    if idx < len(self.sp.components):
+                        comp = self.sp.components[idx]
+                        if comp and comp.bounding_box:
+                            heights.append(float(comp.bounding_box.h))
+                        else:
+                            heights.append(0.0)
+                    else:
+                        heights.append(0.0)
+                
+                # Only log first successful retrieval
+                if not hasattr(self, '_logged_first_bins'):
+                    _log_debug(f"[Spectrum] get_current_bins: returning {len(heights)} bins from components", "basic")
+                    self._logged_first_bins = True
+                return heights
+            except Exception as e:
+                _log_debug(f"[Spectrum] get_current_bins: error reading components: {e}", "verbose")
+        
+        # Fallback to _prev_bar_heights if components not available
+        if hasattr(self.sp, '_prev_bar_heights') and self.sp._prev_bar_heights:
+            heights = list(self.sp._prev_bar_heights)
+            if not hasattr(self, '_logged_first_bins'):
+                _log_debug(f"[Spectrum] get_current_bins: returning {len(heights)} bins from _prev_bar_heights", "basic")
+                self._logged_first_bins = True
+            return heights
+        
+        _log_debug("[Spectrum] get_current_bins: no data source available", "verbose")
+        return None
 
     
     def stop_thread(self):

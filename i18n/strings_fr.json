@@ -215,6 +215,8 @@
     "REMOTE_SERVER_PORT":"Port données de niveau",
     "REMOTE_SERVER_PORT_DOC":"Port UDP pour diffuser les données de niveau audio vers les affichages distants.<br /><br /><b>Par défaut: 5580</b><br /><br />Modifier si ce port entre en conflit avec d'autres services.",
     "REMOTE_DISCOVERY_PORT":"Port de découverte",
-    "REMOTE_DISCOVERY_PORT_DOC":"Port UDP pour les diffusions de découverte automatique.<br /><br /><b>Par défaut: 5579</b><br /><br />Les clients distants écoutent sur ce port pour trouver automatiquement le serveur."
+    "REMOTE_DISCOVERY_PORT_DOC":"Port UDP pour les diffusions de découverte automatique.<br /><br /><b>Par défaut: 5579</b><br /><br />Les clients distants écoutent sur ce port pour trouver automatiquement le serveur.",
+    "REMOTE_SPECTRUM_PORT":"Port spectre",
+    "REMOTE_SPECTRUM_PORT_DOC":"Port UDP pour diffuser les données de l'analyseur de spectre vers les affichages distants.<br /><br /><b>Par défaut: 5581</b><br /><br />Modifier si ce port entre en conflit avec d'autres services."
   }
 }

@@ -115,6 +115,7 @@ peppyScreensaver.prototype.onStart = function() {
             self.config.set('remoteServerMode', peppy_config.current['remote.server.mode'] || 'server_local');
             self.config.set('remoteServerPort', parseInt(peppy_config.current['remote.server.port'], 10) || 5580);
             self.config.set('remoteDiscoveryPort', parseInt(peppy_config.current['remote.discovery.port'], 10) || 5579);
+            self.config.set('remoteSpectrumPort', parseInt(peppy_config.current['remote.spectrum.port'], 10) || 5581);
         }
     }
 
@@ -901,6 +902,13 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 remoteDiscoveryPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.discovery.port'], 10) || 5579) : 5579;
             }
             uiconf.sections[9].content[3].value = remoteDiscoveryPort;
+            
+            // spectrum port
+            var remoteSpectrumPort = self.config.get('remoteSpectrumPort');
+            if (remoteSpectrumPort === undefined) {
+                remoteSpectrumPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.spectrum.port'], 10) || 5581) : 5581;
+            }
+            uiconf.sections[9].content[4].value = remoteSpectrumPort;
             
         } else {
             self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));            
@@ -1727,6 +1735,12 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
       noChanges = false;
   }
   
+  var remoteSpectrumPort = self.minmax('remote_spectrum_port', confData.remoteSpectrumPort, [1024, 65535, 5581]);
+  if (self.config.get('remoteSpectrumPort') !== remoteSpectrumPort) {
+      self.config.set('remoteSpectrumPort', remoteSpectrumPort);
+      noChanges = false;
+  }
+  
   // Also update config.txt for Python/runtime
   if (fs.existsSync(PeppyConf)){
     var remoteServerEnabledStr = remoteServerEnabled ? 'true' : 'false';
@@ -1741,6 +1755,9 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
     }
     if (peppy_config.current['remote.discovery.port'] != remoteDiscoveryPort) {
         peppy_config.current['remote.discovery.port'] = remoteDiscoveryPort;
+    }
+    if (peppy_config.current['remote.spectrum.port'] != remoteSpectrumPort) {
+        peppy_config.current['remote.spectrum.port'] = remoteSpectrumPort;
     }
     
     if (!noChanges) {
