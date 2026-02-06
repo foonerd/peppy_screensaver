@@ -1830,10 +1830,16 @@ peppyScreensaver.prototype.getRemoteConfig = function () {
     var configContent = fs.readFileSync(PeppyConf, 'utf8');
     var configVersion = self.updateConfigVersion();
     
+    // Include persist settings for remote clients to manage their own persist file
+    var persistDuration = parseInt(self.config.get('persist_duration'), 10) || 0;
+    var persistDisplay = self.config.get('persist_display') || 'freeze';
+    
     defer.resolve({
       success: true,
       version: configVersion,
-      config: configContent
+      config: configContent,
+      persist_duration: persistDuration,
+      persist_display: persistDisplay
     });
   } catch (err) {
     self.logger.error(id + 'Failed to read config for remote client: ' + err.message);

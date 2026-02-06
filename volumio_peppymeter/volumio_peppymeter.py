@@ -4103,6 +4103,11 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             last_status = current_status
             idle_frame_skip = 0
         
+        # PERSIST MANAGER: Check for persist file management (remote client feature)
+        # If callback has a persist_manager, let it handle /tmp/peppy_persist based on status
+        if hasattr(callback, 'persist_manager') and callback.persist_manager:
+            callback.persist_manager.check_metadata_status(last_metadata)
+        
         if current_status in ("stop", "pause", ""):
             # When idle, skip every other frame to reduce CPU
             idle_frame_skip += 1
