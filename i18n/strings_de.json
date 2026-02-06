@@ -221,6 +221,8 @@
     "REMOTE_SERVER_PORT":"Meter-Daten-Port",
     "REMOTE_SERVER_PORT_DOC":"UDP-Port zum Streamen von Audio-Pegeldaten an Remote-Anzeigen.<br /><br /><b>Standard: 5580</b><br /><br />Ändern, wenn dieser Port mit anderen Diensten kollidiert.",
     "REMOTE_SPECTRUM_PORT":"Spektrum-Daten-Port",
-    "REMOTE_SPECTRUM_PORT_DOC":"UDP-Port zum Streamen von Spektrumanalysator-Daten an Remote-Anzeigen.<br /><br /><b>Standard: 5581</b><br /><br />Ändern, wenn dieser Port mit anderen Diensten kollidiert."
+    "REMOTE_SPECTRUM_PORT_DOC":"UDP-Port zum Streamen von Spektrumanalysator-Daten an Remote-Anzeigen.<br /><br /><b>Standard: 5581</b><br /><br />Ändern, wenn dieser Port mit anderen Diensten kollidiert.",
+    "CONFIG_SYNC_INTERVAL":"Konfigurationssync-Intervall (Sekunden)",
+    "CONFIG_SYNC_INTERVAL_DOC":"Wie oft auf Konfigurationsänderungen geprüft und Remote-Clients benachrichtigt werden sollen.<br /><br /><b>Standard: 1 Sekunde</b><br /><br />Niedrigere Werte bedeuten, dass Remote-Clients Änderungen schneller erkennen. Bereich: 1-60 Sekunden."
   }
 }

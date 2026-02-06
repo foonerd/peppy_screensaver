@@ -868,6 +868,13 @@ peppyScreensaver.prototype.getUIConfig = function() {
             }
             uiconf.sections[7].content[4].value = remoteSpectrumPort;
             
+            // config sync interval
+            var configSyncInterval = self.config.get('configSyncInterval');
+            if (configSyncInterval === undefined) {
+                configSyncInterval = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.config.sync.interval'], 10) || 1) : 1;
+            }
+            uiconf.sections[7].content[5].value = configSyncInterval;
+            
             // section 8 - Debug settings -----------------------------
             // debug level
             var debugLevel = peppy_config.current['debug.level'] || 'off';
@@ -1744,6 +1751,12 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
       noChanges = false;
   }
   
+  var configSyncInterval = self.minmax('config_sync_interval', confData.configSyncInterval, [1, 60, 1]);
+  if (self.config.get('configSyncInterval') !== configSyncInterval) {
+      self.config.set('configSyncInterval', configSyncInterval);
+      noChanges = false;
+  }
+  
   // Also update config.txt for Python/runtime
   if (fs.existsSync(PeppyConf)){
     var remoteServerEnabledStr = remoteServerEnabled ? 'true' : 'false';
@@ -1761,6 +1774,9 @@ peppyScreensaver.prototype.saveRemoteConf = function (confData) {
     }
     if (peppy_config.current['remote.spectrum.port'] != remoteSpectrumPort) {
         peppy_config.current['remote.spectrum.port'] = remoteSpectrumPort;
+    }
+    if (peppy_config.current['remote.config.sync.interval'] != configSyncInterval) {
+        peppy_config.current['remote.config.sync.interval'] = configSyncInterval;
     }
     
     if (!noChanges) {

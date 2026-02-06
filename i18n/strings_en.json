@@ -223,6 +223,8 @@
     "REMOTE_SERVER_PORT":"Meters data port",
     "REMOTE_SERVER_PORT_DOC":"UDP port for streaming audio level data to remote displays.<br /><br /><b>Default: 5580</b><br /><br />Change if this port conflicts with other services.",
     "REMOTE_SPECTRUM_PORT":"Spectrum data port",
-    "REMOTE_SPECTRUM_PORT_DOC":"UDP port for streaming spectrum analyzer data to remote displays.<br /><br /><b>Default: 5581</b><br /><br />Change if this port conflicts with other services."
+    "REMOTE_SPECTRUM_PORT_DOC":"UDP port for streaming spectrum analyzer data to remote displays.<br /><br /><b>Default: 5581</b><br /><br />Change if this port conflicts with other services.",
+    "CONFIG_SYNC_INTERVAL":"Config sync interval (seconds)",
+    "CONFIG_SYNC_INTERVAL_DOC":"How often to check for config changes and notify remote clients.<br /><br /><b>Default: 1 second</b><br /><br />Lower values mean remote clients detect changes faster. Range: 1-60 seconds."
   }
 }
