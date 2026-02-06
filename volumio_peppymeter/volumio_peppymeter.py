@@ -338,6 +338,8 @@ DEBUG_TRACE = {
     "init": False,
     "fade": False,
     "frame": False,
+    "remote": False,
+    "remote.packets": False,
 }
 
 # Profiling settings - controlled by config profiling.* settings
@@ -869,11 +871,20 @@ class NetworkLevelServer:
         - right (float32): Right channel level (0-100)
         - mono (float32): Mono level (0-100)
     
+    Client Registration:
+        - New clients (v2+) send JSON registration packets
+        - Server tracks registered clients for diagnostics
+        - Legacy clients (v1) work via broadcast but aren't tracked
+        - Unknown traffic is logged for network debugging
+    
     Modes:
         - 'local': Server disabled, normal local display only
         - 'server': Server enabled, no local display (headless)
         - 'server_local': Server enabled AND local display
     """
+    
+    HEARTBEAT_TIMEOUT = 60  # Seconds before client considered stale
+    STATS_INTERVAL = 10     # Seconds between verbose stats logging
     
     def __init__(self, port=5580, enabled=True):
         """Initialize the level server.
@@ -886,6 +897,15 @@ class NetworkLevelServer:
         self.seq = 0
         self.sock = None
         self._last_error_time = 0
+        self._last_stats_time = 0
+        self._packets_sent = 0
+        self._bytes_sent = 0
+        
+        # Client tracking for v2+ clients that send registration
+        # Format: {ip: {"client_id": str, "subscriptions": list, "last_seen": float, "version": int}}
+        self._clients = {}
+        self._unknown_traffic = {}  # {ip: {"count": int, "last_seen": float}}
+        self._local_ips = set()  # Our own IPs to filter out self-received broadcasts
         
         if self.enabled:
             try:
@@ -893,11 +913,162 @@ class NetworkLevelServer:
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
                 # Set non-blocking to avoid stalling the render loop
                 self.sock.setblocking(False)
-                log_debug(f"[NetworkLevelServer] Started on UDP port {port}", "basic")
+                # Bind to receive registration packets from clients
+                self.sock.bind(('', port))
+                
+                # Get our local IPs to filter self-received broadcasts
+                try:
+                    hostname = socket.gethostname()
+                    self._local_ips.add('127.0.0.1')
+                    self._local_ips.add(socket.gethostbyname(hostname))
+                    # Also try to get all interface IPs
+                    import subprocess
+                    result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        for ip in result.stdout.strip().split():
+                            self._local_ips.add(ip)
+                except Exception:
+                    pass
+                
+                log_debug(f"[REMOTE:METERS] Started on UDP port {port}", "basic")
+                log_debug(f"[REMOTE:METERS] Local IPs (filtered): {self._local_ips}", "trace", "remote")
+                log_debug(f"[REMOTE:METERS] Listening for client registrations", "trace", "remote")
             except Exception as e:
-                log_debug(f"[NetworkLevelServer] Failed to create socket: {e}", "basic")
+                log_debug(f"[REMOTE:METERS] Failed to create socket: {e}", "basic")
                 self.sock = None
                 self.enabled = False
+    
+    def _process_incoming(self):
+        """Check for and process incoming registration/heartbeat packets."""
+        if not self.sock:
+            return
+        
+        try:
+            while True:
+                try:
+                    data, addr = self.sock.recvfrom(1024)
+                    self._handle_packet(data, addr)
+                except BlockingIOError:
+                    break  # No more data
+        except Exception as e:
+            log_debug(f"[REMOTE:METERS] Error processing incoming: {e}", "verbose")
+    
+    def _handle_packet(self, data, addr):
+        """Handle an incoming packet from a client or unknown source."""
+        ip = addr[0]
+        
+        # Ignore our own broadcast packets (we receive them back)
+        if ip in self._local_ips:
+            return
+        
+        try:
+            msg = json.loads(data.decode('utf-8'))
+            msg_type = msg.get('type', '')
+            
+            if msg_type == 'register':
+                self._handle_registration(ip, msg)
+            elif msg_type == 'heartbeat':
+                self._handle_heartbeat(ip, msg)
+            elif msg_type == 'unregister':
+                self._handle_unregister(ip, msg)
+            else:
+                self._log_unknown(ip, addr[1], data, "unknown message type")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._log_unknown(ip, addr[1], data, "not valid JSON")
+    
+    def _handle_registration(self, ip, msg):
+        """Register a new client."""
+        client_id = msg.get('client_id', f'unknown_{ip}')
+        subscriptions = msg.get('subscribe', ['meters'])
+        version = msg.get('version', 1)
+        
+        is_new = ip not in self._clients
+        self._clients[ip] = {
+            'client_id': client_id,
+            'subscriptions': subscriptions,
+            'last_seen': time.time(),
+            'version': version
+        }
+        
+        # Remove from unknown traffic if previously seen
+        if ip in self._unknown_traffic:
+            del self._unknown_traffic[ip]
+        
+        subs_str = '+'.join(subscriptions)
+        if is_new:
+            log_debug(f"[REMOTE:METERS] Client registered: {ip} \"{client_id}\" ({subs_str}) v{version}", "basic")
+        else:
+            log_debug(f"[REMOTE:METERS] Client re-registered: {ip} \"{client_id}\" ({subs_str})", "trace", "remote")
+    
+    def _handle_heartbeat(self, ip, msg):
+        """Update client last-seen timestamp."""
+        if ip in self._clients:
+            self._clients[ip]['last_seen'] = time.time()
+            client_id = self._clients[ip]['client_id']
+            log_debug(f"[REMOTE:METERS] Heartbeat from {ip} \"{client_id}\"", "trace", "remote")
+        else:
+            # Heartbeat from unregistered client - treat as registration
+            self._handle_registration(ip, msg)
+    
+    def _handle_unregister(self, ip, msg):
+        """Remove a client cleanly."""
+        if ip in self._clients:
+            client_id = self._clients[ip]['client_id']
+            del self._clients[ip]
+            log_debug(f"[REMOTE:METERS] Client unregistered: {ip} \"{client_id}\"", "basic")
+    
+    def _log_unknown(self, ip, port, data, reason):
+        """Log unknown traffic for debugging."""
+        now = time.time()
+        if ip not in self._unknown_traffic:
+            self._unknown_traffic[ip] = {'count': 0, 'last_seen': 0}
+        
+        self._unknown_traffic[ip]['count'] += 1
+        self._unknown_traffic[ip]['last_seen'] = now
+        
+        # Log at trace level with packet details
+        hex_preview = data[:16].hex() if len(data) > 0 else ''
+        log_debug(f"[REMOTE:METERS] Unknown packet from {ip}:{port} ({len(data)} bytes): {reason}", "trace", "remote")
+        log_debug(f"[REMOTE:METERS]   Data: {hex_preview}...", "trace", "remote.packets")
+    
+    def _check_timeouts(self):
+        """Remove clients that haven't sent heartbeat within timeout."""
+        now = time.time()
+        stale = []
+        for ip, info in self._clients.items():
+            if now - info['last_seen'] > self.HEARTBEAT_TIMEOUT:
+                stale.append(ip)
+        
+        for ip in stale:
+            client_id = self._clients[ip]['client_id']
+            del self._clients[ip]
+            log_debug(f"[REMOTE:METERS] Client timeout: {ip} \"{client_id}\" (no heartbeat for {self.HEARTBEAT_TIMEOUT}s)", "basic")
+    
+    def _log_stats(self):
+        """Log periodic statistics at verbose level."""
+        now = time.time()
+        if now - self._last_stats_time < self.STATS_INTERVAL:
+            return
+        
+        self._last_stats_time = now
+        elapsed = self.STATS_INTERVAL
+        pps = self._packets_sent / elapsed if elapsed > 0 else 0
+        bps = self._bytes_sent / elapsed if elapsed > 0 else 0
+        
+        client_count = len(self._clients)
+        unknown_count = len(self._unknown_traffic)
+        unknown_packets = sum(u['count'] for u in self._unknown_traffic.values())
+        
+        log_debug(f"[REMOTE:METERS] Stats: {pps:.0f} pkt/s, {bps:.0f} bytes/s, {client_count} registered clients", "verbose")
+        if unknown_count > 0:
+            # List the actual IPs with packet counts
+            ip_details = ', '.join(f"{ip}({info['count']})" for ip, info in self._unknown_traffic.items())
+            log_debug(f"[REMOTE:METERS] Unknown traffic on port {self.port}: {unknown_packets} packets from {unknown_count} IPs: {ip_details}", "verbose")
+        
+        # Reset counters
+        self._packets_sent = 0
+        self._bytes_sent = 0
+        self._unknown_traffic.clear()
     
     def broadcast(self, left, right, mono):
         """Broadcast current level data to all clients.
@@ -909,6 +1080,15 @@ class NetworkLevelServer:
         if not self.enabled or not self.sock:
             return
         
+        # Process any incoming registration packets
+        self._process_incoming()
+        
+        # Check for stale clients periodically
+        self._check_timeouts()
+        
+        # Log stats at verbose level
+        self._log_stats()
+        
         # Guard against None values (can occur during meter transitions or when data source has no data)
         if left is None or right is None or mono is None:
             return
@@ -917,6 +1097,14 @@ class NetworkLevelServer:
             # Pack as: sequence (uint32) + 3 floats (left, right, mono)
             data = struct.pack('<Ifff', self.seq, float(left), float(right), float(mono))
             self.sock.sendto(data, ('<broadcast>', self.port))
+            
+            # Update stats
+            self._packets_sent += 1
+            self._bytes_sent += len(data)
+            
+            # Trace logging for per-packet details
+            log_debug(f"[REMOTE:METERS] TX #{self.seq} L:{left:.1f} R:{right:.1f} M:{mono:.1f} ({len(data)} bytes)", "trace", "remote.packets")
+            
             self.seq = (self.seq + 1) & 0xFFFFFFFF  # Wrap at 32-bit
         except BlockingIOError:
             # Non-blocking socket would block - skip this frame
@@ -925,11 +1113,20 @@ class NetworkLevelServer:
             # Rate-limit error logging
             now = time.time()
             if now - self._last_error_time > 10:
-                log_debug(f"[NetworkLevelServer] Broadcast error: {e}", "basic")
+                log_debug(f"[REMOTE:METERS] Broadcast error: {e}", "basic")
                 self._last_error_time = now
+    
+    def get_client_count(self):
+        """Return number of registered clients."""
+        return len(self._clients)
+    
+    def get_clients(self):
+        """Return copy of client registry for diagnostics."""
+        return dict(self._clients)
     
     def stop(self):
         """Stop the server and close the socket."""
+        client_count = len(self._clients)
         self.enabled = False
         if self.sock:
             try:
@@ -937,7 +1134,7 @@ class NetworkLevelServer:
             except Exception:
                 pass
             self.sock = None
-        log_debug("[NetworkLevelServer] Stopped", "basic")
+        log_debug(f"[REMOTE:METERS] Stopped ({client_count} clients were connected)", "basic")
 
 
 # =============================================================================
@@ -962,6 +1159,7 @@ class NetworkSpectrumServer:
     """
     
     SPECTRUM_PIPE_PATH = '/tmp/myfifosa'
+    STATS_INTERVAL = 10  # Seconds between verbose stats logging
     
     def __init__(self, port=5581, enabled=True, spectrum_size=20, read_pipe=True):
         """Initialize the spectrum server.
@@ -979,20 +1177,41 @@ class NetworkSpectrumServer:
         self.sock = None
         self.pipe = None
         self._last_error_time = 0
+        self._last_stats_time = 0
+        self._packets_sent = 0
+        self._bytes_sent = 0
         self._first_broadcast_logged = False
         self._pipe_size = 4 * spectrum_size  # 4 bytes per bin (int32)
         self._injected_bins = None  # For injected mode
         self._switched_to_pipe = False  # Track if we switched from injected to pipe mode
+        self._unknown_traffic = {}  # {ip: {"count": int, "last_seen": float}}
+        self._local_ips = set()
+        
+        # Get local IPs for filtering self-traffic
+        try:
+            self._local_ips.add('127.0.0.1')
+            hostname = socket.gethostname()
+            self._local_ips.add(socket.gethostbyname(hostname))
+            import subprocess
+            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                for ip in result.stdout.strip().split():
+                    self._local_ips.add(ip)
+        except Exception:
+            pass
         
         if self.enabled:
             try:
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.sock.setblocking(False)
+                # Bind to receive incoming traffic for monitoring
+                self.sock.bind(('', port))
                 mode_str = "pipe" if read_pipe else "injected"
-                log_debug(f"[NetworkSpectrumServer] Started on UDP port {port}, size={spectrum_size}, mode={mode_str}", "basic")
+                log_debug(f"[REMOTE:SPECTRUM] Started on UDP port {port}, size={spectrum_size}, mode={mode_str}", "basic")
             except Exception as e:
-                log_debug(f"[NetworkSpectrumServer] Failed to create socket: {e}", "basic")
+                log_debug(f"[REMOTE:SPECTRUM] Failed to create socket: {e}", "basic")
                 self.sock = None
                 self.enabled = False
             
@@ -1005,11 +1224,12 @@ class NetworkSpectrumServer:
         try:
             if os.path.exists(self.SPECTRUM_PIPE_PATH):
                 self.pipe = os.open(self.SPECTRUM_PIPE_PATH, os.O_RDONLY | os.O_NONBLOCK)
-                log_debug(f"[NetworkSpectrumServer] Opened pipe: {self.SPECTRUM_PIPE_PATH}", "basic")
+                log_debug(f"[REMOTE:SPECTRUM] Opened pipe: {self.SPECTRUM_PIPE_PATH}", "basic")
+                log_debug(f"[REMOTE:SPECTRUM] Pipe ready for FFT data ({self.spectrum_size} bins)", "trace", "remote")
             else:
-                log_debug(f"[NetworkSpectrumServer] Pipe not found: {self.SPECTRUM_PIPE_PATH}", "basic")
+                log_debug(f"[REMOTE:SPECTRUM] Pipe not found: {self.SPECTRUM_PIPE_PATH}", "basic")
         except Exception as e:
-            log_debug(f"[NetworkSpectrumServer] Failed to open pipe: {e}", "basic")
+            log_debug(f"[REMOTE:SPECTRUM] Failed to open pipe: {e}", "basic")
             self.pipe = None
     
     def _read_pipe_data(self):
@@ -1027,11 +1247,13 @@ class NetworkSpectrumServer:
         try:
             # Read all available data, keep only the latest frame
             data = None
+            frames_read = 0
             while True:
                 try:
                     tmp_data = os.read(self.pipe, self._pipe_size)
                     if len(tmp_data) == self._pipe_size:
                         data = tmp_data
+                        frames_read += 1
                     else:
                         break
                 except BlockingIOError:
@@ -1048,12 +1270,16 @@ class NetworkSpectrumServer:
                 val = data[offset] + (data[offset + 1] << 8) + (data[offset + 2] << 16) + (data[offset + 3] << 24)
                 bins.append(float(val))
             
+            # Log pipe read details at trace level
+            if frames_read > 1:
+                log_debug(f"[REMOTE:SPECTRUM] Pipe read: {frames_read} frames buffered, using latest", "trace", "remote.packets")
+            
             return bins
             
         except Exception as e:
             now = time.time()
             if now - self._last_error_time > 10:
-                log_debug(f"[NetworkSpectrumServer] Pipe read error: {e}", "basic")
+                log_debug(f"[REMOTE:SPECTRUM] Pipe read error: {e}", "basic")
                 self._last_error_time = now
             return None
     
@@ -1064,6 +1290,61 @@ class NetworkSpectrumServer:
         """
         self._injected_bins = bins
     
+    def _process_incoming(self):
+        """Check for and log any incoming traffic on the spectrum port."""
+        if not self.sock:
+            return
+        
+        try:
+            while True:
+                try:
+                    data, addr = self.sock.recvfrom(1024)
+                    ip = addr[0]
+                    
+                    # Ignore our own broadcasts
+                    if ip in self._local_ips:
+                        continue
+                    
+                    # Track unknown traffic
+                    if ip not in self._unknown_traffic:
+                        self._unknown_traffic[ip] = {'count': 0, 'last_seen': 0}
+                    self._unknown_traffic[ip]['count'] += 1
+                    self._unknown_traffic[ip]['last_seen'] = time.time()
+                    
+                    # Log at trace level
+                    log_debug(f"[REMOTE:SPECTRUM] Incoming packet from {ip}:{addr[1]} ({len(data)} bytes)", "trace", "remote")
+                    
+                except BlockingIOError:
+                    break  # No more data
+        except Exception as e:
+            log_debug(f"[REMOTE:SPECTRUM] Error processing incoming: {e}", "verbose")
+    
+    def _log_stats(self):
+        """Log periodic statistics at verbose level."""
+        now = time.time()
+        if now - self._last_stats_time < self.STATS_INTERVAL:
+            return
+        
+        self._last_stats_time = now
+        elapsed = self.STATS_INTERVAL
+        pps = self._packets_sent / elapsed if elapsed > 0 else 0
+        bps = self._bytes_sent / elapsed if elapsed > 0 else 0
+        
+        mode_str = "pipe" if self.read_pipe else "injected"
+        log_debug(f"[REMOTE:SPECTRUM] Stats: {pps:.0f} pkt/s, {bps:.0f} bytes/s, mode={mode_str}", "verbose")
+        
+        # Log unknown traffic if any
+        unknown_count = len(self._unknown_traffic)
+        if unknown_count > 0:
+            unknown_packets = sum(u['count'] for u in self._unknown_traffic.values())
+            ip_details = ', '.join(f"{ip}({info['count']})" for ip, info in self._unknown_traffic.items())
+            log_debug(f"[REMOTE:SPECTRUM] Incoming traffic on port {self.port}: {unknown_packets} packets from {unknown_count} IPs: {ip_details}", "verbose")
+            self._unknown_traffic.clear()
+        
+        # Reset counters
+        self._packets_sent = 0
+        self._bytes_sent = 0
+    
     def broadcast(self):
         """Broadcast spectrum data to all clients.
         
@@ -1071,6 +1352,12 @@ class NetworkSpectrumServer:
         """
         if not self.enabled or not self.sock:
             return
+        
+        # Process any incoming traffic for monitoring
+        self._process_incoming()
+        
+        # Log stats at verbose level
+        self._log_stats()
         
         # Get bins based on mode
         if self.read_pipe:
@@ -1090,19 +1377,29 @@ class NetworkSpectrumServer:
             fmt = '<IH' + str(num_bins) + 'f'
             data = struct.pack(fmt, self.seq, num_bins, *bins)
             self.sock.sendto(data, ('<broadcast>', self.port))
-            self.seq = (self.seq + 1) & 0xFFFFFFFF
+            
+            # Update stats
+            self._packets_sent += 1
+            self._bytes_sent += len(data)
             
             # Log first successful broadcast
             if not self._first_broadcast_logged:
-                log_debug(f"[NetworkSpectrumServer] First broadcast: {num_bins} bins", "basic")
+                log_debug(f"[REMOTE:SPECTRUM] First broadcast: {num_bins} bins ({len(data)} bytes)", "basic")
                 self._first_broadcast_logged = True
+            
+            # Per-packet trace logging
+            peak_bin = max(range(num_bins), key=lambda i: bins[i]) if num_bins > 0 else 0
+            peak_val = bins[peak_bin] if num_bins > 0 else 0
+            log_debug(f"[REMOTE:SPECTRUM] TX #{self.seq} bins:{num_bins} peak:bin{peak_bin}={peak_val:.1f} ({len(data)} bytes)", "trace", "remote.packets")
+            
+            self.seq = (self.seq + 1) & 0xFFFFFFFF
                 
         except BlockingIOError:
             pass
         except Exception as e:
             now = time.time()
             if now - self._last_error_time > 10:
-                log_debug(f"[NetworkSpectrumServer] Broadcast error: {e}", "basic")
+                log_debug(f"[REMOTE:SPECTRUM] Broadcast error: {e}", "basic")
                 self._last_error_time = now
     
     def stop(self):
@@ -1114,13 +1411,14 @@ class NetworkSpectrumServer:
             except Exception:
                 pass
             self.pipe = None
+            log_debug("[REMOTE:SPECTRUM] Pipe closed", "trace", "remote")
         if self.sock:
             try:
                 self.sock.close()
             except Exception:
                 pass
             self.sock = None
-        log_debug("[NetworkSpectrumServer] Stopped", "basic")
+        log_debug("[REMOTE:SPECTRUM] Stopped", "basic")
 
 
 # =============================================================================
@@ -1133,7 +1431,7 @@ class DiscoveryAnnouncer:
     Announcement format (JSON):
         {
             "service": "peppy_level_server",
-            "version": 1,
+            "version": 2,
             "level_port": 5580,
             "spectrum_port": 5581,
             "volumio_port": 3000,
@@ -1172,12 +1470,28 @@ class DiscoveryAnnouncer:
         self._config_version = ""
         self._last_config_check = 0
         self._config_check_interval = 5.0  # Check config every 5 seconds
+        self._broadcast_count = 0
+        self._unknown_traffic = {}  # {ip: {"count": int, "last_seen": float}}
+        self._local_ips = set()
+        self._last_stats_time = 0
         
         # Get hostname
         try:
             self.hostname = socket.gethostname()
         except Exception:
             self.hostname = "volumio"
+        
+        # Get local IPs for filtering self-traffic
+        try:
+            self._local_ips.add('127.0.0.1')
+            self._local_ips.add(socket.gethostbyname(self.hostname))
+            import subprocess
+            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                for ip in result.stdout.strip().split():
+                    self._local_ips.add(ip)
+        except Exception:
+            pass
         
         # Calculate initial config version
         self._update_config_version()
@@ -1193,16 +1507,20 @@ class DiscoveryAnnouncer:
                 content = f.read()
             new_hash = hashlib.md5(content).hexdigest()[:8]
             if new_hash != self._config_version:
+                old_version = self._config_version
                 self._config_version = new_hash
-                log_debug(f"[DiscoveryAnnouncer] Config version: {self._config_version}", "verbose")
+                if old_version:
+                    log_debug(f"[REMOTE:DISCOVERY] Config version changed: {old_version} -> {self._config_version}", "verbose")
+                else:
+                    log_debug(f"[REMOTE:DISCOVERY] Config version: {self._config_version}", "verbose")
         except Exception as e:
-            log_debug(f"[DiscoveryAnnouncer] Config hash error: {e}", "verbose")
+            log_debug(f"[REMOTE:DISCOVERY] Config hash error: {e}", "verbose")
     
     def _build_announcement(self):
         """Build the announcement payload with current config version."""
         return json.dumps({
             "service": "peppy_level_server",
-            "version": 1,
+            "version": 2,  # Protocol version 2 with client registration support
             "level_port": self.level_port,
             "spectrum_port": self.spectrum_port,
             "volumio_port": self.volumio_port,
@@ -1218,18 +1536,72 @@ class DiscoveryAnnouncer:
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.setblocking(False)
+            # Bind to receive incoming traffic for monitoring
+            self.sock.bind(('', self.discovery_port))
             self.run_flag = True
             self.thread = Thread(target=self._run, daemon=True)
             self.thread.start()
-            log_debug(f"[DiscoveryAnnouncer] Started on UDP port {self.discovery_port}, "
-                     f"announcing level_port={self.level_port}", "basic")
+            log_debug(f"[REMOTE:DISCOVERY] Started on UDP port {self.discovery_port}", "basic")
+            log_debug(f"[REMOTE:DISCOVERY] Advertising: meters={self.level_port}, spectrum={self.spectrum_port}, "
+                     f"volumio={self.volumio_port}, host={self.hostname}", "verbose")
         except Exception as e:
-            log_debug(f"[DiscoveryAnnouncer] Failed to start: {e}", "basic")
+            log_debug(f"[REMOTE:DISCOVERY] Failed to start: {e}", "basic")
             self.enabled = False
+    
+    def _process_incoming(self):
+        """Check for and log any incoming traffic on the discovery port."""
+        if not self.sock:
+            return
+        
+        try:
+            while True:
+                try:
+                    data, addr = self.sock.recvfrom(1024)
+                    ip = addr[0]
+                    
+                    # Ignore our own broadcasts
+                    if ip in self._local_ips:
+                        continue
+                    
+                    # Track unknown traffic
+                    if ip not in self._unknown_traffic:
+                        self._unknown_traffic[ip] = {'count': 0, 'last_seen': 0}
+                    self._unknown_traffic[ip]['count'] += 1
+                    self._unknown_traffic[ip]['last_seen'] = time.time()
+                    
+                    # Log at trace level
+                    log_debug(f"[REMOTE:DISCOVERY] Incoming packet from {ip}:{addr[1]} ({len(data)} bytes)", "trace", "remote")
+                    
+                except BlockingIOError:
+                    break  # No more data
+        except Exception as e:
+            log_debug(f"[REMOTE:DISCOVERY] Error processing incoming: {e}", "verbose")
+    
+    def _log_stats(self):
+        """Log periodic traffic statistics."""
+        now = time.time()
+        if now - self._last_stats_time < 10:  # Every 10 seconds
+            return
+        
+        self._last_stats_time = now
+        unknown_count = len(self._unknown_traffic)
+        if unknown_count > 0:
+            unknown_packets = sum(u['count'] for u in self._unknown_traffic.values())
+            ip_details = ', '.join(f"{ip}({info['count']})" for ip, info in self._unknown_traffic.items())
+            log_debug(f"[REMOTE:DISCOVERY] Incoming traffic on port {self.discovery_port}: {unknown_packets} packets from {unknown_count} IPs: {ip_details}", "verbose")
+            self._unknown_traffic.clear()
     
     def _run(self):
         """Thread loop - broadcast announcements periodically."""
         while self.run_flag:
+            # Process any incoming traffic
+            self._process_incoming()
+            
+            # Log stats periodically
+            self._log_stats()
+            
             # Periodically re-check config version
             now = time.time()
             if now - self._last_config_check > self._config_check_interval:
@@ -1239,8 +1611,14 @@ class DiscoveryAnnouncer:
             try:
                 announcement = self._build_announcement()
                 self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
+                self._broadcast_count += 1
+                
+                # Log at trace level (but not every packet unless remote.packets enabled)
+                log_debug(f"[REMOTE:DISCOVERY] Broadcast #{self._broadcast_count} sent (interval: {self.interval}s)", "trace", "remote")
+                log_debug(f"[REMOTE:DISCOVERY] Payload: {announcement.decode()}", "trace", "remote.packets")
+                
             except Exception as e:
-                log_debug(f"[DiscoveryAnnouncer] Send error: {e}", "verbose")
+                log_debug(f"[REMOTE:DISCOVERY] Send error: {e}", "verbose")
             
             # Sleep in small increments to allow faster shutdown
             sleep_remaining = self.interval
@@ -1257,7 +1635,7 @@ class DiscoveryAnnouncer:
             except Exception:
                 pass
             self.sock = None
-        log_debug("[DiscoveryAnnouncer] Stopped", "basic")
+        log_debug(f"[REMOTE:DISCOVERY] Stopped ({self._broadcast_count} broadcasts sent)", "basic")
 
 
 # =============================================================================

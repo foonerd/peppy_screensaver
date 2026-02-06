@@ -825,13 +825,56 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 }
             }
             
-            // section 7 - Debug settings -----------------------------
+            // section 7 - Remote display server settings -----------------------------
+            // Read from Volumio config (persists across restart); fallback to config.txt for backward compat
+            // server enabled
+            var remoteServerEnabled = self.config.get('remoteServerEnabled');
+            if (remoteServerEnabled === undefined) {
+                remoteServerEnabled = peppy_config && peppy_config.current ? peppy_config.current['remote.server.enabled'] === 'true' : false;
+            }
+            uiconf.sections[7].content[0].value = remoteServerEnabled;
+            
+            // server mode
+            var remoteServerMode = self.config.get('remoteServerMode');
+            if (remoteServerMode === undefined) {
+                remoteServerMode = peppy_config && peppy_config.current ? (peppy_config.current['remote.server.mode'] || 'server_local') : 'server_local';
+            }
+            var remoteServerModeOptions = uiconf.sections[7].content[1].options;
+            for (var i = 0; i < remoteServerModeOptions.length; i++) {
+                if (remoteServerModeOptions[i].value === remoteServerMode) {
+                    uiconf.sections[7].content[1].value = remoteServerModeOptions[i];
+                    break;
+                }
+            }
+            
+            // discovery port
+            var remoteDiscoveryPort = self.config.get('remoteDiscoveryPort');
+            if (remoteDiscoveryPort === undefined) {
+                remoteDiscoveryPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.discovery.port'], 10) || 5579) : 5579;
+            }
+            uiconf.sections[7].content[2].value = remoteDiscoveryPort;
+            
+            // meters data port
+            var remoteServerPort = self.config.get('remoteServerPort');
+            if (remoteServerPort === undefined) {
+                remoteServerPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.server.port'], 10) || 5580) : 5580;
+            }
+            uiconf.sections[7].content[3].value = remoteServerPort;
+            
+            // spectrum port
+            var remoteSpectrumPort = self.config.get('remoteSpectrumPort');
+            if (remoteSpectrumPort === undefined) {
+                remoteSpectrumPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.spectrum.port'], 10) || 5581) : 5581;
+            }
+            uiconf.sections[7].content[4].value = remoteSpectrumPort;
+            
+            // section 8 - Debug settings -----------------------------
             // debug level
             var debugLevel = peppy_config.current['debug.level'] || 'off';
-            var debugLevelOptions = uiconf.sections[7].content[0].options;
+            var debugLevelOptions = uiconf.sections[8].content[0].options;
             for (var i = 0; i < debugLevelOptions.length; i++) {
                 if (debugLevelOptions[i].value === debugLevel) {
-                    uiconf.sections[7].content[0].value = debugLevelOptions[i];
+                    uiconf.sections[8].content[0].value = debugLevelOptions[i];
                     break;
                 }
             }
@@ -843,72 +886,30 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 'debug.trace.scrolling', 'debug.trace.volume', 'debug.trace.mute',
                 'debug.trace.shuffle', 'debug.trace.repeat', 'debug.trace.playstate',
                 'debug.trace.progress', 'debug.trace.metadata', 'debug.trace.seek',
-                'debug.trace.time', 'debug.trace.init', 'debug.trace.fade', 'debug.trace.frame'
+                'debug.trace.time', 'debug.trace.init', 'debug.trace.fade', 'debug.trace.frame',
+                'debug.trace.remote', 'debug.trace.remote.packets'
             ];
             for (var i = 0; i < traceKeys.length; i++) {
                 var traceValue = peppy_config.current[traceKeys[i]] === 'true' || peppy_config.current[traceKeys[i]] === true;
-                uiconf.sections[7].content[i + 1].value = traceValue;
+                uiconf.sections[8].content[i + 1].value = traceValue;
             }
             
-            // section 8 - Profiling settings -----------------------------
+            // section 9 - Profiling settings -----------------------------
             // per-frame timing
             var profilingTiming = peppy_config.current['profiling.timing'] === 'true' || peppy_config.current['profiling.timing'] === true;
-            uiconf.sections[8].content[0].value = profilingTiming;
+            uiconf.sections[9].content[0].value = profilingTiming;
             
             // timing interval
             var profilingInterval = parseInt(peppy_config.current['profiling.interval'], 10) || 30;
-            uiconf.sections[8].content[1].value = profilingInterval;
+            uiconf.sections[9].content[1].value = profilingInterval;
             
             // cProfile enabled
             var profilingCprofile = peppy_config.current['profiling.cprofile'] === 'true' || peppy_config.current['profiling.cprofile'] === true;
-            uiconf.sections[8].content[2].value = profilingCprofile;
+            uiconf.sections[9].content[2].value = profilingCprofile;
             
             // profile duration
             var profilingDuration = parseInt(peppy_config.current['profiling.duration'], 10) || 60;
-            uiconf.sections[8].content[3].value = profilingDuration;
-            
-            // section 9 - Remote display server settings -----------------------------
-            // Read from Volumio config (persists across restart); fallback to config.txt for backward compat
-            // server enabled
-            var remoteServerEnabled = self.config.get('remoteServerEnabled');
-            if (remoteServerEnabled === undefined) {
-                remoteServerEnabled = peppy_config && peppy_config.current ? peppy_config.current['remote.server.enabled'] === 'true' : false;
-            }
-            uiconf.sections[9].content[0].value = remoteServerEnabled;
-            
-            // server mode
-            var remoteServerMode = self.config.get('remoteServerMode');
-            if (remoteServerMode === undefined) {
-                remoteServerMode = peppy_config && peppy_config.current ? (peppy_config.current['remote.server.mode'] || 'server_local') : 'server_local';
-            }
-            var remoteServerModeOptions = uiconf.sections[9].content[1].options;
-            for (var i = 0; i < remoteServerModeOptions.length; i++) {
-                if (remoteServerModeOptions[i].value === remoteServerMode) {
-                    uiconf.sections[9].content[1].value = remoteServerModeOptions[i];
-                    break;
-                }
-            }
-            
-            // server port
-            var remoteServerPort = self.config.get('remoteServerPort');
-            if (remoteServerPort === undefined) {
-                remoteServerPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.server.port'], 10) || 5580) : 5580;
-            }
-            uiconf.sections[9].content[2].value = remoteServerPort;
-            
-            // discovery port
-            var remoteDiscoveryPort = self.config.get('remoteDiscoveryPort');
-            if (remoteDiscoveryPort === undefined) {
-                remoteDiscoveryPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.discovery.port'], 10) || 5579) : 5579;
-            }
-            uiconf.sections[9].content[3].value = remoteDiscoveryPort;
-            
-            // spectrum port
-            var remoteSpectrumPort = self.config.get('remoteSpectrumPort');
-            if (remoteSpectrumPort === undefined) {
-                remoteSpectrumPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.spectrum.port'], 10) || 5581) : 5581;
-            }
-            uiconf.sections[9].content[4].value = remoteSpectrumPort;
+            uiconf.sections[9].content[3].value = profilingDuration;
             
         } else {
             self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));            
@@ -1624,7 +1625,9 @@ peppyScreensaver.prototype.saveDebugConf = function (confData) {
         'traceTime': 'debug.trace.time',
         'traceInit': 'debug.trace.init',
         'traceFade': 'debug.trace.fade',
-        'traceFrame': 'debug.trace.frame'
+        'traceFrame': 'debug.trace.frame',
+        'traceRemote': 'debug.trace.remote',
+        'traceRemotePackets': 'debug.trace.remote.packets'
     };
     
     for (var uiKey in traceMap) {

@@ -194,6 +194,10 @@
     "TRACE_FADE_DOC":"Einblend-/Ausblendzeit, Lock-Status protokollieren",
     "TRACE_FRAME":"Trace: Frame-Timing",
     "TRACE_FRAME_DOC":"Render-Loop-Timing, Status-Änderungen, FPS-Gating protokollieren",
+    "TRACE_REMOTE":"Trace: Remote-Server",
+    "TRACE_REMOTE_DOC":"Remote-Server-Aktivität protokollieren: Client-Verbindungen, Trennungen, Heartbeats und unbekannter Datenverkehr.",
+    "TRACE_REMOTE_PACKETS":"Trace: Remote-Server-Pakete",
+    "TRACE_REMOTE_PACKETS_DOC":"Jedes vom Remote-Server gesendete und empfangene Paket protokollieren. Warnung: Hohe Ausgabemenge - nur zur Fehlersuche bei Datenflussproblemen verwenden.",
     "PROFILING_CONF":"Profiling",
     "PROFILING_DESC":"CPU-Leistungsanalyse zur Identifizierung von Engpässen",
     "PROFILING_TIMING":"Frame-Zeitmessung",
@@ -212,11 +216,11 @@
     "REMOTE_SERVER_MODE_DOC":"Wie zu arbeiten ist, wenn der Remote-Server aktiviert ist.<br /><br /><b>Nur Server:</b> Pegel an Remote-Anzeigen streamen, keine lokale Anzeige (Headless)<br /><b>Server + Lokal:</b> Sowohl an Remote-Anzeigen streamen ALS AUCH lokal anzeigen<br /><br />Remote-Anzeigen verbinden sich über run_peppy_remote.py auf einem anderen Pi.",
     "REMOTE_MODE_SERVER":"Nur Server (Headless)",
     "REMOTE_MODE_SERVER_LOCAL":"Server + Lokal",
-    "REMOTE_SERVER_PORT":"Pegel-Daten-Port",
-    "REMOTE_SERVER_PORT_DOC":"UDP-Port zum Streamen von Audio-Pegeldaten an Remote-Anzeigen.<br /><br /><b>Standard: 5580</b><br /><br />Ändern, wenn dieser Port mit anderen Diensten kollidiert.",
     "REMOTE_DISCOVERY_PORT":"Erkennungs-Port",
     "REMOTE_DISCOVERY_PORT_DOC":"UDP-Port für Auto-Erkennungs-Broadcasts.<br /><br /><b>Standard: 5579</b><br /><br />Remote-Clients hören auf diesem Port, um den Server automatisch zu finden.",
-    "REMOTE_SPECTRUM_PORT":"Spektrum-Port",
+    "REMOTE_SERVER_PORT":"Meter-Daten-Port",
+    "REMOTE_SERVER_PORT_DOC":"UDP-Port zum Streamen von Audio-Pegeldaten an Remote-Anzeigen.<br /><br /><b>Standard: 5580</b><br /><br />Ändern, wenn dieser Port mit anderen Diensten kollidiert.",
+    "REMOTE_SPECTRUM_PORT":"Spektrum-Daten-Port",
     "REMOTE_SPECTRUM_PORT_DOC":"UDP-Port zum Streamen von Spektrumanalysator-Daten an Remote-Anzeigen.<br /><br /><b>Standard: 5581</b><br /><br />Ändern, wenn dieser Port mit anderen Diensten kollidiert."
   }
 }

@@ -725,6 +725,91 @@
                            ]
                 },
                 {
+                "id": "remote_conf",
+                "element": "section",
+                "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_CONF",
+                "description": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_DESC",
+                "icon": "fa-wifi",
+                "hidden": false,
+                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"saveRemoteConf"},
+                "saveButton": {
+                              "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
+                              "data": [
+                                      "remoteServerEnabled",
+                                      "remoteServerMode",
+                                      "remoteDiscoveryPort",
+                                      "remoteServerPort",
+                                      "remoteSpectrumPort"
+                                      ]
+                              },
+                "content": [
+                            {
+                             "id": "remoteServerEnabled",
+                             "element": "switch",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_ENABLED_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_ENABLED",
+                             "value": false
+                            },
+                            {
+                             "id": "remoteServerMode",
+                             "element": "select",
+                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_MODE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_MODE",
+                             "value": {"value": "server_local", "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_MODE_SERVER_LOCAL"},
+                             "options": [
+                                          {"value": "server", "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_MODE_SERVER"},
+                                          {"value": "server_local", "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_MODE_SERVER_LOCAL"}
+                                        ]
+                            },
+                            {
+                             "id": "remoteDiscoveryPort",
+                             "element": "input",
+                             "type": "number",
+                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_DISCOVERY_PORT_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_DISCOVERY_PORT",
+                             "attributes": [
+                                             {"placeholder": 5579},
+                                             {"maxlength": 5},
+                                             {"min": 1024},
+                                             {"max": 65535}
+                                           ],
+                             "value": 5579
+                            },
+                            {
+                             "id": "remoteServerPort",
+                             "element": "input",
+                             "type": "number",
+                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_PORT_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_PORT",
+                             "attributes": [
+                                             {"placeholder": 5580},
+                                             {"maxlength": 5},
+                                             {"min": 1024},
+                                             {"max": 65535}
+                                           ],
+                             "value": 5580
+                            },
+                            {
+                             "id": "remoteSpectrumPort",
+                             "element": "input",
+                             "type": "number",
+                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SPECTRUM_PORT_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SPECTRUM_PORT",
+                             "attributes": [
+                                             {"placeholder": 5581},
+                                             {"maxlength": 5},
+                                             {"min": 1024},
+                                             {"max": 65535}
+                                           ],
+                             "value": 5581
+                            }
+                            ]
+                },
+                {
                 "id": "debug_conf",
                 "element": "section",
                 "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_CONF",
@@ -755,7 +840,9 @@
                                       "traceTime",
                                       "traceInit",
                                       "traceFade",
-                                      "traceFrame"
+                                      "traceFrame",
+                                      "traceRemote",
+                                      "traceRemotePackets"
                                       ]
                               },
                 "content": [
@@ -931,6 +1018,22 @@
                              "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_FRAME_DOC",
                              "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_FRAME",
                              "value": false
+                            },
+                            {
+                             "id": "traceRemote",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REMOTE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REMOTE",
+                             "value": false
+                            },
+                            {
+                             "id": "traceRemotePackets",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REMOTE_PACKETS_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REMOTE_PACKETS",
+                             "value": false
                             }
                             ]
                 },
@@ -995,91 +1098,6 @@
                                              {"max": 3600}
                                            ],
                              "value": 60
-                            }
-                            ]
-                },
-                {
-                "id": "remote_conf",
-                "element": "section",
-                "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_CONF",
-                "description": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_DESC",
-                "icon": "fa-wifi",
-                "hidden": false,
-                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"saveRemoteConf"},
-                "saveButton": {
-                              "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
-                              "data": [
-                                      "remoteServerEnabled",
-                                      "remoteServerMode",
-                                      "remoteServerPort",
-                                      "remoteDiscoveryPort",
-                                      "remoteSpectrumPort"
-                                      ]
-                              },
-                "content": [
-                            {
-                             "id": "remoteServerEnabled",
-                             "element": "switch",
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_ENABLED_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_ENABLED",
-                             "value": false
-                            },
-                            {
-                             "id": "remoteServerMode",
-                             "element": "select",
-                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_MODE_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_MODE",
-                             "value": {"value": "server_local", "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_MODE_SERVER_LOCAL"},
-                             "options": [
-                                          {"value": "server", "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_MODE_SERVER"},
-                                          {"value": "server_local", "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_MODE_SERVER_LOCAL"}
-                                        ]
-                            },
-                            {
-                             "id": "remoteServerPort",
-                             "element": "input",
-                             "type": "number",
-                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_PORT_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_PORT",
-                             "attributes": [
-                                             {"placeholder": 5580},
-                                             {"maxlength": 5},
-                                             {"min": 1024},
-                                             {"max": 65535}
-                                           ],
-                             "value": 5580
-                            },
-                            {
-                             "id": "remoteDiscoveryPort",
-                             "element": "input",
-                             "type": "number",
-                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_DISCOVERY_PORT_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_DISCOVERY_PORT",
-                             "attributes": [
-                                             {"placeholder": 5579},
-                                             {"maxlength": 5},
-                                             {"min": 1024},
-                                             {"max": 65535}
-                                           ],
-                             "value": 5579
-                            },
-                            {
-                             "id": "remoteSpectrumPort",
-                             "element": "input",
-                             "type": "number",
-                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SPECTRUM_PORT_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SPECTRUM_PORT",
-                             "attributes": [
-                                             {"placeholder": 5581},
-                                             {"maxlength": 5},
-                                             {"min": 1024},
-                                             {"max": 65535}
-                                           ],
-                             "value": 5581
                             }
                             ]
                 }
