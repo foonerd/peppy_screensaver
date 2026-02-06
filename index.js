@@ -889,19 +889,19 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 }
             }
             
-            // server port
-            var remoteServerPort = self.config.get('remoteServerPort');
-            if (remoteServerPort === undefined) {
-                remoteServerPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.server.port'], 10) || 5580) : 5580;
-            }
-            uiconf.sections[9].content[2].value = remoteServerPort;
-            
             // discovery port
             var remoteDiscoveryPort = self.config.get('remoteDiscoveryPort');
             if (remoteDiscoveryPort === undefined) {
                 remoteDiscoveryPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.discovery.port'], 10) || 5579) : 5579;
             }
-            uiconf.sections[9].content[3].value = remoteDiscoveryPort;
+            uiconf.sections[9].content[2].value = remoteDiscoveryPort;
+            
+            // meters data port
+            var remoteServerPort = self.config.get('remoteServerPort');
+            if (remoteServerPort === undefined) {
+                remoteServerPort = peppy_config && peppy_config.current ? (parseInt(peppy_config.current['remote.server.port'], 10) || 5580) : 5580;
+            }
+            uiconf.sections[9].content[3].value = remoteServerPort;
             
             // spectrum port
             var remoteSpectrumPort = self.config.get('remoteSpectrumPort');

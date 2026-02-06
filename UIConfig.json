@@ -1011,8 +1011,8 @@
                               "data": [
                                       "remoteServerEnabled",
                                       "remoteServerMode",
-                                      "remoteServerPort",
                                       "remoteDiscoveryPort",
+                                      "remoteServerPort",
                                       "remoteSpectrumPort"
                                       ]
                               },
@@ -1037,21 +1037,6 @@
                                         ]
                             },
                             {
-                             "id": "remoteServerPort",
-                             "element": "input",
-                             "type": "number",
-                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
-                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_PORT_DOC",
-                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_PORT",
-                             "attributes": [
-                                             {"placeholder": 5580},
-                                             {"maxlength": 5},
-                                             {"min": 1024},
-                                             {"max": 65535}
-                                           ],
-                             "value": 5580
-                            },
-                            {
                              "id": "remoteDiscoveryPort",
                              "element": "input",
                              "type": "number",
@@ -1065,6 +1050,21 @@
                                              {"max": 65535}
                                            ],
                              "value": 5579
+                            },
+                            {
+                             "id": "remoteServerPort",
+                             "element": "input",
+                             "type": "number",
+                             "visibleIf": {"field": "remoteServerEnabled", "value": true},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_PORT_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.REMOTE_SERVER_PORT",
+                             "attributes": [
+                                             {"placeholder": 5580},
+                                             {"maxlength": 5},
+                                             {"min": 1024},
+                                             {"max": 65535}
+                                           ],
+                             "value": 5580
                             },
                             {
                              "id": "remoteSpectrumPort",
