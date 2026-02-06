@@ -1544,8 +1544,28 @@ class DiscoveryAnnouncer:
             self._active_meter = meter_name
             if old_meter:
                 log_debug(f"[REMOTE:DISCOVERY] Active meter changed: {old_meter} -> {meter_name}", "verbose")
+                # Send immediate notification to clients (don't wait for next interval)
+                self._send_immediate_broadcast()
             else:
                 log_debug(f"[REMOTE:DISCOVERY] Active meter: {meter_name}", "verbose")
+    
+    def _send_immediate_broadcast(self):
+        """Send an immediate broadcast outside the normal interval.
+        
+        Used when active meter changes to notify clients without waiting
+        for the next scheduled broadcast (reduces sync lag from ~5s to <100ms).
+        """
+        if not self.sock or not self.run_flag:
+            return
+        
+        try:
+            announcement = self._build_announcement()
+            self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
+            self._broadcast_count += 1
+            log_debug(f"[REMOTE:DISCOVERY] Immediate broadcast for meter change", "verbose")
+            log_debug(f"[REMOTE:DISCOVERY] Payload: {announcement.decode()}", "trace", "remote.packets")
+        except Exception as e:
+            log_debug(f"[REMOTE:DISCOVERY] Immediate broadcast error: {e}", "verbose")
     
     def start(self):
         """Start the announcer thread."""
