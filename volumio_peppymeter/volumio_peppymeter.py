@@ -1076,8 +1076,10 @@ class NetworkSpectrumServer:
         if self.read_pipe:
             bins = self._read_pipe_data()
         else:
+            # In injected mode, keep broadcasting last known data
+            # Don't clear - this ensures consistent data even if set_bins()
+            # isn't called every frame
             bins = self._injected_bins
-            self._injected_bins = None  # Clear after use
         
         if bins is None:
             return
@@ -3788,11 +3790,29 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                 if spectrum_server and spectrum_server.enabled:
                     # In injected mode, get bins from SpectrumOutput (which reads the pipe)
                     if not spectrum_server.read_pipe:
+                        bins = None
+                        source = "none"
+                        
+                        # First try: SpectrumOutput (for handler-based meters with spectrum overlay)
                         if callback.spectrum_output:
                             bins = callback.spectrum_output.get_current_bins()
-                            if bins:
-                                spectrum_server.set_bins(bins)
-                        else:
+                            source = "spectrum_output"
+                        
+                        # Second try: Direct from pm.meter if it IS a Spectrum (spectrum-only meters)
+                        # This avoids pipe contention when the meter itself is the spectrum renderer
+                        if not bins or all(b == 0 for b in bins):
+                            if hasattr(pm.meter, '_prev_bar_heights') and pm.meter._prev_bar_heights:
+                                meter_bins = list(pm.meter._prev_bar_heights)
+                                if any(b > 0 for b in meter_bins):
+                                    bins = meter_bins
+                                    source = "pm.meter"
+                                    if not hasattr(spectrum_server, '_logged_meter_fallback'):
+                                        log_debug("[NetworkSpectrumServer] Using pm.meter._prev_bar_heights as source", "basic")
+                                        spectrum_server._logged_meter_fallback = True
+                        
+                        if bins:
+                            spectrum_server.set_bins(bins)
+                        elif not callback.spectrum_output:
                             # No local spectrum active - switch to pipe mode
                             if not spectrum_server._switched_to_pipe:
                                 log_debug("[NetworkSpectrumServer] No local spectrum, switching to pipe mode", "basic")
@@ -3839,14 +3859,30 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                     level_server._logged_error = True
         
         # Broadcast spectrum data to remote clients (if server mode enabled)
+        # NOTE: This is the NON-HANDLER path - only runs when no handler is active
         if spectrum_server and spectrum_server.enabled:
             # In injected mode, get bins from SpectrumOutput (which reads the pipe)
             if not spectrum_server.read_pipe:
+                bins = None
+                
+                # First try: SpectrumOutput (for handler-based meters with spectrum overlay)
                 if callback.spectrum_output:
                     bins = callback.spectrum_output.get_current_bins()
-                    if bins:
-                        spectrum_server.set_bins(bins)
-                else:
+                
+                # Second try: Direct from pm.meter if it IS a Spectrum (spectrum-only meters)
+                # This avoids pipe contention when the meter itself is the spectrum renderer
+                if not bins or all(b == 0 for b in bins):
+                    if hasattr(pm.meter, '_prev_bar_heights') and pm.meter._prev_bar_heights:
+                        meter_bins = list(pm.meter._prev_bar_heights)
+                        if any(b > 0 for b in meter_bins):
+                            bins = meter_bins
+                            if not hasattr(spectrum_server, '_logged_meter_fallback'):
+                                log_debug("[NetworkSpectrumServer] Using pm.meter._prev_bar_heights as source", "basic")
+                                spectrum_server._logged_meter_fallback = True
+                
+                if bins:
+                    spectrum_server.set_bins(bins)
+                elif not callback.spectrum_output:
                     # No local spectrum active - switch to pipe mode
                     if not spectrum_server._switched_to_pipe:
                         log_debug("[NetworkSpectrumServer] No local spectrum, switching to pipe mode", "basic")

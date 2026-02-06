@@ -192,19 +192,40 @@ class SpectrumOutput(Thread):
             _log_debug("[Spectrum] get_current_bins: sp is None", "verbose")
             return None
         
-        # Get bar heights from Spectrum object
-        if hasattr(self.sp, '_prev_bar_heights'):
-            # Return a copy to avoid threading issues
-            # Always return current values - no caching, remote needs real-time data
+        # Read from components directly - this is the most reliable source
+        # as it reflects the actual visual state being rendered
+        if hasattr(self.sp, 'components') and hasattr(self.sp, 'config'):
+            try:
+                size = self.sp.config.get('size', 30)
+                heights = []
+                for i in range(size):
+                    idx = i + 1  # Components are 1-indexed (0 is background)
+                    if idx < len(self.sp.components):
+                        comp = self.sp.components[idx]
+                        if comp and comp.bounding_box:
+                            heights.append(float(comp.bounding_box.h))
+                        else:
+                            heights.append(0.0)
+                    else:
+                        heights.append(0.0)
+                
+                # Only log first successful retrieval
+                if not hasattr(self, '_logged_first_bins'):
+                    _log_debug(f"[Spectrum] get_current_bins: returning {len(heights)} bins from components", "basic")
+                    self._logged_first_bins = True
+                return heights
+            except Exception as e:
+                _log_debug(f"[Spectrum] get_current_bins: error reading components: {e}", "verbose")
+        
+        # Fallback to _prev_bar_heights if components not available
+        if hasattr(self.sp, '_prev_bar_heights') and self.sp._prev_bar_heights:
             heights = list(self.sp._prev_bar_heights)
-            
-            # Only log first successful retrieval
             if not hasattr(self, '_logged_first_bins'):
-                _log_debug(f"[Spectrum] get_current_bins: returning {len(heights)} bins", "basic")
+                _log_debug(f"[Spectrum] get_current_bins: returning {len(heights)} bins from _prev_bar_heights", "basic")
                 self._logged_first_bins = True
             return heights
         
-        _log_debug("[Spectrum] get_current_bins: _prev_bar_heights not found", "verbose")
+        _log_debug("[Spectrum] get_current_bins: no data source available", "verbose")
         return None
 
     
