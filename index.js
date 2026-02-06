@@ -886,7 +886,8 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 'debug.trace.scrolling', 'debug.trace.volume', 'debug.trace.mute',
                 'debug.trace.shuffle', 'debug.trace.repeat', 'debug.trace.playstate',
                 'debug.trace.progress', 'debug.trace.metadata', 'debug.trace.seek',
-                'debug.trace.time', 'debug.trace.init', 'debug.trace.fade', 'debug.trace.frame'
+                'debug.trace.time', 'debug.trace.init', 'debug.trace.fade', 'debug.trace.frame',
+                'debug.trace.remote', 'debug.trace.remote.packets'
             ];
             for (var i = 0; i < traceKeys.length; i++) {
                 var traceValue = peppy_config.current[traceKeys[i]] === 'true' || peppy_config.current[traceKeys[i]] === true;
@@ -1624,7 +1625,9 @@ peppyScreensaver.prototype.saveDebugConf = function (confData) {
         'traceTime': 'debug.trace.time',
         'traceInit': 'debug.trace.init',
         'traceFade': 'debug.trace.fade',
-        'traceFrame': 'debug.trace.frame'
+        'traceFrame': 'debug.trace.frame',
+        'traceRemote': 'debug.trace.remote',
+        'traceRemotePackets': 'debug.trace.remote.packets'
     };
     
     for (var uiKey in traceMap) {

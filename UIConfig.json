@@ -840,7 +840,9 @@
                                       "traceTime",
                                       "traceInit",
                                       "traceFade",
-                                      "traceFrame"
+                                      "traceFrame",
+                                      "traceRemote",
+                                      "traceRemotePackets"
                                       ]
                               },
                 "content": [
@@ -1015,6 +1017,22 @@
                              "visibleIf": {"field": "debugLevel", "value": "trace"},
                              "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_FRAME_DOC",
                              "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_FRAME",
+                             "value": false
+                            },
+                            {
+                             "id": "traceRemote",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REMOTE_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REMOTE",
+                             "value": false
+                            },
+                            {
+                             "id": "traceRemotePackets",
+                             "element": "switch",
+                             "visibleIf": {"field": "debugLevel", "value": "trace"},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REMOTE_PACKETS_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.TRACE_REMOTE_PACKETS",
                              "value": false
                             }
                             ]
