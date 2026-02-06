@@ -898,6 +898,7 @@ class NetworkLevelServer:
         self.sock = None
         self._last_error_time = 0
         self._last_stats_time = 0
+        self._last_client_check = 0  # Throttle client management to avoid per-frame overhead
         self._packets_sent = 0
         self._bytes_sent = 0
         
@@ -1080,14 +1081,14 @@ class NetworkLevelServer:
         if not self.enabled or not self.sock:
             return
         
-        # Process any incoming registration packets
-        self._process_incoming()
-        
-        # Check for stale clients periodically
-        self._check_timeouts()
-        
-        # Log stats at verbose level
-        self._log_stats()
+        # Throttle client management to ~1 per second (not every frame)
+        # This prevents per-frame overhead that causes display flickering
+        now = time.time()
+        if now - self._last_client_check > 1.0:
+            self._last_client_check = now
+            self._process_incoming()
+            self._check_timeouts()
+            self._log_stats()
         
         # Guard against None values (can occur during meter transitions or when data source has no data)
         if left is None or right is None or mono is None:
@@ -1178,6 +1179,7 @@ class NetworkSpectrumServer:
         self.pipe = None
         self._last_error_time = 0
         self._last_stats_time = 0
+        self._last_monitor_check = 0  # Throttle monitoring to avoid per-frame overhead
         self._packets_sent = 0
         self._bytes_sent = 0
         self._first_broadcast_logged = False
@@ -1353,11 +1355,13 @@ class NetworkSpectrumServer:
         if not self.enabled or not self.sock:
             return
         
-        # Process any incoming traffic for monitoring
-        self._process_incoming()
-        
-        # Log stats at verbose level
-        self._log_stats()
+        # Throttle monitoring to ~1 per second (not every frame)
+        # This prevents per-frame overhead that causes display flickering
+        now = time.time()
+        if now - self._last_monitor_check > 1.0:
+            self._last_monitor_check = now
+            self._process_incoming()
+            self._log_stats()
         
         # Get bins based on mode
         if self.read_pipe:
@@ -1474,6 +1478,7 @@ class DiscoveryAnnouncer:
         self._unknown_traffic = {}  # {ip: {"count": int, "last_seen": float}}
         self._local_ips = set()
         self._last_stats_time = 0
+        self._active_meter = ""  # Currently active meter name for remote sync
         
         # Get hostname
         try:
@@ -1517,16 +1522,30 @@ class DiscoveryAnnouncer:
             log_debug(f"[REMOTE:DISCOVERY] Config hash error: {e}", "verbose")
     
     def _build_announcement(self):
-        """Build the announcement payload with current config version."""
+        """Build the announcement payload with current config version and active meter."""
         return json.dumps({
             "service": "peppy_level_server",
-            "version": 2,  # Protocol version 2 with client registration support
+            "version": 3,  # Protocol version 3 with active_meter for remote sync
             "level_port": self.level_port,
             "spectrum_port": self.spectrum_port,
             "volumio_port": self.volumio_port,
             "hostname": self.hostname,
-            "config_version": self._config_version
+            "config_version": self._config_version,
+            "active_meter": self._active_meter
         }).encode('utf-8')
+    
+    def set_active_meter(self, meter_name):
+        """Update the currently active meter name for remote client sync.
+        
+        :param meter_name: Name of the currently active meter (e.g., 'vu_analog_1')
+        """
+        if meter_name and meter_name != self._active_meter:
+            old_meter = self._active_meter
+            self._active_meter = meter_name
+            if old_meter:
+                log_debug(f"[REMOTE:DISCOVERY] Active meter changed: {old_meter} -> {meter_name}", "verbose")
+            else:
+                log_debug(f"[REMOTE:DISCOVERY] Active meter: {meter_name}", "verbose")
     
     def start(self):
         """Start the announcer thread."""
@@ -3171,6 +3190,7 @@ class CallBack:
         self.spectrum_output = None
         self.last_fade_time = 0  # Cooldown to prevent multiple fade-ins
         self.did_fade_in = False  # Track if this instance did fade-in
+        self.discovery_announcer = None  # Set by main loop for active meter sync
         
     def vol_FadeIn_thread(self, meter):
         """Volume fade-in thread."""
@@ -3383,11 +3403,35 @@ class CallBack:
             self.pending_restart = False
             if self.meter:
                 self.meter.restart()
+                # Notify discovery announcer of active meter change for remote sync
+                if self.discovery_announcer:
+                    meter_name = self._get_active_meter_name()
+                    if meter_name:
+                        self.discovery_announcer.set_active_meter(meter_name)
             return
         
         # Update spectrum
         if self.spectrum_output is not None:
             self.spectrum_output.update()
+    
+    def _get_active_meter_name(self):
+        """Get the currently active meter section name from the meter config.
+        
+        Returns the meter section name (e.g., 'black-white', 'vu-analog') which is
+        the name of the section in meters.txt currently being displayed.
+        
+        When Vumeter randomly selects a meter, it updates meter_config['meter']
+        with the chosen section name from meters.txt.
+        
+        Note: We use self.util.meter_config (shared reference) not self.meter.util
+        because self.meter may be None at init time.
+        """
+        try:
+            # Get the current meter section name from the shared meter_config dict
+            # This is updated by Vumeter.get_meter() when random/list selection occurs
+            return self.util.meter_config.get('meter', None)
+        except Exception:
+            return None
     
     def trim_memory(self):
         """Trim memory allocation."""
@@ -3653,8 +3697,9 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
         
         # Start spectrum server
         # In server mode (headless): read from pipe directly (no local display to conflict)
-        # In server_local mode: use injected mode initially, will get data from SpectrumOutput
-        #                       if no local spectrum is active, will switch to pipe mode dynamically
+        # In server_local mode: use injected mode only - never switch to pipe mode
+        #                       because that causes pipe contention and display flickering.
+        #                       During meter transitions, we simply skip spectrum broadcast.
         read_pipe_mode = (remote_mode == "server")
         spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=read_pipe_mode)
         
@@ -3670,6 +3715,11 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             config_path=config_path
         )
         discovery_announcer.start()
+        
+        # Wire discovery announcer to callback for active meter sync
+        callback.discovery_announcer = discovery_announcer
+        # Note: Initial active meter is set AFTER pm.meter.start() (see below)
+        # because random meter selection happens during start()
         
         log_debug(f"Remote display server enabled, mode: {remote_mode}", "basic")
     
@@ -3960,6 +4010,14 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
     clock = Clock()
     pm.meter.start()
     
+    # Now that meter is started and random selection has occurred,
+    # broadcast the active meter name to remote clients
+    if callback.discovery_announcer:
+        initial_meter = callback._get_active_meter_name()
+        if initial_meter:
+            callback.discovery_announcer.set_active_meter(initial_meter)
+            log_debug(f"Broadcasting initial active meter: {initial_meter}", "basic")
+    
     # Read frame.rate from config (set via UI), default to 30
     # This overrides the peppymeter [screen] section value
     MAIN_LOOP_FRAME_RATE = meter_config_volumio.get(FRAME_RATE_VOLUMIO, 30)
@@ -4190,13 +4248,11 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                         
                         if bins:
                             spectrum_server.set_bins(bins)
-                        elif not callback.spectrum_output:
-                            # No local spectrum active - switch to pipe mode
-                            if not spectrum_server._switched_to_pipe:
-                                log_debug("[NetworkSpectrumServer] No local spectrum, switching to pipe mode", "basic")
-                                spectrum_server.read_pipe = True
-                                spectrum_server._open_pipe()
-                                spectrum_server._switched_to_pipe = True
+                        # NOTE: We do NOT switch to pipe mode in server_local mode
+                        # because that would cause pipe contention with the local
+                        # SpectrumOutput and cause display flickering. If there's no
+                        # spectrum data available (e.g., during meter transitions),
+                        # we simply skip broadcasting this frame.
                     spectrum_server.broadcast()
                 
                 continue
@@ -4260,13 +4316,10 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                 
                 if bins:
                     spectrum_server.set_bins(bins)
-                elif not callback.spectrum_output:
-                    # No local spectrum active - switch to pipe mode
-                    if not spectrum_server._switched_to_pipe:
-                        log_debug("[NetworkSpectrumServer] No local spectrum, switching to pipe mode", "basic")
-                        spectrum_server.read_pipe = True
-                        spectrum_server._open_pipe()
-                        spectrum_server._switched_to_pipe = True
+                # NOTE: We do NOT switch to pipe mode in server_local mode
+                # because that would cause pipe contention with the local
+                # SpectrumOutput and cause display flickering. If there's no
+                # spectrum data available, we skip broadcasting this frame.
             spectrum_server.broadcast()
         
         clock.tick(MAIN_LOOP_FRAME_RATE)
