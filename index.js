@@ -338,6 +338,15 @@ peppyScreensaver.prototype.onStart = function() {
         method: 'getRemoteConfig'
     });
     self.logger.info(id + 'REST endpoint registered: peppy_screensaver');
+
+    // Register REST endpoint for remote font fetch (POST with { endpoint, data: { filename } })
+    self.commandRouter.addPluginRestEndpoint({
+        endpoint: 'peppy_screensaver_font',
+        type: 'user_interface',
+        name: 'peppy_screensaver',
+        method: 'getFont'
+    });
+    self.logger.info(id + 'REST endpoint registered: peppy_screensaver_font');
     
     // Initialize config version on startup
     self.updateConfigVersion();
@@ -1865,6 +1874,38 @@ peppyScreensaver.prototype.getRemoteConfig = function () {
     });
   }
   
+  return defer.promise;
+};
+
+// HTTP endpoint: Return font file as base64 for remote clients (theme + plugin fonts)
+// Called via: POST /api/v1/pluginEndpoint with body { endpoint: 'peppy_screensaver_font', data: { filename: 'Lato-Light.ttf' } }
+peppyScreensaver.prototype.getFont = function (data) {
+  var self = this;
+  var defer = libQ.defer();
+  var filename = (data && typeof data.filename === 'string') ? data.filename : '';
+  if (!filename || filename.indexOf('/') !== -1 || filename.indexOf('..') !== -1) {
+    defer.resolve({ success: false, error: 'invalid filename' });
+    return defer.promise;
+  }
+  try {
+    var themeFonts = path.join(process.env.VOLUMIO_ACTIVE_UI_PATH || '/volumio/http/www', 'app', 'themes', 'volumio3', 'assets', 'variants', 'volumio', 'fonts', filename);
+    var pluginFonts = path.join(PluginPath, 'screensaver', 'fonts', filename);
+    var fontPath = null;
+    if (fs.existsSync(themeFonts)) {
+      fontPath = themeFonts;
+    } else if (fs.existsSync(pluginFonts)) {
+      fontPath = pluginFonts;
+    }
+    if (fontPath) {
+      var buf = fs.readFileSync(fontPath, { encoding: null });
+      defer.resolve({ success: true, data: buf.toString('base64') });
+    } else {
+      defer.resolve({ success: false, error: 'not found' });
+    }
+  } catch (err) {
+    self.logger.error(id + 'getFont: ' + err.message);
+    defer.resolve({ success: false, error: err.message });
+  }
   return defer.promise;
 };
 

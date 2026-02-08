@@ -14,7 +14,7 @@ from spectrumutil import SpectrumUtil
 from configfileparser import METER
 from volumio_configfileparser import SPECTRUM, SPECTRUM_SIZE
 # from volumio_spectrumconfigwriter import Volumio_SpectrumConfigWriter
-from spectrumconfigparser import SCREEN_WIDTH, SCREEN_HEIGHT, AVAILABLE_SPECTRUM_NAMES 
+from spectrumconfigparser import SCREEN_WIDTH, SCREEN_HEIGHT, AVAILABLE_SPECTRUM_NAMES, BAR_HEIGHT 
 
 
 # =============================================================================
@@ -208,6 +208,22 @@ class SpectrumOutput(Thread):
                             heights.append(0.0)
                     else:
                         heights.append(0.0)
+                
+                # Avoid broadcasting "all bars at max" to remotes right after spectrum
+                # reinit (set_bars() sets full height until FFT updates). Return zeros
+                # so remotes don't flash full height when meter/spectrum type changes.
+                full_height = None
+                if hasattr(self.sp, 'height'):
+                    full_height = float(self.sp.height)
+                elif hasattr(self.sp, 'spectrum_configs') and hasattr(self.sp, 'index'):
+                    try:
+                        full_height = float(self.sp.spectrum_configs[self.sp.index].get(BAR_HEIGHT, 0))
+                    except (KeyError, TypeError, IndexError):
+                        pass
+                if full_height is not None and full_height > 0 and heights:
+                    tol = 0.5
+                    if all(abs(h - full_height) <= tol for h in heights):
+                        heights = [0.0] * len(heights)
                 
                 # Only log first successful retrieval
                 if not hasattr(self, '_logged_first_bins'):
