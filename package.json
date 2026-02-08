@@ -1,6 +1,6 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.2.6",
+  "version": "3.2.7",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.2.6 - Remote Display: stream visualization to other devices; standalone client with auto-discovery, config wizard, windowed/fullscreen modes."
+    "changelog": "3.2.7 - Experimental."
   },
   "engines": {
     "node": ">=20",
