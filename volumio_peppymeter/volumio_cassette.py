@@ -45,7 +45,7 @@ from configfileparser import (
 
 from volumio_configfileparser import (
     EXTENDED_CONF, METER_DELAY,
-    ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
+    ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED, SMOOTH_ROTATION,  # SMOOTH_ROTATION: rollback remove from import
     REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED, SPOOL_ADAPTIVE, QUEUE_MODE,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
@@ -687,7 +687,7 @@ class ReelRenderer:
 
     def __init__(self, base_path, meter_folder, filename, pos, center, 
                  rotate_rpm=1.5, angle_step_deg=1.0, rotation_fps=8, rotation_step=6,
-                 speed_multiplier=1.0, direction="ccw", name="reel"):
+                 speed_multiplier=1.0, direction="ccw", name="reel", smooth_rotation=False):  # SMOOTH_ROTATION: rollback remove param
         self.base_path = base_path
         self.meter_folder = meter_folder
         self.filename = filename
@@ -713,6 +713,8 @@ class ReelRenderer:
         self._blit_interval_ms = int(1000 / max(1, self.rotation_fps))
         self._needs_redraw = True
         self._need_first_blit = False
+        # SMOOTH_ROTATION: rollback remove next 2 lines
+        self._smooth_rotation = str(smooth_rotation).strip().lower() in ('1', 'true', 'yes') if isinstance(smooth_rotation, str) else bool(smooth_rotation)
         
         self._load_image()
     
@@ -752,8 +754,15 @@ class ReelRenderer:
         if volatile and status in ("stop", "pause"):
             status = "play"
         if status == "play":
-            dt = self._blit_interval_ms / 1000.0
+            # SMOOTH_ROTATION: rollback replace block with: dt = self._blit_interval_ms / 1000.0
+            if getattr(self, '_smooth_rotation', False) and self._last_blit_tick > 0:
+                dt = (now_ticks - self._last_blit_tick) / 1000.0
+                dt = min(max(dt, 0.0), 0.5)
+            else:
+                dt = self._blit_interval_ms / 1000.0
             self._current_angle = (self._current_angle + effective_rpm * 6.0 * dt * self.direction_mult) % 360.0
+            if getattr(self, '_smooth_rotation', False):
+                self._last_blit_tick = now_ticks
     
     def will_blit(self, now_ticks):
         """Check if blit is needed (FPS gating)."""
@@ -769,6 +778,9 @@ class ReelRenderer:
         effective_rpm = self._base_rpm * self.speed_multiplier
         if not self.center or effective_rpm <= 0.0:
             return self._needs_redraw
+        # SMOOTH_ROTATION: rollback remove next 2 lines
+        if getattr(self, '_smooth_rotation', False) and effective_rpm > 0.0:
+            return True
         
         result = (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
         
@@ -823,7 +835,9 @@ class ReelRenderer:
         if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get(self._trace_component, False):
             log_debug(f"[{self._trace_name}] INPUT: status={status}, angle={self._current_angle:.1f}, volatile={volatile}", "trace", self._trace_component)
         
-        self._last_blit_tick = now_ticks
+        # SMOOTH_ROTATION: skip when smooth (set in _update_angle); rollback remove this condition
+        if not getattr(self, '_smooth_rotation', False):
+            self._last_blit_tick = now_ticks
         
         if not self.center:
             screen.blit(self._original_surf, self.pos)
@@ -1204,6 +1218,9 @@ class CassetteHandler:
         spool_left_mult = self.meter_config_volumio.get(SPOOL_LEFT_SPEED, 1.0)
         spool_right_mult = self.meter_config_volumio.get(SPOOL_RIGHT_SPEED, 1.0)
         reel_direction = mc_vol.get(REEL_DIRECTION) or self.meter_config_volumio.get(REEL_DIRECTION, "ccw")
+        # SMOOTH_ROTATION: rollback remove next 2 lines
+        smooth_rot_raw = self.meter_config_volumio.get(SMOOTH_ROTATION, False)
+        smooth_rot = str(smooth_rot_raw).strip().lower() in ('1', 'true', 'yes') if smooth_rot_raw is not None else False
         
         log_debug("--- Reel Config ---", "verbose")
         log_debug(f"  reel.left.filename = {reel_left_file}", "verbose")
@@ -1230,7 +1247,8 @@ class CassetteHandler:
                 rotation_step=rot_step,
                 speed_multiplier=spool_left_mult,
                 direction=reel_direction,
-                name="reel_left"
+                name="reel_left",
+                smooth_rotation=smooth_rot  # SMOOTH_ROTATION: rollback remove this kwarg
             )
             backing_rect = self.reel_left.get_backing_rect()
             visual_rect = self.reel_left.get_visual_rect()
@@ -1250,7 +1268,8 @@ class CassetteHandler:
                 rotation_step=rot_step,
                 speed_multiplier=spool_right_mult,
                 direction=reel_direction,
-                name="reel_right"
+                name="reel_right",
+                smooth_rotation=smooth_rot  # SMOOTH_ROTATION: rollback remove this kwarg
             )
             backing_rect = self.reel_right.get_backing_rect()
             visual_rect = self.reel_right.get_visual_rect()

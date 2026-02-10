@@ -80,6 +80,8 @@ TRANSITION_OPACITY = "transition.opacity"
 # Rotation settings (global)
 ROTATION_QUALITY = "rotation.quality"
 ROTATION_FPS = "rotation.fps"
+# SMOOTH_ROTATION: remote client time-based rotation (rollback: remove this constant)
+SMOOTH_ROTATION = "smooth.rotation"
 ROTATION_SPEED = "rotation.speed"
 REEL_DIRECTION = "reel.direction"
 SPOOL_LEFT_SPEED = "spool.left.speed"
@@ -382,6 +384,11 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[ROTATION_SPEED] = c.getfloat(CURRENT, ROTATION_SPEED)
         except:
             self.meter_config_volumio[ROTATION_SPEED] = 1.0
+        # SMOOTH_ROTATION: rollback remove next 4 lines (read from config so remote client value reaches handlers)
+        try:
+            self.meter_config_volumio[SMOOTH_ROTATION] = c.get(CURRENT, SMOOTH_ROTATION, fallback='False')
+        except Exception:
+            self.meter_config_volumio[SMOOTH_ROTATION] = False
         try:
             self.meter_config_volumio[REEL_DIRECTION] = c.get(CURRENT, REEL_DIRECTION)
         except:

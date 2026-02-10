@@ -38,7 +38,7 @@ from configfileparser import (
 
 from volumio_configfileparser import (
     EXTENDED_CONF,
-    ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED,
+    ROTATION_QUALITY, ROTATION_FPS, ROTATION_SPEED, SMOOTH_ROTATION,  # SMOOTH_ROTATION: rollback remove from import
     REEL_DIRECTION, QUEUE_MODE,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
@@ -545,7 +545,7 @@ class AlbumArtRenderer:
                  mask_filename=None, rotate_enabled=False, rotate_rpm=0.0,
                  angle_step_deg=0.5, spindle_radius=5, ring_radius=None,
                  circle=True, rotation_fps=8, rotation_step=6, speed_multiplier=1.0,
-                 vinyl_renderer=None):
+                 vinyl_renderer=None, smooth_rotation=False):  # SMOOTH_ROTATION: rollback remove param
         self.base_path = base_path
         self.meter_folder = meter_folder
         self.art_pos = art_pos
@@ -581,6 +581,8 @@ class AlbumArtRenderer:
         self._blit_interval_ms = int(1000 / max(1, self.rotation_fps))
         self._needs_redraw = True
         self._need_first_blit = False
+        # SMOOTH_ROTATION: rollback remove next 2 lines
+        self._smooth_rotation = str(smooth_rotation).strip().lower() in ('1', 'true', 'yes') if isinstance(smooth_rotation, str) else bool(smooth_rotation)
 
         # Mask path
         self._mask_path = None
@@ -706,13 +708,20 @@ class AlbumArtRenderer:
         """Update rotation angle based on RPM and playback status."""
         if not self.rotate_enabled or self.rotate_rpm <= 0.0:
             return
-        
+
         status = (status or "").lower()
         if volatile and status in ("stop", "pause"):
             status = "play"
         if status == "play":
-            dt = self._blit_interval_ms / 1000.0
+            # SMOOTH_ROTATION: rollback replace block with: dt = self._blit_interval_ms / 1000.0
+            if getattr(self, '_smooth_rotation', False) and self._last_blit_tick > 0:
+                dt = (now_ticks - self._last_blit_tick) / 1000.0
+                dt = min(max(dt, 0.0), 0.5)
+            else:
+                dt = self._blit_interval_ms / 1000.0
             self._current_angle = (self._current_angle + self.rotate_rpm * 6.0 * dt) % 360.0
+            if getattr(self, '_smooth_rotation', False):
+                self._last_blit_tick = now_ticks
 
     def check_pending_load(self):
         """Compatibility stub - sync loading has no pending loads."""
@@ -726,7 +735,10 @@ class AlbumArtRenderer:
             return True
         if not self.rotate_enabled or self.rotate_rpm <= 0.0:
             return self._needs_redraw
-        
+        # SMOOTH_ROTATION: rollback remove next 2 lines
+        if getattr(self, '_smooth_rotation', False) and self.rotate_enabled and self.rotate_rpm > 0.0:
+            return True
+
         return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
 
     def get_backing_rect(self):
@@ -887,7 +899,7 @@ class VinylRenderer:
 
     def __init__(self, base_path, meter_folder, filename, pos, center,
                  rotate_rpm=0.0, rotation_fps=8, rotation_step=6,
-                 speed_multiplier=1.0, direction="cw"):
+                 speed_multiplier=1.0, direction="cw", smooth_rotation=False):  # SMOOTH_ROTATION: rollback remove param
         self.base_path = base_path
         self.meter_folder = meter_folder
         self.filename = filename
@@ -908,6 +920,8 @@ class VinylRenderer:
         self._needs_redraw = True
         self._need_first_blit = False
         self._has_composited_art = False  # True when album art is baked into vinyl
+        # SMOOTH_ROTATION: rollback remove next 2 lines
+        self._smooth_rotation = str(smooth_rotation).strip().lower() in ('1', 'true', 'yes') if isinstance(smooth_rotation, str) else bool(smooth_rotation)
         
         self._load_image()
     
@@ -1005,9 +1019,16 @@ class VinylRenderer:
         if volatile and status in ("stop", "pause"):
             status = "play"
         if status == "play" or decel_factor > 0.0:
-            dt = self._blit_interval_ms / 1000.0
+            # SMOOTH_ROTATION: rollback replace block with: dt = self._blit_interval_ms / 1000.0
+            if getattr(self, '_smooth_rotation', False) and self._last_blit_tick > 0:
+                dt = (now_ticks - self._last_blit_tick) / 1000.0
+                dt = min(max(dt, 0.0), 0.5)
+            else:
+                dt = self._blit_interval_ms / 1000.0
             effective_rpm = self.rotate_rpm * decel_factor
             self._current_angle = (self._current_angle + effective_rpm * 6.0 * dt * self.direction_mult) % 360.0
+            if getattr(self, '_smooth_rotation', False):
+                self._last_blit_tick = now_ticks
     
     def get_current_angle(self):
         """Return current rotation angle (for album art coupling)."""
@@ -1021,6 +1042,9 @@ class VinylRenderer:
             return True
         if not self.center or self.rotate_rpm <= 0.0:
             return self._needs_redraw
+        # SMOOTH_ROTATION: rollback remove next 2 lines
+        if getattr(self, '_smooth_rotation', False) and self.rotate_rpm > 0.0:
+            return True
         
         return (now_ticks - self._last_blit_tick) >= self._blit_interval_ms
     
@@ -1072,8 +1096,8 @@ class VinylRenderer:
         
         log_debug(f"[Vinyl] RENDER: status={status}, angle={self._current_angle:.1f}, decel={decel_factor:.2f}, advance={advance_angle}", "trace", "vinyl")
         
-        # Only update timing when advancing (so forced redraws don't reset FPS schedule)
-        if advance_angle:
+        # Only update timing when advancing (so forced redraws don't reset FPS schedule). SMOOTH_ROTATION: skip when smooth (set in _update_angle)
+        if advance_angle and not getattr(self, '_smooth_rotation', False):
             self._last_blit_tick = now_ticks
         
         if not self.center:
@@ -1881,6 +1905,9 @@ class TurntableHandler:
         rot_custom_fps = self.global_config.get(ROTATION_FPS, 8)
         rot_fps, rot_step = get_rotation_params(rot_quality, rot_custom_fps)
         rot_speed_mult = self.global_config.get(ROTATION_SPEED, 1.0)
+        # SMOOTH_ROTATION: rollback remove next 2 lines
+        smooth_rot_raw = self.global_config.get(SMOOTH_ROTATION, False)
+        smooth_rot = str(smooth_rot_raw).strip().lower() in ('1', 'true', 'yes') if smooth_rot_raw is not None else False
         
         # Vinyl configuration - check for standard vinyl OR single reel edge case
         vinyl_file = mc_vol.get(VINYL_FILE)
@@ -1935,7 +1962,8 @@ class TurntableHandler:
                 rotation_fps=rot_fps,
                 rotation_step=rot_step,
                 speed_multiplier=rot_speed_mult,
-                direction=vinyl_direction
+                direction=vinyl_direction,
+                smooth_rotation=smooth_rot  # SMOOTH_ROTATION: rollback remove this kwarg
             )
             log_debug(f"  VinylRenderer created", "verbose")
         
@@ -1963,7 +1991,8 @@ class TurntableHandler:
                 circle=rotate_enabled,
                 rotation_fps=rot_fps,
                 rotation_step=rot_step,
-                speed_multiplier=rot_speed_mult
+                speed_multiplier=rot_speed_mult,
+                smooth_rotation=smooth_rot  # SMOOTH_ROTATION: rollback remove this kwarg
             )
             
             # Couple album art to vinyl if rotation enabled
