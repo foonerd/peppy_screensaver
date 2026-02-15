@@ -1007,10 +1007,6 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
         uiNeedsReboot = true;
     }
 
-    if (didEnableDSP && fs.existsSync(dsp_config)) {
-      self.restoreFusionStreamParamsForIntegration();
-    }
-
     // write spotify /USB-DAC
     if (self.getPluginStatus ('music_service', 'spop') === 'STARTED') {
         if (confData.useDSP) {
@@ -2150,6 +2146,12 @@ peppyScreensaver.prototype.switch_alsaConfig = function (alsaConf) {
                     }
                 });
             }, 1000); // Wait for MPD to fully restart
+            // When modular ALSA + FusionDSP integration: restore Fusion stream params *after* ALSA/MPD update so Fusion reconfigures CamillaDSP against the new chain (avoids PB "giving up" and 48k lock)
+            if (alsaConf === 0 && fs.existsSync(dsp_config) && self.config.get('useDSP')) {
+                setTimeout(function() {
+                    self.restoreFusionStreamParamsForIntegration();
+                }, 500);
+            }
         });
     defer.resolve();
     return defer.promise;    
