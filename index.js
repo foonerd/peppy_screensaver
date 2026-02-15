@@ -55,6 +55,7 @@ var availMeters = '';
 var uiNeedsUpdate;
 const spotify_config = '/data/plugins/music_service/spop/config.yml.tmpl';
 const dsp_config = '/data/plugins/audio_interface/fusiondsp/camilladsp.conf.yml';
+const fusion_stream_params_path = '/tmp/fusiondsp_stream_params.log';
 module.exports = peppyScreensaver;
 
 // for spectrum
@@ -181,6 +182,9 @@ peppyScreensaver.prototype.onStart = function() {
       
       // Apply saved ALSA config on startup
       var alsaconf = parseInt(self.config.get('alsaSelection'),10);
+      if (fs.existsSync(dsp_config) && self.config.get('useDSP')) {
+        self.restoreFusionStreamParamsForIntegration();
+      }
       self.switch_alsaConfig(alsaconf);
       
       // event callback if outputdevice or mixer changed
@@ -946,6 +950,32 @@ peppyScreensaver.prototype.getConfigurationFiles = function() {
 	return ['config.json'];
 };
 
+// When FusionDSP integration is enabled, ensure Fusion's stream params file has a valid
+// rate (from existing file or fallback) so the bridged pipeline does not lock to a
+// stale/default rate. Fusion watches this file. Called on start and when toggling integration ON.
+peppyScreensaver.prototype.restoreFusionStreamParamsForIntegration = function () {
+  const self = this;
+  const path = fusion_stream_params_path;
+  const fallback = '44100,S32_LE,2,32';
+  try {
+    if (fs.existsSync(path)) {
+      const content = fs.readFileSync(path, 'utf8').trim();
+      const line = content.split('\n')[0];
+      const parts = line.split(',');
+      const rate = parseInt(parts[0], 10);
+      if (!isNaN(rate) && rate >= 44100 && rate <= 384000) {
+        fs.writeFileSync(path, line + '\n', 'utf8');
+        self.logger.info(id + 'Fusion stream params restored with rate ' + rate);
+        return;
+      }
+    }
+    fs.writeFileSync(path, fallback + '\n', 'utf8');
+    self.logger.info(id + 'Fusion stream params seeded with fallback ' + fallback);
+  } catch (e) {
+    self.logger.warn(id + 'Could not restore Fusion stream params: ' + e);
+  }
+};
+
 // called when 'save' button pressed on global settings
 //-------------------------------------------------------
 peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
@@ -958,8 +988,10 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
     //var config = ini.parse(fs.readFileSync(PeppyConf, 'utf-8'));
 
     // write DSP
+    var didEnableDSP = false;
     if (self.config.get('useDSP') != confData.useDSP) {
         self.config.set('useDSP', confData.useDSP);
+        if (confData.useDSP) didEnableDSP = true;
         self.checkDSPactive(!confData.useDSP);
         self.switch_Spotify(!confData.useDSP);
         noChanges = false;
@@ -973,6 +1005,10 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
         self.config.set('alsaSelection', confData.alsaSelection.value);
         noChanges = false;
         uiNeedsReboot = true;
+    }
+
+    if (didEnableDSP && fs.existsSync(dsp_config)) {
+      self.restoreFusionStreamParamsForIntegration();
     }
 
     // write spotify /USB-DAC
