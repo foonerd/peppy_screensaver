@@ -55,7 +55,6 @@ var availMeters = '';
 var uiNeedsUpdate;
 const spotify_config = '/data/plugins/music_service/spop/config.yml.tmpl';
 const dsp_config = '/data/plugins/audio_interface/fusiondsp/camilladsp.conf.yml';
-const fusion_stream_params_path = '/tmp/fusiondsp_stream_params.log';
 module.exports = peppyScreensaver;
 
 // for spectrum
@@ -182,9 +181,6 @@ peppyScreensaver.prototype.onStart = function() {
       
       // Apply saved ALSA config on startup
       var alsaconf = parseInt(self.config.get('alsaSelection'),10);
-      if (fs.existsSync(dsp_config) && self.config.get('useDSP')) {
-        self.restoreFusionStreamParamsForIntegration();
-      }
       self.switch_alsaConfig(alsaconf);
       
       // event callback if outputdevice or mixer changed
@@ -948,32 +944,6 @@ peppyScreensaver.prototype.getUIConfig = function() {
 
 peppyScreensaver.prototype.getConfigurationFiles = function() {
 	return ['config.json'];
-};
-
-// When FusionDSP integration is enabled, ensure Fusion's stream params file has a valid
-// rate (from existing file or fallback) so the bridged pipeline does not lock to a
-// stale/default rate. Fusion watches this file. Called on start and when toggling integration ON.
-peppyScreensaver.prototype.restoreFusionStreamParamsForIntegration = function () {
-  const self = this;
-  const path = fusion_stream_params_path;
-  const fallback = '44100,S32_LE,2,32';
-  try {
-    if (fs.existsSync(path)) {
-      const content = fs.readFileSync(path, 'utf8').trim();
-      const line = content.split('\n')[0];
-      const parts = line.split(',');
-      const rate = parseInt(parts[0], 10);
-      if (!isNaN(rate) && rate >= 44100 && rate <= 384000) {
-        fs.writeFileSync(path, line + '\n', 'utf8');
-        self.logger.info(id + 'Fusion stream params restored with rate ' + rate);
-        return;
-      }
-    }
-    fs.writeFileSync(path, fallback + '\n', 'utf8');
-    self.logger.info(id + 'Fusion stream params seeded with fallback ' + fallback);
-  } catch (e) {
-    self.logger.warn(id + 'Could not restore Fusion stream params: ' + e);
-  }
 };
 
 // called when 'save' button pressed on global settings
@@ -2144,12 +2114,6 @@ peppyScreensaver.prototype.switch_alsaConfig = function (alsaConf) {
                     }
                 });
             }, 1000); // Wait for MPD to fully restart
-            // When modular ALSA + FusionDSP integration: restore Fusion stream params *after* ALSA/MPD update so Fusion reconfigures CamillaDSP against the new chain (avoids PB "giving up" and 48k lock)
-            if (alsaConf === 0 && fs.existsSync(dsp_config) && self.config.get('useDSP')) {
-                setTimeout(function() {
-                    self.restoreFusionStreamParamsForIntegration();
-                }, 500);
-            }
         });
     defer.resolve();
     return defer.promise;    
@@ -2510,13 +2474,11 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
   // Use x64-specific template on x64 systems, but keep output filename same
   var tmplFile = isX64 ? '/Peppyalsa.postPeppyalsa.5.x64.conf' : asound;
   var asoundTmpl = __dirname + tmplFile + '.tmpl';
+  var asoundConf = __dirname + '/asound' + asound;  // Output always uses standard name
   self.logger.info(id + 'ALSA template: ' + asoundTmpl + ' (isX64=' + isX64 + ')');
   var conf;
   var defer = libQ.defer();
   var useDSP = fs.existsSync(dsp_config) && self.config.get('useDSP');
-  // When Fusion bridge is on: contribute postpeppyalsa so postDsp -> postpeppyalsa (DAC-only). Else: Peppyalsa.
-  var contributionFile = useDSP ? '/postpeppyalsa.postPeppyalsa.5.conf' : asound;
-  var asoundConf = __dirname + '/asound' + contributionFile;
   var plugType = self.config.get('useUSBDAC') ? 'copy' : 'empty';
   var useSpot = self.config.get('useSpotify');
 
@@ -2570,14 +2532,7 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
             self.logger.info('Cannot write ' + asoundConf + ': ' + err);
             defer.resolve(); // resolve anyway to not block chain
         } else {
-            // Remove the other contribution file so backend sees only one (prevents dual inPCM when toggling bridge)
-            var asoundDir = __dirname + '/asound';
-            var otherConf = asoundConf.indexOf('/postpeppyalsa.postPeppyalsa.5.conf') !== -1
-              ? asoundDir + asound
-              : asoundDir + '/postpeppyalsa.postPeppyalsa.5.conf';
-            try {
-              if (fs.existsSync(otherConf)) { fs.unlinkSync(otherConf); }
-            } catch (e) { /* ignore */ }
+            //self.logger.info(asoundConf + ' file written');
             if (fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED'){
                 var cmdret = self.commandRouter.executeOnPlugin('music_service', 'spop', 'initializeLibrespotDaemon', '');            
             }
