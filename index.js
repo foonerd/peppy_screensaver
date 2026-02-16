@@ -2530,11 +2530,13 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
   // Use x64-specific template on x64 systems, but keep output filename same
   var tmplFile = isX64 ? '/Peppyalsa.postPeppyalsa.5.x64.conf' : asound;
   var asoundTmpl = __dirname + tmplFile + '.tmpl';
-  var asoundConf = __dirname + '/asound' + asound;  // Output always uses standard name
   self.logger.info(id + 'ALSA template: ' + asoundTmpl + ' (isX64=' + isX64 + ')');
   var conf;
   var defer = libQ.defer();
   var useDSP = fs.existsSync(dsp_config) && self.config.get('useDSP');
+  // When Fusion bridge is on: contribute postpeppyalsa so postDsp -> postpeppyalsa (DAC-only). Else: Peppyalsa.
+  var contributionFile = useDSP ? '/postpeppyalsa.postPeppyalsa.5.conf' : asound;
+  var asoundConf = __dirname + '/asound' + contributionFile;
   var plugType = self.config.get('useUSBDAC') ? 'copy' : 'empty';
   var useSpot = self.config.get('useSpotify');
 
@@ -2588,7 +2590,14 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
             self.logger.info('Cannot write ' + asoundConf + ': ' + err);
             defer.resolve(); // resolve anyway to not block chain
         } else {
-            //self.logger.info(asoundConf + ' file written');
+            // Remove the other contribution file so backend sees only one (prevents dual inPCM when toggling bridge)
+            var asoundDir = __dirname + '/asound';
+            var otherConf = asoundConf.indexOf('/postpeppyalsa.postPeppyalsa.5.conf') !== -1
+              ? asoundDir + asound
+              : asoundDir + '/postpeppyalsa.postPeppyalsa.5.conf';
+            try {
+              if (fs.existsSync(otherConf)) { fs.unlinkSync(otherConf); }
+            } catch (e) { /* ignore */ }
             if (fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED'){
                 var cmdret = self.commandRouter.executeOnPlugin('music_service', 'spop', 'initializeLibrespotDaemon', '');            
             }
