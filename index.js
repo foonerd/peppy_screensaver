@@ -187,24 +187,6 @@ peppyScreensaver.prototype.onStart = function() {
       }
       self.switch_alsaConfig(alsaconf);
       
-      // When FusionDSP integration is on: after system ready, restore stream params once (covers FusionDSP enabled after Peppy start; independent of plugin priority)
-      if (self.config.get('useDSP')) {
-        var readyAttempts = 0;
-        var readyInterval = setInterval(function () {
-          readyAttempts++;
-          if (process.env.VOLUMIO_SYSTEM_STATUS === 'ready') {
-            clearInterval(readyInterval);
-            if (fs.existsSync(dsp_config) && self.config.get('useDSP')) {
-              self.restoreFusionStreamParamsForIntegration();
-            }
-            return;
-          }
-          if (readyAttempts >= 40) {
-            clearInterval(readyInterval);
-          }
-        }, 1500);
-      }
-      
       // event callback if outputdevice or mixer changed
       self.commandRouter.sharedVars.registerCallback('alsa.outputdevice', self.switch_alsaModular.bind(self));
       
@@ -1006,10 +988,8 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
     //var config = ini.parse(fs.readFileSync(PeppyConf, 'utf-8'));
 
     // write DSP
-    var didEnableDSP = false;
     if (self.config.get('useDSP') != confData.useDSP) {
         self.config.set('useDSP', confData.useDSP);
-        if (confData.useDSP) didEnableDSP = true;
         self.checkDSPactive(!confData.useDSP);
         self.switch_Spotify(!confData.useDSP);
         noChanges = false;
