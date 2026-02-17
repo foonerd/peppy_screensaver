@@ -64,6 +64,17 @@ var SpectrumConf = SpectrumPath + '/config.txt';
 const SpectrumFolderStr = 'spectrum.folder';// entry in config.txt to detect template folder
 var spectrum_config, base_folder_S;
 
+// ALSA config logging helper - gated by peppy_config debug.level
+// basic: key decisions; verbose: inputs and outputs; trace: full config content
+function alsaLog(logger, level, msg) {
+    if (!peppy_config || !peppy_config.current) return;
+    var cfgLevel = peppy_config.current['debug.level'] || 'off';
+    var levels = { 'off': 0, 'basic': 1, 'verbose': 2, 'trace': 3 };
+    if ((levels[cfgLevel] || 0) >= (levels[level] || 0)) {
+        logger.info(id + 'ALSA: ' + msg);
+    }
+}
+
 function peppyScreensaver(context) {
 	var self = this;
 
@@ -959,6 +970,7 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
 
     // write DSP
     if (self.config.get('useDSP') != confData.useDSP) {
+        alsaLog(self.logger, 'basic', 'savePeppyMeterConf: useDSP toggled ' + self.config.get('useDSP') + ' -> ' + confData.useDSP);
         self.config.set('useDSP', confData.useDSP);
         self.checkDSPactive(!confData.useDSP);
         self.switch_Spotify(!confData.useDSP);
@@ -1162,6 +1174,7 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
   
   if (uiNeedsUpdate) {self.updateUIConfig();}
   if (uiNeedsReboot) {
+      alsaLog(self.logger, 'basic', 'savePeppyMeterConf: triggering ALSA rebuild (alsaSelection=' + self.config.get('alsaSelection') + ')');
       self.switch_alsaConfig(parseInt(self.config.get('alsaSelection'),10));
       //self.rebootMessage();}
   }
@@ -2094,6 +2107,7 @@ peppyScreensaver.prototype.switch_alsaConfig = function (alsaConf) {
     // Disable for Pi modular ALSA - uses inline meter instead
     var enableDSD = alsaConf == 1 ? true : false;
     var enableMPDOutput = isX64 ? true : enableDSD;
+    alsaLog(self.logger, 'basic', 'switch_alsaConfig: alsaConf=' + alsaConf + ' isX64=' + isX64 + ' enableMPDOutput=' + enableMPDOutput);
     
     self.MPD_setOutput(MPD_include, enableMPDOutput)
 //        .then(self.MPD_allowedFormats.bind(self, MPD, enableDSD)) // not more needed
@@ -2224,6 +2238,7 @@ peppyScreensaver.prototype.switch_alsaModular = function () {
         var softmixer = self.getAlsaConfigParam('softvolume');
         // only if outputdevice or mixer changed
         if (last_outputdevice !== outputdevice || last_softmixer !== softmixer) {
+            alsaLog(self.logger, 'basic', 'switch_alsaModular: outputdevice changed ' + last_outputdevice + ' -> ' + outputdevice + ' or softmixer changed ' + last_softmixer + ' -> ' + softmixer);
             var alsaConf = parseInt(self.config.get('alsaSelection'),10);
             if (alsaConf == 0) { // and only for modular alsa      
                 self.writeAsoundConfigModular(alsaConf).then(self.updateALSAConfigFile.bind(self));
@@ -2481,24 +2496,33 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
   var useDSP = fs.existsSync(dsp_config) && self.config.get('useDSP');
   var plugType = self.config.get('useUSBDAC') ? 'copy' : 'empty';
   var useSpot = self.config.get('useSpotify');
+  alsaLog(self.logger, 'verbose', 'writeAsoundConfigModular: alsaConf=' + alsaConf + ' useDSP=' + useDSP + ' isX64=' + isX64 + ' plugType=' + plugType + ' useSpot=' + useSpot);
+  alsaLog(self.logger, 'verbose', 'writeAsoundConfigModular: template=' + asoundTmpl + ' output=' + asoundConf);
 
   if (fs.existsSync(asoundTmpl)) {
     var asounddata = fs.readFileSync(asoundTmpl, 'utf8');
+    var peppyalsaMode;
     
     if (alsaConf == 1) { // DSD native
         if (!useDSP) {
             conf = asounddata.replace('${alsaDirect}', 'Peppyalsa');
+            peppyalsaMode = 'DSD-passthrough';
+        } else {
+            peppyalsaMode = 'DSD-with-bridge (no Peppyalsa assignment)';
         }
 
     } else {  // modular alsa
         if (useDSP) {
             // Fusion bridge on: inline meter (no multi, no dummy, no rate constraint)
             conf = asounddata.replace('${alsaInlineMeter}', 'Peppyalsa');
+            peppyalsaMode = 'inline-meter (bridge on)';
         } else {
             // Use inline meter to capture ALL audio sources (MPD, DAB/FM, airplay, etc.)
             conf = asounddata.replace('${alsaMeter}', 'Peppyalsa');
+            peppyalsaMode = 'multi-duplicate (bridge off)';
         }
     }
+    alsaLog(self.logger, 'basic', 'Peppyalsa mode: ' + peppyalsaMode);
 
     conf = conf.replace('${alsaInlineMeter}', 'peppy3_off');
     conf = conf.replace('${alsaMeter}', 'peppy1_off');
@@ -2533,12 +2557,13 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
 //    var rate = parseInt(outputdevice,10) > 1 ? 16000 : 44100;
 //    conf = conf.replace('${rate}', rate);    
         
+    alsaLog(self.logger, 'trace', 'writeAsoundConfigModular: generated config:\n' + conf);
     fs.writeFile(asoundConf, conf, 'utf8', function (err) {
         if (err) {
             self.logger.info('Cannot write ' + asoundConf + ': ' + err);
             defer.resolve(); // resolve anyway to not block chain
         } else {
-            //self.logger.info(asoundConf + ' file written');
+            alsaLog(self.logger, 'basic', 'config written: ' + asoundConf);
             if (fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED'){
                 var cmdret = self.commandRouter.executeOnPlugin('music_service', 'spop', 'initializeLibrespotDaemon', '');            
             }
