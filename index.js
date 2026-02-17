@@ -2498,8 +2498,8 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
     conf = conf.replace('${alsaMeter}', 'peppy1_off');
     conf = conf.replace('${alsaDirect}', 'peppy2_off');
     conf = conf.replace('${type}', plugType);
-    // Fusion bridge on: multi slave b = peppyalsa_meter_48k (resamples to 48k for meter); off: mpd_peppyalsa (direct)
-    conf = conf.replace(/\$\{peppyalsaMeterSlave\}/g, useDSP ? 'peppyalsa_meter_48k' : 'mpd_peppyalsa');
+    // Fusion bridge on: null sink (accepts any rate) so multi negotiates source rate; off: hw:Dummy (48k)
+    conf = conf.replace('${dummyPcmDef}', useDSP ? '  type null' : '  type hw\n\tcard Dummy\n\tdevice 0');
 
     //for spotify
     if (!useDSP) {

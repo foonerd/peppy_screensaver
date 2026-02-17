@@ -9,7 +9,6 @@ pcm.${alsaDirect} {
 
 # ---> input from modular alsa 
 # duplicate route for meters to play also DSD files
-# Fusion bridge on: slave b = peppyalsa_meter_48k (resamples to 48k for dummy so multi runs at main rate)
 pcm.${alsaMeter} {
   type plug
   route_policy "duplicate"
@@ -19,7 +18,7 @@ pcm.${alsaMeter} {
 
     slaves.a.pcm "postpeppyalsa"
     slaves.a.channels 2
-    slaves.b.pcm "${peppyalsaMeterSlave}"
+    slaves.b.pcm "mpd_peppyalsa"
     slaves.b.channels 2
 
     bindings.0 { slave a; channel 0; }
@@ -27,17 +26,6 @@ pcm.${alsaMeter} {
     bindings.2 { slave b; channel 0; }
     bindings.3 { slave b; channel 1; }
   }
-}
-
-# ---> peppyalsa meter path: resample to 48k for dummy (Fusion bridge)
-# speexrate handles high conversion ratios (e.g. 384k->48k) unlike the default converter
-pcm.peppyalsa_meter_48k {
-  type plug
-  slave {
-    rate 48000
-    pcm "mpd_peppyalsa"
-  }
-  rate_converter "speexrate"
 }
 
 # ---> input from exclusive MPD output for peppyalsa
@@ -109,11 +97,9 @@ pcm_scope_type.peppyalsa {
     lib /data/plugins/user_interface/peppy_screensaver/lib/libpeppyalsa.so
 }
 
-# null output
+# null output (Fusion bridge on: type null so multi can negotiate any rate; off: hw:Dummy at 48k)
 pcm.dummy {
-  type hw
-	card Dummy
-	device 0
+${dummyPcmDef}
 }
 
 # needed for some sound cards otherwiese Spotify stops playing after 10 seconds
