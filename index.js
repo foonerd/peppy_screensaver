@@ -2498,8 +2498,8 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
     conf = conf.replace('${alsaMeter}', 'peppy1_off');
     conf = conf.replace('${alsaDirect}', 'peppy2_off');
     conf = conf.replace('${type}', plugType);
-    // Fusion bridge on: null sink (accepts any rate) so multi negotiates source rate; off: hw:Dummy (48k)
-    conf = conf.replace('${dummyPcmDef}', useDSP ? '  type null' : '  type hw\n\tcard Dummy\n\tdevice 0');
+    // Fusion bridge on: plug wraps hw:Dummy (accepts any rate, converts to 48k) so multi negotiates source rate; off: hw:Dummy direct
+    conf = conf.replace('${dummyPcmDef}', useDSP ? '  type plug\n  slave.pcm "hw:Dummy"' : '  type hw\n\tcard Dummy\n\tdevice 0');
 
     //for spotify
     if (!useDSP) {

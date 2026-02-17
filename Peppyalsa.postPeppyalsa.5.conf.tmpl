@@ -97,7 +97,7 @@ pcm_scope_type.peppyalsa {
     lib /data/plugins/user_interface/peppy_screensaver/lib/libpeppyalsa.so
 }
 
-# null output (Fusion bridge on: type null so multi can negotiate any rate; off: hw:Dummy at 48k)
+# null output (Fusion bridge on: plug wraps hw:Dummy so multi can negotiate any rate; off: hw:Dummy direct)
 pcm.dummy {
 ${dummyPcmDef}
 }
