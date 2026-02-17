@@ -2491,15 +2491,19 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
         }
 
     } else {  // modular alsa
-        // Use inline meter to capture ALL audio sources (MPD, DAB/FM, airplay, etc.)
-        conf = asounddata.replace('${alsaMeter}', 'Peppyalsa');
+        if (useDSP) {
+            // Fusion bridge on: inline meter (no multi, no dummy, no rate constraint)
+            conf = asounddata.replace('${alsaInlineMeter}', 'Peppyalsa');
+        } else {
+            // Use inline meter to capture ALL audio sources (MPD, DAB/FM, airplay, etc.)
+            conf = asounddata.replace('${alsaMeter}', 'Peppyalsa');
+        }
     }
 
+    conf = conf.replace('${alsaInlineMeter}', 'peppy3_off');
     conf = conf.replace('${alsaMeter}', 'peppy1_off');
     conf = conf.replace('${alsaDirect}', 'peppy2_off');
     conf = conf.replace('${type}', plugType);
-    // Fusion bridge on: plug wraps hw:Dummy (accepts any rate, converts to 48k) so multi negotiates source rate; off: hw:Dummy direct
-    conf = conf.replace('${dummyPcmDef}', useDSP ? '  type plug\n  slave.pcm "hw:Dummy"' : '  type hw\n\tcard Dummy\n\tdevice 0');
 
     //for spotify
     if (!useDSP) {

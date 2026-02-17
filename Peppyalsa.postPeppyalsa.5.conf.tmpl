@@ -7,6 +7,13 @@ pcm.${alsaDirect} {
   slave.pcm "postpeppyalsa"
 }
 
+# ---> inline meter for Fusion bridge (no multi, no rate constraint)
+pcm.${alsaInlineMeter} {
+  type meter
+  slave.pcm "postpeppyalsa"
+  scopes.0 peppyalsa
+}
+
 # ---> input from modular alsa 
 # duplicate route for meters to play also DSD files
 pcm.${alsaMeter} {
@@ -97,9 +104,11 @@ pcm_scope_type.peppyalsa {
     lib /data/plugins/user_interface/peppy_screensaver/lib/libpeppyalsa.so
 }
 
-# null output (Fusion bridge on: plug wraps hw:Dummy so multi can negotiate any rate; off: hw:Dummy direct)
+# null output
 pcm.dummy {
-${dummyPcmDef}
+  type hw
+	card Dummy
+	device 0
 }
 
 # needed for some sound cards otherwiese Spotify stops playing after 10 seconds
