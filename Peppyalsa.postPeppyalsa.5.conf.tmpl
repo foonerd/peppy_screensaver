@@ -7,6 +7,13 @@ pcm.${alsaDirect} {
   slave.pcm "postpeppyalsa"
 }
 
+# ---> inline meter for Fusion bridge (no multi, no rate constraint)
+pcm.${alsaInlineMeter} {
+  type meter
+  slave.pcm "postpeppyalsa"
+  scopes.0 peppyalsa
+}
+
 # ---> input from modular alsa 
 # duplicate route for meters to play also DSD files
 pcm.${alsaMeter} {

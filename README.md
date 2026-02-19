@@ -670,6 +670,35 @@ Log levels:
 
 **Note:** Disable after troubleshooting - the log file can fill /tmp (volatile RAM disk).
 
+#### ALSA Config Logging
+
+The debug level also controls ALSA configuration logging in the Node.js plugin (output to Volumio log, not `/tmp/peppy_debug.log`). This logs what happens when the ALSA pipeline is built or rebuilt (e.g., on startup, bridge toggle, output device change).
+
+| Level | What is logged | When |
+|-------|---------------|------|
+| **Off** | Nothing | — |
+| **Basic** | Peppyalsa mode selected (inline-meter / multi-duplicate / DSD-passthrough), config file written, bridge toggle direction, ALSA rebuild trigger, output device/mixer changes | On every ALSA config rebuild |
+| **Verbose** | All Basic entries plus: full input parameters (useDSP, alsaConf, isX64, plugType, useSpotify), template and output file paths | On every ALSA config rebuild |
+| **Trace** | All Verbose entries plus: full generated ALSA config content | On every ALSA config rebuild |
+
+**To view:** Check Volumio log with `journalctl -u volumio` or `cat /var/log/volumio.log` and search for `peppy_screensaver: ALSA:`.
+
+**Example output at Basic level:**
+```
+peppy_screensaver: ALSA: Peppyalsa mode: inline-meter (bridge on)
+peppy_screensaver: ALSA: config written: /data/plugins/.../asound/Peppyalsa.postPeppyalsa.5.conf
+```
+
+**Example output at Verbose level:**
+```
+peppy_screensaver: ALSA: writeAsoundConfigModular: alsaConf=0 useDSP=true isX64=false plugType=empty useSpot=false
+peppy_screensaver: ALSA: writeAsoundConfigModular: template=/data/plugins/.../Peppyalsa.postPeppyalsa.5.conf.tmpl output=/data/plugins/.../asound/Peppyalsa.postPeppyalsa.5.conf
+peppy_screensaver: ALSA: Peppyalsa mode: inline-meter (bridge on)
+peppy_screensaver: ALSA: config written: /data/plugins/.../asound/Peppyalsa.postPeppyalsa.5.conf
+```
+
+**Trace level** adds the full generated config content (can be large).
+
 ### Configuration Diagnostic
 
 To dump the current meter configuration (useful for diagnosing missing backgrounds, wrong paths, etc.):
