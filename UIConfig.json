@@ -29,7 +29,8 @@
                                       "needleCache",
                                       "cachesize",
                                       "mouseEnabled",
-                                      "displayOutput"
+                                      "displayOutput",
+                                      "doNotDeleteThemes"
                                       ]
                               },
                 "content": [
@@ -234,9 +235,16 @@
                                     "label": "Display=1"
                                  }
                                ]
+                            },
+                            {
+                             "id": "doNotDeleteThemes",
+                             "element": "switch",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.DO_NOT_DELETE_THEMES_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.DO_NOT_DELETE_THEMES",
+                             "value": false
                             }
-                            ]
-                },
+                ]
+            },
                 {
                 "id": "VUmeter_conf",
                 "element": "section",

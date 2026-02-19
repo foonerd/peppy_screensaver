@@ -47,6 +47,10 @@
     "value":"0",
     "type":"number"
   },
+  "doNotDeleteThemes": {
+    "value": false,
+    "type": "boolean"
+  },
   "remoteServerEnabled": {
     "value": false,
     "type": "boolean"

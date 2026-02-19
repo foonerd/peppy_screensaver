@@ -68,6 +68,8 @@
     "MOUSE_DOC":"For a touchscreen enable the mouse support, to have the possibility to stop the screensaver per touch. For a standard HDMI display without touch disable this option",
     "DISPLAY_OUTPUT_DOC":"Per default is display port 0 used on a raspberry pi for both hdmi ports. Volumio Primo use display port 1", 
     "DISPLAY_OUTPUT":"Displayport",
+    "DO_NOT_DELETE_THEMES":"Do not delete themes",
+    "DO_NOT_DELETE_THEMES_DOC":"When enabled: on uninstall the theme data folder is not removed; on install or update existing themes are not overwritten. Applies to all your custom themes (meters, spectrum, cassette, turntable, etc.).",
     "APPLY":"Apply",
     "INFO_MIN":"The value has been adjusted to the lowest possible because the value entered is too small.",
     "INFO_MAX":"The value has been adjusted to the highest possible because the value entered is too big.",

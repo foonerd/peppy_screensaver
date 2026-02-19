@@ -27,6 +27,7 @@ const ini = require('ini');
 //---
 const id = 'peppy_screensaver: ';      // for logging
 const PluginPath = '/data/plugins/user_interface/peppy_screensaver';
+const DATA_DIR = '/data/INTERNAL/peppy_screensaver';  // themes (meters, spectrum, cassette, turntable, etc.)
 const runFlag = '/tmp/peppyrunning';   // for detection, if peppymeter always running
 const persistFile = '/tmp/peppy_persist';  // for persist countdown communication with Python
 //---
@@ -613,6 +614,7 @@ peppyScreensaver.prototype.getUIConfig = function() {
             // display output
             uiconf.sections[0].content[15].value.value = self.config.get('displayOutput');
             uiconf.sections[0].content[15].value.label = 'Display=' + self.config.get('displayOutput');
+            uiconf.sections[0].content[16].value = self.config.get('doNotDeleteThemes') === true;
              
             // section 6 - Playback Behavior -----------------------------
             var persistVal = self.config.get('persist_duration');
@@ -964,6 +966,23 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
   let noChanges = true;
   uiNeedsUpdate = false;
   let uiNeedsReboot = false;
+
+  // Do not delete themes: persist and sync flag file for install/uninstall scripts
+  var doNotDelete = confData.doNotDeleteThemes === true;
+  if (self.config.get('doNotDeleteThemes') !== doNotDelete) {
+    self.config.set('doNotDeleteThemes', doNotDelete);
+    noChanges = false;
+  }
+  try {
+    if (doNotDelete) {
+      if (!fs.existsSync(DATA_DIR)) { fs.mkdirSync(DATA_DIR, { recursive: true }); }
+      fs.writeFileSync(DATA_DIR + '/.preserve', '', 'utf8');
+    } else {
+      if (fs.existsSync(DATA_DIR + '/.preserve')) { fs.unlinkSync(DATA_DIR + '/.preserve'); }
+    }
+  } catch (e) {
+    self.logger.error(id + 'savePeppyMeterConf: failed to sync preserve-themes flag: ' + e.message);
+  }
   
   if (fs.existsSync(PeppyConf)){
     //var config = ini.parse(fs.readFileSync(PeppyConf, 'utf-8'));

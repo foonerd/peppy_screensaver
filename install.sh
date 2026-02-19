@@ -149,21 +149,25 @@ echo "Setting up templates..."
 
 mkdir -p "$DATA_DIR"
 
-# PeppyMeter templates
-if [ -d "$PLUGIN_DIR/templates" ]; then
-  cp -rf "$PLUGIN_DIR/templates" "$DATA_DIR/"
-  rm -rf "$PLUGIN_DIR/templates"
-fi
-cp -rf "$PEPPYMETER_DIR"/*0x* "$DATA_DIR/templates/" 2>/dev/null || true
-rm -rf "$PEPPYMETER_DIR"/*0x* 2>/dev/null || true
+if [ -f "$DATA_DIR/.preserve" ]; then
+  echo "Preserving existing themes (user setting)..."
+else
+  # PeppyMeter templates
+  if [ -d "$PLUGIN_DIR/templates" ]; then
+    cp -rf "$PLUGIN_DIR/templates" "$DATA_DIR/"
+    rm -rf "$PLUGIN_DIR/templates"
+  fi
+  cp -rf "$PEPPYMETER_DIR"/*0x* "$DATA_DIR/templates/" 2>/dev/null || true
+  rm -rf "$PEPPYMETER_DIR"/*0x* 2>/dev/null || true
 
-# PeppySpectrum templates
-if [ -d "$PLUGIN_DIR/templates_spectrum" ]; then
-  cp -rf "$PLUGIN_DIR/templates_spectrum" "$DATA_DIR/"
-  rm -rf "$PLUGIN_DIR/templates_spectrum"
+  # PeppySpectrum templates
+  if [ -d "$PLUGIN_DIR/templates_spectrum" ]; then
+    cp -rf "$PLUGIN_DIR/templates_spectrum" "$DATA_DIR/"
+    rm -rf "$PLUGIN_DIR/templates_spectrum"
+  fi
+  cp -rf "$PEPPYSPECTRUM_DIR"/*0x* "$DATA_DIR/templates_spectrum/" 2>/dev/null || true
+  rm -rf "$PEPPYSPECTRUM_DIR"/*0x* 2>/dev/null || true
 fi
-cp -rf "$PEPPYSPECTRUM_DIR"/*0x* "$DATA_DIR/templates_spectrum/" 2>/dev/null || true
-rm -rf "$PEPPYSPECTRUM_DIR"/*0x* 2>/dev/null || true
 
 # Permissions
 chmod -R 755 "$DATA_DIR"
