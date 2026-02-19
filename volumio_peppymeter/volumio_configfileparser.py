@@ -218,6 +218,13 @@ PROGRESS_ARC_WIDTH = "progress.arc.width"
 PROGRESS_ARC_ANGLE_START = "progress.arc.angle.start"
 PROGRESS_ARC_ANGLE_END = "progress.arc.angle.end"
 PROGRESS_FONT_SIZE = "progress.font.size"
+# Progress bar markers (optional): progress.marker.N.pos (0-100), .image (filename), .label (text)
+PROGRESS_MARKER_POS = "progress.marker.%s.pos"
+PROGRESS_MARKER_IMAGE = "progress.marker.%s.image"
+PROGRESS_MARKER_LABEL = "progress.marker.%s.label"
+# Progress bar head icon (moves with current progress; respects horizontal/vertical orientation)
+PROGRESS_HEAD_IMAGE = "progress.head.image"
+PROGRESS_HEAD_OFFSET = "progress.head.offset"
 
 PLAY_TXT_CENTER = "playinfo.text.center"
 PLAY_TITLE_POS = "playinfo.title.pos"
@@ -1040,6 +1047,39 @@ class Volumio_ConfigFileParser(object):
             d[PROGRESS_FONT_SIZE] = config_file.getint(section, PROGRESS_FONT_SIZE)
         except:
             d[PROGRESS_FONT_SIZE] = 24
+
+        # Optional progress bar markers (1..5): position 0-100, optional image filename, optional label
+        d["progress.markers"] = []
+        for n in range(1, 6):
+            try:
+                pos_key = PROGRESS_MARKER_POS % n
+                pos_val = config_file.getfloat(section, pos_key)
+                pos_val = max(0.0, min(100.0, float(pos_val)))
+            except Exception:
+                break
+            img_key = PROGRESS_MARKER_IMAGE % n
+            lbl_key = PROGRESS_MARKER_LABEL % n
+            try:
+                img_val = config_file.get(section, img_key).strip() or None
+            except Exception:
+                img_val = None
+            try:
+                lbl_val = config_file.get(section, lbl_key).strip() or None
+            except Exception:
+                lbl_val = None
+            if img_val is not None or lbl_val is not None:
+                d["progress.markers"].append({"pos": pos_val, "image": img_val, "label": lbl_val})
+
+        # Optional progress bar head icon (moves with current progress; matches bar orientation)
+        try:
+            d[PROGRESS_HEAD_IMAGE] = config_file.get(section, PROGRESS_HEAD_IMAGE).strip() or None
+        except Exception:
+            d[PROGRESS_HEAD_IMAGE] = None
+        try:
+            spl = config_file.get(section, PROGRESS_HEAD_OFFSET).split(',')
+            d[PROGRESS_HEAD_OFFSET] = (int(spl[0]), int(spl[1]))
+        except Exception:
+            d[PROGRESS_HEAD_OFFSET] = (0, 0)
 
         try:
             d[PLAY_TXT_CENTER] = config_file.getboolean(section, PLAY_TXT_CENTER)

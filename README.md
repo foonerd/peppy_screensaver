@@ -645,6 +645,20 @@ progress.slider.tip.offset = 0,0
 | `progress.arc.angle.end` | Arc end angle in degrees (default: -45) |
 | `progress.font.size` | Font size for numeric style (default: 24) |
 
+**Progress bar markers (optional):** Add fixed signs or buttons along the bar (e.g. chapter marks). Up to 5 markers per section. Each marker has a position (0–100% along the bar) and either an image filename or a text label. Use keys `progress.marker.1.pos`, `progress.marker.1.image` or `progress.marker.1.label`, then `progress.marker.2.*`, etc. Images are loaded from the meter folder. Markers are visual only (no click/touch).
+
+**Progress bar head icon (optional):** One icon that moves with the current progress (e.g. a forward arrow at the “head” of the bar). Use `progress.head.image` = filename (from meter folder). Position matches bar orientation: horizontal bars move the icon left-to-right, vertical bars bottom-to-top. Optional `progress.head.offset` = x,y (pixels) to nudge the icon.
+
+Example (fixed markers + head icon):
+```ini
+progress.marker.1.pos = 0
+progress.marker.1.label = |
+progress.marker.2.pos = 100
+progress.marker.2.label = |
+progress.head.image = progress_head_arrow.png
+progress.head.offset = 0,0
+```
+
 See the wiki for detailed configuration reference and examples.
 
 ## Troubleshooting

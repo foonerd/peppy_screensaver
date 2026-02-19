@@ -582,7 +582,8 @@ class SliderIndicator:
                  knob_image=None, knob_angle_start=225.0, knob_angle_end=-45.0,
                  arc_width=6, arc_angle_start=225.0, arc_angle_end=-45.0,
                  slider_track=None, slider_tip=None, slider_orientation="vertical",
-                 slider_travel=None, slider_tip_offset=None, name="Slider"):
+                 slider_travel=None, slider_tip_offset=None, name="Slider", markers=None,
+                 head_image=None, head_offset=(0, 0)):
         """Initialize slider indicator.
         
         :param pos: (x, y) screen position
@@ -606,6 +607,9 @@ class SliderIndicator:
         :param slider_travel: (min, max) pixel range for tip movement
         :param slider_tip_offset: (x, y) offset for tip anchor point
         :param name: identifier for logging (default: 'Slider')
+        :param markers: optional list of dicts {"pos": 0-100, "image": filename, "label": text} for progress bar markers
+        :param head_image: optional filename for icon drawn at current progress (head); respects orientation
+        :param head_offset: (x, y) pixel offset for head icon (default: 0,0)
         """
         self.name = name
         self.pos = pos
@@ -667,6 +671,34 @@ class SliderIndicator:
         # Backing
         self._backing = None
         self._backing_rect = None
+
+        # Progress bar markers (visual only): list of {"pos": 0-100, "image": filename, "label": str, "_surface": pg.Surface or None}
+        self._markers = []
+        if markers and base_path and meter_folder:
+            for m in markers:
+                pos_pct = max(0.0, min(100.0, float(m.get("pos", 0))))
+                img_fn = m.get("image")
+                lbl = m.get("label")
+                entry = {"pos": pos_pct, "image": img_fn, "label": lbl, "_surface": None}
+                if img_fn:
+                    path = os.path.join(base_path, meter_folder, img_fn)
+                    try:
+                        if os.path.exists(path):
+                            entry["_surface"] = pg.image.load(path).convert_alpha()
+                    except Exception:
+                        pass
+                self._markers.append(entry)
+
+        # Progress bar head icon (moves with current progress; position matches horizontal/vertical orientation)
+        self.head_offset = head_offset if head_offset else (0, 0)
+        self._head_surface = None
+        if head_image and base_path and meter_folder:
+            path = os.path.join(base_path, meter_folder, head_image)
+            try:
+                if os.path.exists(path):
+                    self._head_surface = pg.image.load(path).convert_alpha()
+            except Exception:
+                pass
     
     def _load_knob_image(self):
         """Load knob image for rotary style."""
@@ -827,15 +859,20 @@ class SliderIndicator:
         self._needs_redraw = False
         
         if self.style == self.STYLE_NUMERIC:
-            return self._render_numeric(screen, volume)
+            rect = self._render_numeric(screen, volume)
         elif self.style == self.STYLE_SLIDER:
-            return self._render_slider(screen, volume)
+            rect = self._render_slider(screen, volume)
         elif self.style == self.STYLE_KNOB:
-            return self._render_knob(screen, volume)
+            rect = self._render_knob(screen, volume)
         elif self.style == self.STYLE_ARC:
-            return self._render_arc(screen, volume)
-        
-        return None
+            rect = self._render_arc(screen, volume)
+        else:
+            return None
+        if rect and self._markers:
+            self._render_markers(screen)
+        if rect and self._head_surface:
+            self._render_head(screen, volume)
+        return rect
     
     def _render_numeric(self, screen, volume):
         """Render numeric volume display."""
@@ -952,6 +989,55 @@ class SliderIndicator:
     def force_redraw(self):
         """Force redraw on next render call."""
         self._needs_redraw = True
+
+    def _get_marker_position(self, pos_pct):
+        """Return (x, y) screen position for a marker at pos_pct (0-100) along the bar/arc."""
+        x, y = self.pos
+        w, h = self.dim
+        pos_pct = max(0.0, min(100.0, pos_pct)) / 100.0
+        if self.style == self.STYLE_SLIDER:
+            if self.slider_orientation == "vertical":
+                # 0% at bottom, 100% at top
+                px = x + w // 2
+                py = y + h - int(pos_pct * h)
+            else:
+                # 0% at left, 100% at right
+                px = x + int(pos_pct * w)
+                py = y + h // 2
+            return (px, py)
+        if self.style in (self.STYLE_ARC, self.STYLE_KNOB):
+            # Position on arc: angle from start to end
+            cx = x + w // 2
+            cy = y + h // 2
+            r = max(4, min(w, h) // 2 - self.arc_width)
+            angle_deg = self.arc_angle_start - pos_pct * self.arc_angle_sweep
+            rad = math.radians(angle_deg)
+            px = int(cx + r * math.cos(rad))
+            py = int(cy - r * math.sin(rad))
+            return (px, py)
+        # Numeric / fallback: treat as horizontal
+        return (x + int(pos_pct * w), y + h // 2)
+
+    def _render_markers(self, screen):
+        """Draw marker images/labels at their positions along the progress bar (visual only)."""
+        for m in self._markers:
+            px, py = self._get_marker_position(m["pos"])
+            surf = m.get("_surface")
+            if surf:
+                # Center image on marker position
+                sw, sh = surf.get_size()
+                screen.blit(surf, (px - sw // 2, py - sh // 2))
+            elif m.get("label"):
+                text_surf = self.font.render(m["label"], True, self.color)
+                tw, th = text_surf.get_size()
+                screen.blit(text_surf, (px - tw // 2, py - th // 2))
+
+    def _render_head(self, screen, volume):
+        """Draw head icon at current progress position (matches bar orientation: horizontal or vertical)."""
+        px, py = self._get_marker_position(volume)
+        hw, hh = self._head_surface.get_size()
+        off_x, off_y = self.head_offset
+        screen.blit(self._head_surface, (px - hw // 2 + off_x, py - hh // 2 + off_y))
     
     def needs_render(self, value):
         """Check if render is needed based on value change.
@@ -1350,6 +1436,9 @@ class IndicatorRenderer:
         # Get font from fonts dict if available
         font = self.fonts.get("regular") if self.fonts else None
         
+        markers = self.config.get("progress.markers") or []
+        head_image = self.config.get("progress.head.image")
+        head_offset = self.config.get("progress.head.offset", (0, 0))
         self._progress = SliderIndicator(
             pos=pos,
             dim=dim,
@@ -1371,7 +1460,10 @@ class IndicatorRenderer:
             slider_orientation=self.config.get("progress.slider.orientation", "horizontal"),
             slider_travel=self.config.get("progress.slider.travel"),
             slider_tip_offset=self.config.get("progress.slider.tip.offset", (0, 0)),
-            name="Progress"
+            name="Progress",
+            markers=markers,
+            head_image=head_image,
+            head_offset=head_offset
         )
     
     def has_indicators(self):
