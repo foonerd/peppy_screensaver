@@ -387,6 +387,10 @@ Priority when using "Use skin value" mode:
 2. Global speed (`playinfo.scrolling.speed`)
 3. Default (40)
 
+### Time display (elapsed and total)
+
+Optional elapsed and total time labels use the same style as time remaining and apply to basic, cassette, and turntable when set in the meter config. In `meters.txt` (per meter): `time.elapsed.pos`, `time.elapsed.color`, `time.total.pos`, `time.total.color`. See the wiki meters.txt reference for details.
+
 ### Cassette Reel Animation
 
 Cassette-style skins can display rotating tape reels that spin during playback.
@@ -912,7 +916,7 @@ All handlers follow a layered render order:
 5. Album art
 6. Text fields (artist, title, album)
 7. Indicators (volume, mute, shuffle, repeat, progress)
-8. Time remaining
+8. Time remaining (and optional elapsed/total when `time.elapsed.pos` / `time.total.pos` are set in the meter config)
 9. Sample rate / format icon
 10. Foreground mask
 

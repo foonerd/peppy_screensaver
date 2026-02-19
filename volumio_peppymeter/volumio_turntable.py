@@ -51,6 +51,7 @@ from volumio_configfileparser import (
     PLAY_TYPE_POS, PLAY_TYPE_COLOR, PLAY_TYPE_DIM,
     PLAY_SAMPLE_POS, PLAY_SAMPLE_STYLE, PLAY_SAMPLE_MAX,
     TIME_REMAINING_POS, TIMECOLOR,
+    TIME_ELAPSED_POS, TIME_ELAPSED_COLOR, TIME_TOTAL_POS, TIME_TOTAL_COLOR,
     FONTSIZE_LIGHT, FONTSIZE_REGULAR, FONTSIZE_BOLD, FONTSIZE_DIGI, FONTCOLOR,
     FONT_STYLE_B, FONT_STYLE_R, FONT_STYLE_L,
     METER_DELAY
@@ -1761,6 +1762,8 @@ class TurntableHandler:
         
         # Caches
         self.last_time_str = ""
+        self.last_elapsed_str = ""
+        self.last_total_str = ""
         self.last_time_surf = None
         self.last_sample_text = ""
         self.last_sample_surf = None
@@ -1781,6 +1784,8 @@ class TurntableHandler:
         
         # Reset caches
         self.last_time_str = ""
+        self.last_elapsed_str = ""
+        self.last_total_str = ""
         self.last_time_surf = None
         self.last_sample_text = ""
         self.last_sample_surf = None
@@ -1834,6 +1839,8 @@ class TurntableHandler:
         title_pos = mc_vol.get(PLAY_TITLE_POS)
         album_pos = mc_vol.get(PLAY_ALBUM_POS)
         self.time_pos = mc_vol.get(TIME_REMAINING_POS)
+        self.time_elapsed_pos = mc_vol.get(TIME_ELAPSED_POS)
+        self.time_total_pos = mc_vol.get(TIME_TOTAL_POS)
         self.sample_pos = mc_vol.get(PLAY_SAMPLE_POS)
         self.type_pos = mc_vol.get(PLAY_TYPE_POS)
         type_dim = mc_vol.get(PLAY_TYPE_DIM)
@@ -1858,6 +1865,8 @@ class TurntableHandler:
         title_color = sanitize_color(mc_vol.get(PLAY_TITLE_COLOR), self.font_color)
         album_color = sanitize_color(mc_vol.get(PLAY_ALBUM_COLOR), self.font_color)
         self.time_color = sanitize_color(mc_vol.get(TIMECOLOR), self.font_color)
+        self.time_elapsed_color = sanitize_color(mc_vol.get(TIME_ELAPSED_COLOR), self.time_color)
+        self.time_total_color = sanitize_color(mc_vol.get(TIME_TOTAL_COLOR), self.time_color)
         self.type_color = sanitize_color(mc_vol.get(PLAY_TYPE_COLOR), self.font_color)
         
         # Max widths
@@ -2104,7 +2113,19 @@ class TurntableHandler:
             self.time_rect = pg.Rect(self.time_pos[0], self.time_pos[1], time_width, time_height)
         else:
             self.time_rect = None
-        
+        if self.time_elapsed_pos and self.fontDigi:
+            time_width = self.fontDigi.size('00:00')[0] + 10
+            time_height = self.fontDigi.get_linesize()
+            self.time_elapsed_rect = pg.Rect(self.time_elapsed_pos[0], self.time_elapsed_pos[1], time_width, time_height)
+        else:
+            self.time_elapsed_rect = None
+        if self.time_total_pos and self.fontDigi:
+            time_width = self.fontDigi.size('00:00')[0] + 10
+            time_height = self.fontDigi.get_linesize()
+            self.time_total_rect = pg.Rect(self.time_total_pos[0], self.time_total_pos[1], time_width, time_height)
+        else:
+            self.time_total_rect = None
+
         # Sample rect (for clearing from bgr_surface)
         if self.sample_pos and self.sample_box and self.sample_font:
             sample_height = self.sample_font.get_linesize()
@@ -2622,7 +2643,36 @@ class TurntableHandler:
                     
                     if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
                         log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {self.time_pos}, color={t_color}", "trace", "time")
-        
+
+        # Z7b: Elapsed time (when time.elapsed.pos set; anti-collision: force redraw when tonearm/vinyl/art overlap)
+        if self.time_elapsed_pos and self.fontDigi:
+            seek_ms = meta.get("seek") or 0
+            elapsed_sec = max(0, int(seek_ms) // 1000)
+            elapsed_str = f"{elapsed_sec // 60:02d}:{elapsed_sec % 60:02d}"
+            elapsed_overlaps = overlaps_cleared(self.time_elapsed_rect) if self.time_elapsed_rect else False
+            needs_redraw = elapsed_str != self.last_elapsed_str or elapsed_overlaps
+            if needs_redraw:
+                self.last_elapsed_str = elapsed_str
+                if self.bgr_surface and self.time_elapsed_rect:
+                    self.screen.blit(self.bgr_surface, self.time_elapsed_rect.topleft, self.time_elapsed_rect)
+                    dirty_rects.append(self.time_elapsed_rect.copy())
+                surf = self.fontDigi.render(elapsed_str, True, self.time_elapsed_color)
+                self.screen.blit(surf, self.time_elapsed_pos)
+
+        # Z7c: Total time (when time.total.pos set; anti-collision: force redraw when tonearm/vinyl/art overlap)
+        if self.time_total_pos and self.fontDigi:
+            duration_sec = max(0, int(meta.get("duration") or 0))
+            total_str = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}"
+            total_overlaps = overlaps_cleared(self.time_total_rect) if self.time_total_rect else False
+            needs_redraw = total_str != self.last_total_str or total_overlaps
+            if needs_redraw:
+                self.last_total_str = total_str
+                if self.bgr_surface and self.time_total_rect:
+                    self.screen.blit(self.bgr_surface, self.time_total_rect.topleft, self.time_total_rect)
+                    dirty_rects.append(self.time_total_rect.copy())
+                surf = self.fontDigi.render(total_str, True, self.time_total_color)
+                self.screen.blit(surf, self.time_total_pos)
+
         # LAYER: Sample rate / format icon - only force if overlapping cleared regions
         # Format icon
         if self.type_rect:
