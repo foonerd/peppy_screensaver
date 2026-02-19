@@ -236,6 +236,18 @@ PLAY_ARTIST_MAX = "playinfo.artist.maxwidth"
 PLAY_ALBUM_POS = "playinfo.album.pos"
 PLAY_ALBUM_COLOR = "playinfo.album.color"
 PLAY_ALBUM_MAX = "playinfo.album.maxwidth"
+PLAY_NEXT_TITLE_POS = "playinfo.next.title.pos"
+PLAY_NEXT_TITLE_COLOR = "playinfo.next.title.color"
+PLAY_NEXT_TITLE_MAX = "playinfo.next.title.maxwidth"
+PLAY_NEXT_TITLE_STYLE = "PLAY_NEXT_TITLE_STYLE"
+PLAY_NEXT_ARTIST_POS = "playinfo.next.artist.pos"
+PLAY_NEXT_ARTIST_COLOR = "playinfo.next.artist.color"
+PLAY_NEXT_ARTIST_MAX = "playinfo.next.artist.maxwidth"
+PLAY_NEXT_ARTIST_STYLE = "PLAY_NEXT_ARTIST_STYLE"
+PLAY_NEXT_ALBUM_POS = "playinfo.next.album.pos"
+PLAY_NEXT_ALBUM_COLOR = "playinfo.next.album.color"
+PLAY_NEXT_ALBUM_MAX = "playinfo.next.album.maxwidth"
+PLAY_NEXT_ALBUM_STYLE = "PLAY_NEXT_ALBUM_STYLE"
 PLAY_TITLE_STYLE = "PLAY_TITLE_STYLE"
 PLAY_ARTIST_STYLE = "PLAY_ARTIST_STYLE"
 PLAY_ALBUM_STYLE = "PLAY_ALBUM_STYLE"
@@ -1166,6 +1178,56 @@ class Volumio_ConfigFileParser(object):
             d[SCROLLING_SPEED_ALBUM] = config_file.getint(section, SCROLLING_SPEED_ALBUM)
         except:
             d[SCROLLING_SPEED_ALBUM] = global_speed
+
+        # Next track: title, artist, album (same structure as playinfo.title/artist/album)
+        try:
+            spl = config_file.get(section, PLAY_NEXT_TITLE_POS).split(',')
+            d[PLAY_NEXT_TITLE_POS] = (int(spl[0]), int(spl[1]))
+            d[PLAY_NEXT_TITLE_STYLE] = spl[2].strip() if len(spl) >= 3 else FONT_STYLE_R
+        except:
+            d[PLAY_NEXT_TITLE_POS] = None
+            d[PLAY_NEXT_TITLE_STYLE] = FONT_STYLE_R
+        try:
+            spl = config_file.get(section, PLAY_NEXT_TITLE_COLOR).split(',')
+            d[PLAY_NEXT_TITLE_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[PLAY_NEXT_TITLE_COLOR] = None
+        try:
+            d[PLAY_NEXT_TITLE_MAX] = config_file.getint(section, PLAY_NEXT_TITLE_MAX)
+        except:
+            d[PLAY_NEXT_TITLE_MAX] = None
+        try:
+            spl = config_file.get(section, PLAY_NEXT_ARTIST_POS).split(',')
+            d[PLAY_NEXT_ARTIST_POS] = (int(spl[0]), int(spl[1]))
+            d[PLAY_NEXT_ARTIST_STYLE] = spl[2].strip() if len(spl) >= 3 else FONT_STYLE_R
+        except:
+            d[PLAY_NEXT_ARTIST_POS] = None
+            d[PLAY_NEXT_ARTIST_STYLE] = FONT_STYLE_R
+        try:
+            spl = config_file.get(section, PLAY_NEXT_ARTIST_COLOR).split(',')
+            d[PLAY_NEXT_ARTIST_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[PLAY_NEXT_ARTIST_COLOR] = None
+        try:
+            d[PLAY_NEXT_ARTIST_MAX] = config_file.getint(section, PLAY_NEXT_ARTIST_MAX)
+        except:
+            d[PLAY_NEXT_ARTIST_MAX] = None
+        try:
+            spl = config_file.get(section, PLAY_NEXT_ALBUM_POS).split(',')
+            d[PLAY_NEXT_ALBUM_POS] = (int(spl[0]), int(spl[1]))
+            d[PLAY_NEXT_ALBUM_STYLE] = spl[2].strip() if len(spl) >= 3 else FONT_STYLE_R
+        except:
+            d[PLAY_NEXT_ALBUM_POS] = None
+            d[PLAY_NEXT_ALBUM_STYLE] = FONT_STYLE_R
+        try:
+            spl = config_file.get(section, PLAY_NEXT_ALBUM_COLOR).split(',')
+            d[PLAY_NEXT_ALBUM_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[PLAY_NEXT_ALBUM_COLOR] = None
+        try:
+            d[PLAY_NEXT_ALBUM_MAX] = config_file.getint(section, PLAY_NEXT_ALBUM_MAX)
+        except:
+            d[PLAY_NEXT_ALBUM_MAX] = None
 
         try:
             spl = config_file.get(section, PLAY_TYPE_POS).split(',')		

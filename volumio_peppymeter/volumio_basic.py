@@ -51,6 +51,9 @@ from volumio_configfileparser import (
     PLAY_TITLE_POS, PLAY_TITLE_COLOR, PLAY_TITLE_MAX, PLAY_TITLE_STYLE,
     PLAY_ARTIST_POS, PLAY_ARTIST_COLOR, PLAY_ARTIST_MAX, PLAY_ARTIST_STYLE,
     PLAY_ALBUM_POS, PLAY_ALBUM_COLOR, PLAY_ALBUM_MAX, PLAY_ALBUM_STYLE,
+    PLAY_NEXT_TITLE_POS, PLAY_NEXT_TITLE_COLOR, PLAY_NEXT_TITLE_MAX, PLAY_NEXT_TITLE_STYLE,
+    PLAY_NEXT_ARTIST_POS, PLAY_NEXT_ARTIST_COLOR, PLAY_NEXT_ARTIST_MAX, PLAY_NEXT_ARTIST_STYLE,
+    PLAY_NEXT_ALBUM_POS, PLAY_NEXT_ALBUM_COLOR, PLAY_NEXT_ALBUM_MAX, PLAY_NEXT_ALBUM_STYLE,
     PLAY_TYPE_POS, PLAY_TYPE_COLOR, PLAY_TYPE_DIM,
     PLAY_SAMPLE_POS, PLAY_SAMPLE_STYLE, PLAY_SAMPLE_MAX,
     TIME_REMAINING_POS, TIMECOLOR,
@@ -685,7 +688,10 @@ class BasicHandler:
         self.artist_scroller = None
         self.title_scroller = None
         self.album_scroller = None
-        
+        self.next_title_scroller = None
+        self.next_artist_scroller = None
+        self.next_album_scroller = None
+
         # Positions and fonts
         self.time_pos = None
         self.sample_pos = None
@@ -799,6 +805,9 @@ class BasicHandler:
         artist_pos = mc_vol.get(PLAY_ARTIST_POS)
         title_pos = mc_vol.get(PLAY_TITLE_POS)
         album_pos = mc_vol.get(PLAY_ALBUM_POS)
+        next_title_pos = mc_vol.get(PLAY_NEXT_TITLE_POS)
+        next_artist_pos = mc_vol.get(PLAY_NEXT_ARTIST_POS)
+        next_album_pos = mc_vol.get(PLAY_NEXT_ALBUM_POS)
         self.time_pos = mc_vol.get(TIME_REMAINING_POS)
         self.time_elapsed_pos = mc_vol.get(TIME_ELAPSED_POS)
         self.time_total_pos = mc_vol.get(TIME_TOTAL_POS)
@@ -823,6 +832,9 @@ class BasicHandler:
         artist_style = mc_vol.get(PLAY_ARTIST_STYLE, FONT_STYLE_L)
         title_style = mc_vol.get(PLAY_TITLE_STYLE, FONT_STYLE_B)
         album_style = mc_vol.get(PLAY_ALBUM_STYLE, FONT_STYLE_L)
+        next_title_style = mc_vol.get(PLAY_NEXT_TITLE_STYLE, FONT_STYLE_R)
+        next_artist_style = mc_vol.get(PLAY_NEXT_ARTIST_STYLE, FONT_STYLE_R)
+        next_album_style = mc_vol.get(PLAY_NEXT_ALBUM_STYLE, FONT_STYLE_R)
         sample_style = mc_vol.get(PLAY_SAMPLE_STYLE, FONT_STYLE_L)
         
         # Fonts per field
@@ -836,6 +848,9 @@ class BasicHandler:
         artist_color = sanitize_color(mc_vol.get(PLAY_ARTIST_COLOR), self.font_color)
         title_color = sanitize_color(mc_vol.get(PLAY_TITLE_COLOR), self.font_color)
         album_color = sanitize_color(mc_vol.get(PLAY_ALBUM_COLOR), self.font_color)
+        next_title_color = sanitize_color(mc_vol.get(PLAY_NEXT_TITLE_COLOR), self.font_color)
+        next_artist_color = sanitize_color(mc_vol.get(PLAY_NEXT_ARTIST_COLOR), self.font_color)
+        next_album_color = sanitize_color(mc_vol.get(PLAY_NEXT_ALBUM_COLOR), self.font_color)
         self.time_color = sanitize_color(mc_vol.get(TIMECOLOR), self.font_color)
         self.time_elapsed_color = sanitize_color(mc_vol.get(TIME_ELAPSED_COLOR), self.time_color)
         self.time_total_color = sanitize_color(mc_vol.get(TIME_TOTAL_COLOR), self.time_color)
@@ -845,6 +860,9 @@ class BasicHandler:
         artist_max = as_int(mc_vol.get(PLAY_ARTIST_MAX), 0)
         title_max = as_int(mc_vol.get(PLAY_TITLE_MAX), 0)
         album_max = as_int(mc_vol.get(PLAY_ALBUM_MAX), 0)
+        next_title_max = as_int(mc_vol.get(PLAY_NEXT_TITLE_MAX), 0)
+        next_artist_max = as_int(mc_vol.get(PLAY_NEXT_ARTIST_MAX), 0)
+        next_album_max = as_int(mc_vol.get(PLAY_NEXT_ALBUM_MAX), 0)
         sample_max = as_int(mc_vol.get(PLAY_SAMPLE_MAX), 0)
         
         # Calculate box widths
@@ -867,6 +885,9 @@ class BasicHandler:
         artist_box = get_box_width(artist_pos, artist_max)
         title_box = get_box_width(title_pos, title_max)
         album_box = get_box_width(album_pos, album_max)
+        next_title_box = get_box_width(next_title_pos, next_title_max)
+        next_artist_box = get_box_width(next_artist_pos, next_artist_max)
+        next_album_box = get_box_width(next_album_pos, next_album_max)
         
         if self.sample_pos and (global_max or sample_max):
             if sample_max:
@@ -967,7 +988,10 @@ class BasicHandler:
         self.artist_scroller = ScrollingLabel(artist_font, artist_color, artist_pos, artist_box, center=self.center_flag, speed_px_per_sec=scroll_speed_artist) if artist_pos else None
         self.title_scroller = ScrollingLabel(title_font, title_color, title_pos, title_box, center=self.center_flag, speed_px_per_sec=scroll_speed_title) if title_pos else None
         self.album_scroller = ScrollingLabel(album_font, album_color, album_pos, album_box, center=self.center_flag, speed_px_per_sec=scroll_speed_album) if album_pos else None
-        
+        self.next_title_scroller = ScrollingLabel(self._font_for_style(next_title_style), next_title_color, next_title_pos, next_title_box, center=self.center_flag, speed_px_per_sec=scroll_speed_title) if next_title_pos else None
+        self.next_artist_scroller = ScrollingLabel(self._font_for_style(next_artist_style), next_artist_color, next_artist_pos, next_artist_box, center=self.center_flag, speed_px_per_sec=scroll_speed_artist) if next_artist_pos else None
+        self.next_album_scroller = ScrollingLabel(self._font_for_style(next_album_style), next_album_color, next_album_pos, next_album_box, center=self.center_flag, speed_px_per_sec=scroll_speed_album) if next_album_pos else None
+
         # LAYER COMPOSITION: Set background surface for scrollers
         if self.bgr_surface:
             if self.artist_scroller:
@@ -979,7 +1003,16 @@ class BasicHandler:
             if self.album_scroller:
                 self.album_scroller.capture_backing(self.screen)
                 self.album_scroller.set_background_surface(self.bgr_surface)
-        
+            if self.next_title_scroller:
+                self.next_title_scroller.capture_backing(self.screen)
+                self.next_title_scroller.set_background_surface(self.bgr_surface)
+            if self.next_artist_scroller:
+                self.next_artist_scroller.capture_backing(self.screen)
+                self.next_artist_scroller.set_background_surface(self.bgr_surface)
+            if self.next_album_scroller:
+                self.next_album_scroller.capture_backing(self.screen)
+                self.next_album_scroller.set_background_surface(self.bgr_surface)
+
         # Capture backing for indicators (indicators use skip_restore=True in basic handler,
         # but set_background_surfaces is still needed for proper transparent icon handling)
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
@@ -1219,7 +1252,23 @@ class BasicHandler:
             rect = self.album_scroller.draw(self.screen)
             if rect:
                 dirty_rects.append(rect)
-        
+
+        if self.next_title_scroller:
+            self.next_title_scroller.update_text(meta.get("next_title", "") or "")
+            rect = self.next_title_scroller.draw(self.screen)
+            if rect:
+                dirty_rects.append(rect)
+        if self.next_artist_scroller:
+            self.next_artist_scroller.update_text(meta.get("next_artist", "") or "")
+            rect = self.next_artist_scroller.draw(self.screen)
+            if rect:
+                dirty_rects.append(rect)
+        if self.next_album_scroller:
+            self.next_album_scroller.update_text(meta.get("next_album", "") or "")
+            rect = self.next_album_scroller.draw(self.screen)
+            if rect:
+                dirty_rects.append(rect)
+
         # LAYER: Indicators (skip_restore=True - meters redraw every frame, procedural indicators self-clear)
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
             self.indicator_renderer.render(self.screen, meta, dirty_rects, force=False, skip_restore=True)
@@ -1478,3 +1527,6 @@ class BasicHandler:
         self.artist_scroller = None
         self.title_scroller = None
         self.album_scroller = None
+        self.next_title_scroller = None
+        self.next_artist_scroller = None
+        self.next_album_scroller = None

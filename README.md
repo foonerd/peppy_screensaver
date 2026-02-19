@@ -391,6 +391,10 @@ Priority when using "Use skin value" mode:
 
 Optional elapsed and total time labels use the same style as time remaining and apply to basic, cassette, and turntable when set in the meter config. In `meters.txt` (per meter): `time.elapsed.pos`, `time.elapsed.color`, `time.total.pos`, `time.total.color`. See the wiki meters.txt reference for details.
 
+### Next track
+
+You can show the next track in the queue at separate positions for title, artist, and album. In `meters.txt` (per meter) use the same parameter pattern as current track, prefixed with `next.`: `playinfo.next.title.pos`, `playinfo.next.title.color`, `playinfo.next.title.maxwidth`, and similarly `playinfo.next.artist.*`, `playinfo.next.album.*`. Same rendering and anti-collision behavior as elapsed/total time. Omit a `playinfo.next.*.pos` to leave that field hidden.
+
 ### Cassette Reel Animation
 
 Cassette-style skins can display rotating tape reels that spin during playback.

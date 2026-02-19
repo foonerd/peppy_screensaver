@@ -82,6 +82,9 @@ from volumio_configfileparser import (
     PLAY_TITLE_POS, PLAY_TITLE_COLOR, PLAY_TITLE_MAX, PLAY_TITLE_STYLE,
     PLAY_ARTIST_POS, PLAY_ARTIST_COLOR, PLAY_ARTIST_MAX, PLAY_ARTIST_STYLE,
     PLAY_ALBUM_POS, PLAY_ALBUM_COLOR, PLAY_ALBUM_MAX, PLAY_ALBUM_STYLE,
+    PLAY_NEXT_TITLE_POS, PLAY_NEXT_TITLE_COLOR, PLAY_NEXT_TITLE_MAX, PLAY_NEXT_TITLE_STYLE,
+    PLAY_NEXT_ARTIST_POS, PLAY_NEXT_ARTIST_COLOR, PLAY_NEXT_ARTIST_MAX, PLAY_NEXT_ARTIST_STYLE,
+    PLAY_NEXT_ALBUM_POS, PLAY_NEXT_ALBUM_COLOR, PLAY_NEXT_ALBUM_MAX, PLAY_NEXT_ALBUM_STYLE,
     PLAY_TYPE_POS, PLAY_TYPE_COLOR, PLAY_TYPE_DIM,
     PLAY_SAMPLE_POS, PLAY_SAMPLE_STYLE, PLAY_SAMPLE_MAX,
     TIME_REMAINING_POS, TIMECOLOR,
@@ -685,6 +688,19 @@ class MetadataWatcher:
             if position is not None:
                 self.queue_position = int(position)
                 self.metadata["queue_position"] = self.queue_position
+
+            # Next track in queue (for playinfo.next display)
+            # Queue items may use "name" for track title (Volumio UI uses curEntry.name)
+            next_idx = self.queue_position + 1
+            if next_idx < len(self.queue_array):
+                next_track = self.queue_array[next_idx]
+                self.metadata["next_title"] = (next_track.get("title") or next_track.get("name") or "").strip()
+                self.metadata["next_artist"] = (next_track.get("artist") or "").strip()
+                self.metadata["next_album"] = (next_track.get("album") or "").strip()
+            else:
+                self.metadata["next_title"] = ""
+                self.metadata["next_artist"] = ""
+                self.metadata["next_album"] = ""
             
             # Playback control states (for indicators)
             self.metadata["volume"] = data.get("volume", 0) or 0
