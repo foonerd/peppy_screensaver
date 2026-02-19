@@ -68,12 +68,13 @@ After installation, enable and configure the plugin:
 - Playback state indicators (volume, mute, shuffle, repeat, play/pause, progress)
 - Cassette deck skins with rotating reel animation
 - Track info overlay with scrolling text
+- Optional ticker (single continuously looping line: artist · title · album) per theme in meters.txt
 - Display persistence during pause/track changes (eliminates flicker)
 - Random meter rotation
 - Touch to exit
 - Configurable frame rate and update interval for CPU tuning
 - Meter window positioning (centered or manual coordinates)
-- Configurable text scrolling speeds
+- Configurable text scrolling speeds (plugin UI); scroll direction and ticker are set per theme in meters.txt
 - **Remote display server** - Stream visualization to other devices on your network
 
 ## Plugin Settings
@@ -154,7 +155,7 @@ Album art and cassette spool rotation speed and quality.
 
 ### Scrolling Settings
 
-Text scrolling speed for artist, title, and album display.
+Text scrolling speed for artist, title, and album display. The plugin UI controls only speed. Scroll direction (e.g. for a ticker) and the optional ticker (single looping line) are configured per theme in `meters.txt`; see the wiki meters.txt reference.
 
 | Setting | Description |
 |---------|-------------|
@@ -386,6 +387,18 @@ Priority when using "Use skin value" mode:
 1. Per-field speed (e.g., `playinfo.scrolling.speed.title`)
 2. Global speed (`playinfo.scrolling.speed`)
 3. Default (40)
+
+### Ticker (single looping line)
+
+You can show artist, title, and album (and optionally "Next: ...") in one continuously scrolling, looping line. Enable it per meter in `meters.txt` with `playinfo.ticker = True`, and set position, direction (`rtl` or `ltr`), separator, and spacing. The ticker can replace the separate artist/title/album fields or coexist with them. Width is always capped to the visible screen. See the wiki [meters.txt reference](https://github.com/foonerd/peppy_screensaver/wiki/meters.txt-Reference) for all `playinfo.ticker.*` options.
+
+### Time display (elapsed and total)
+
+Optional elapsed and total time labels use the same style as time remaining and apply to basic, cassette, and turntable when set in the meter config. In `meters.txt` (per meter): `time.elapsed.pos`, `time.elapsed.color`, `time.total.pos`, `time.total.color`. See the wiki meters.txt reference for details.
+
+### Next track
+
+You can show the next track in the queue at separate positions for title, artist, and album. In `meters.txt` (per meter) use the same parameter pattern as current track, prefixed with `next.`: `playinfo.next.title.pos`, `playinfo.next.title.color`, `playinfo.next.title.maxwidth`, and similarly `playinfo.next.artist.*`, `playinfo.next.album.*`. Same rendering and anti-collision behavior as elapsed/total time. Omit a `playinfo.next.*.pos` to leave that field hidden.
 
 ### Cassette Reel Animation
 
@@ -645,6 +658,20 @@ progress.slider.tip.offset = 0,0
 | `progress.arc.angle.end` | Arc end angle in degrees (default: -45) |
 | `progress.font.size` | Font size for numeric style (default: 24) |
 
+**Progress bar markers (optional):** Add fixed signs or buttons along the bar (e.g. chapter marks). Up to 5 markers per section. Each marker has a position (0–100% along the bar) and either an image filename or a text label. Use keys `progress.marker.1.pos`, `progress.marker.1.image` or `progress.marker.1.label`, then `progress.marker.2.*`, etc. Images are loaded from the meter folder. Markers are visual only (no click/touch).
+
+**Progress bar head icon (optional):** One icon that moves with the current progress (e.g. a forward arrow at the “head” of the bar). Use `progress.head.image` = filename (from meter folder). Position matches bar orientation: horizontal bars move the icon left-to-right, vertical bars bottom-to-top. Optional `progress.head.offset` = x,y (pixels) to nudge the icon.
+
+Example (fixed markers + head icon):
+```ini
+progress.marker.1.pos = 0
+progress.marker.1.label = |
+progress.marker.2.pos = 100
+progress.marker.2.label = |
+progress.head.image = progress_head_arrow.png
+progress.head.offset = 0,0
+```
+
 See the wiki for detailed configuration reference and examples.
 
 ## Troubleshooting
@@ -898,7 +925,7 @@ All handlers follow a layered render order:
 5. Album art
 6. Text fields (artist, title, album)
 7. Indicators (volume, mute, shuffle, repeat, progress)
-8. Time remaining
+8. Time remaining (and optional elapsed/total when `time.elapsed.pos` / `time.total.pos` are set in the meter config)
 9. Sample rate / format icon
 10. Foreground mask
 
@@ -950,6 +977,7 @@ The following configuration options are deprecated and will be removed in a futu
   - `playinfo.artist.maxwidth`
   - `playinfo.album.maxwidth`
   - `playinfo.samplerate.maxwidth`
+  - For the ticker line, use `playinfo.ticker.maxwidth` (optional; width is always capped to the visible screen).
 
 ## License
 

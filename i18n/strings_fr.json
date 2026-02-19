@@ -68,6 +68,8 @@
     "MOUSE_DOC":"Pour un écran tactile, activez le support de la souris, pour avoir la possibilité d'arrêter l'économiseur d'écran par touche. Pour un écran HDMI standard sans toucher, désactivez cette option",
     "DISPLAY_OUTPUT_DOC":"Par défaut, le port d'affichage 0 est utilisé sur un Raspberry Pi pour les deux ports HDMI. Volumio Primo utilise le port d'affichage 1", 
     "DISPLAY_OUTPUT":"Port d'affichage",
+    "DO_NOT_DELETE_THEMES":"Ne pas supprimer les thèmes",
+    "DO_NOT_DELETE_THEMES_DOC":"Si activé : lors de la désinstallation, le dossier des thèmes n'est pas supprimé ; lors de l'installation ou de la mise à jour, les thèmes existants ne sont pas écrasés. S'applique à tous vos thèmes personnalisés (meters, spectre, cassette, tourne-disque, etc.).",
     "APPLY":"Appliquer",
     "INFO_MIN":"La valeur a été ajustée au minimum possible.",
     "INFO_MAX":"La valeur a été ajustée au maximum possible.",

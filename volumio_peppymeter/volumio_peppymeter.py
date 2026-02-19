@@ -19,7 +19,10 @@ import os
 import sys
 import time
 import ctypes
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None  # Unix-only; not available on Windows
 import io
 import math
 import json
@@ -79,9 +82,13 @@ from volumio_configfileparser import (
     PLAY_TITLE_POS, PLAY_TITLE_COLOR, PLAY_TITLE_MAX, PLAY_TITLE_STYLE,
     PLAY_ARTIST_POS, PLAY_ARTIST_COLOR, PLAY_ARTIST_MAX, PLAY_ARTIST_STYLE,
     PLAY_ALBUM_POS, PLAY_ALBUM_COLOR, PLAY_ALBUM_MAX, PLAY_ALBUM_STYLE,
+    PLAY_NEXT_TITLE_POS, PLAY_NEXT_TITLE_COLOR, PLAY_NEXT_TITLE_MAX, PLAY_NEXT_TITLE_STYLE,
+    PLAY_NEXT_ARTIST_POS, PLAY_NEXT_ARTIST_COLOR, PLAY_NEXT_ARTIST_MAX, PLAY_NEXT_ARTIST_STYLE,
+    PLAY_NEXT_ALBUM_POS, PLAY_NEXT_ALBUM_COLOR, PLAY_NEXT_ALBUM_MAX, PLAY_NEXT_ALBUM_STYLE,
     PLAY_TYPE_POS, PLAY_TYPE_COLOR, PLAY_TYPE_DIM,
     PLAY_SAMPLE_POS, PLAY_SAMPLE_STYLE, PLAY_SAMPLE_MAX,
     TIME_REMAINING_POS, TIMECOLOR,
+    TIME_ELAPSED_POS, TIME_ELAPSED_COLOR, TIME_TOTAL_POS, TIME_TOTAL_COLOR,
     FONTSIZE_LIGHT, FONTSIZE_REGULAR, FONTSIZE_BOLD, FONTSIZE_DIGI, FONTCOLOR,
     FONT_STYLE_B, FONT_STYLE_R, FONT_STYLE_L,
     METER_BKP, RANDOM_TITLE, SPECTRUM, SPECTRUM_SIZE,
@@ -681,6 +688,19 @@ class MetadataWatcher:
             if position is not None:
                 self.queue_position = int(position)
                 self.metadata["queue_position"] = self.queue_position
+
+            # Next track in queue (for playinfo.next display)
+            # Queue items may use "name" for track title (Volumio UI uses curEntry.name)
+            next_idx = self.queue_position + 1
+            if next_idx < len(self.queue_array):
+                next_track = self.queue_array[next_idx]
+                self.metadata["next_title"] = (next_track.get("title") or next_track.get("name") or "").strip()
+                self.metadata["next_artist"] = (next_track.get("artist") or "").strip()
+                self.metadata["next_album"] = (next_track.get("album") or "").strip()
+            else:
+                self.metadata["next_title"] = ""
+                self.metadata["next_artist"] = ""
+                self.metadata["next_album"] = ""
             
             # Playback control states (for indicators)
             self.metadata["volume"] = data.get("volume", 0) or 0
@@ -1690,10 +1710,10 @@ class DiscoveryAnnouncer:
 # ScrollingLabel - Replaces TextAnimator threads
 # =============================================================================
 class ScrollingLabel:
-    """Single-threaded scrolling text label with bidirectional scroll and self-backing."""
+    """Single-threaded scrolling text label with bidirectional or one-way scroll and self-backing."""
     
     def __init__(self, font, color, pos, box_width, center=False,
-                 speed_px_per_sec=40, pause_ms=400):
+                 speed_px_per_sec=40, pause_ms=400, scroll_direction="default"):
         self.font = font
         self.color = color
         self.pos = pos
@@ -1701,6 +1721,8 @@ class ScrollingLabel:
         self.center = bool(center)
         self.speed = float(speed_px_per_sec)
         self.pause_ms = int(pause_ms)
+        sd = (scroll_direction or "default").lower()
+        self.scroll_direction = sd if sd in ("default", "ltr", "rtl") else "default"
         self.text = ""
         self.surf = None
         self.text_w = 0
@@ -1742,8 +1764,13 @@ class ScrollingLabel:
         self.text = new_text
         self.surf = self.font.render(self.text, True, self.color)
         self.text_w, self.text_h = self.surf.get_size()
-        self.offset = 0.0
-        self.direction = 1
+        limit = max(0, self.text_w - self.box_width) if self.box_width > 0 else 0
+        if self.scroll_direction == "rtl":
+            self.offset = float(limit)
+            self.direction = -1
+        else:
+            self.offset = 0.0
+            self.direction = 1
         self._pause_until = 0
         self._last_time = pg.time.get_ticks()
         self._needs_redraw = True
@@ -1812,14 +1839,28 @@ class ScrollingLabel:
             limit = max(0, self.text_w - self.box_width)
             self.offset += self.direction * self.speed * dt
             
-            if self.offset <= 0:
-                self.offset = 0
-                self.direction = 1
-                self._pause_until = now + self.pause_ms
-            elif self.offset >= limit:
-                self.offset = float(limit)
-                self.direction = -1
-                self._pause_until = now + self.pause_ms
+            if self.scroll_direction == "default":
+                if self.offset <= 0:
+                    self.offset = 0
+                    self.direction = 1
+                    self._pause_until = now + self.pause_ms
+                elif self.offset >= limit:
+                    self.offset = float(limit)
+                    self.direction = -1
+                    self._pause_until = now + self.pause_ms
+            elif self.scroll_direction == "ltr":
+                if self.offset >= limit:
+                    self.offset = float(limit)
+                    self._pause_until = now + self.pause_ms
+                if self.offset > limit:
+                    self.offset = 0.0
+            elif self.scroll_direction == "rtl":
+                if self.offset <= 0:
+                    self.offset = 0
+                    self._pause_until = now + self.pause_ms
+                if self.offset < 0:
+                    self.offset = float(limit)
+                    self.direction = -1
         
         # OPTIMIZATION: Only redraw if offset changed by at least 1 pixel
         current_offset_int = int(self.offset)
@@ -3575,16 +3616,23 @@ def get_memory():
 
 
 def memory_limit():
-    """Limit maximum memory usage."""
+    """Limit maximum memory usage (Unix only). No-op on Windows."""
+    if resource is None:
+        return
     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
     free_memory = get_memory() * 1024
     resource.setrlimit(resource.RLIMIT_AS, (free_memory + 90000000, hard))
 
 
 def trim_memory():
-    """Trim memory allocation."""
-    libc = ctypes.CDLL("libc.so.6")
-    return libc.malloc_trim(0)
+    """Trim memory allocation (Unix only). No-op on Windows."""
+    if os.name == 'nt':
+        return
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        return libc.malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
 
 
 # =============================================================================

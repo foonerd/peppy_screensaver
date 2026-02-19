@@ -218,6 +218,13 @@ PROGRESS_ARC_WIDTH = "progress.arc.width"
 PROGRESS_ARC_ANGLE_START = "progress.arc.angle.start"
 PROGRESS_ARC_ANGLE_END = "progress.arc.angle.end"
 PROGRESS_FONT_SIZE = "progress.font.size"
+# Progress bar markers (optional): progress.marker.N.pos (0-100), .image (filename), .label (text)
+PROGRESS_MARKER_POS = "progress.marker.%s.pos"
+PROGRESS_MARKER_IMAGE = "progress.marker.%s.image"
+PROGRESS_MARKER_LABEL = "progress.marker.%s.label"
+# Progress bar head icon (moves with current progress; respects horizontal/vertical orientation)
+PROGRESS_HEAD_IMAGE = "progress.head.image"
+PROGRESS_HEAD_OFFSET = "progress.head.offset"
 
 PLAY_TXT_CENTER = "playinfo.text.center"
 PLAY_TITLE_POS = "playinfo.title.pos"
@@ -229,6 +236,18 @@ PLAY_ARTIST_MAX = "playinfo.artist.maxwidth"
 PLAY_ALBUM_POS = "playinfo.album.pos"
 PLAY_ALBUM_COLOR = "playinfo.album.color"
 PLAY_ALBUM_MAX = "playinfo.album.maxwidth"
+PLAY_NEXT_TITLE_POS = "playinfo.next.title.pos"
+PLAY_NEXT_TITLE_COLOR = "playinfo.next.title.color"
+PLAY_NEXT_TITLE_MAX = "playinfo.next.title.maxwidth"
+PLAY_NEXT_TITLE_STYLE = "PLAY_NEXT_TITLE_STYLE"
+PLAY_NEXT_ARTIST_POS = "playinfo.next.artist.pos"
+PLAY_NEXT_ARTIST_COLOR = "playinfo.next.artist.color"
+PLAY_NEXT_ARTIST_MAX = "playinfo.next.artist.maxwidth"
+PLAY_NEXT_ARTIST_STYLE = "PLAY_NEXT_ARTIST_STYLE"
+PLAY_NEXT_ALBUM_POS = "playinfo.next.album.pos"
+PLAY_NEXT_ALBUM_COLOR = "playinfo.next.album.color"
+PLAY_NEXT_ALBUM_MAX = "playinfo.next.album.maxwidth"
+PLAY_NEXT_ALBUM_STYLE = "PLAY_NEXT_ALBUM_STYLE"
 PLAY_TITLE_STYLE = "PLAY_TITLE_STYLE"
 PLAY_ARTIST_STYLE = "PLAY_ARTIST_STYLE"
 PLAY_ALBUM_STYLE = "PLAY_ALBUM_STYLE"
@@ -238,6 +257,19 @@ SCROLLING_SPEED = "playinfo.scrolling.speed"
 SCROLLING_SPEED_ARTIST = "playinfo.scrolling.speed.artist"
 SCROLLING_SPEED_TITLE = "playinfo.scrolling.speed.title"
 SCROLLING_SPEED_ALBUM = "playinfo.scrolling.speed.album"
+# Ticker: single scrolling line (artist · title · album; optional "Next: ...")
+PLAY_TICKER = "playinfo.ticker"
+PLAY_TICKER_REPLACE = "playinfo.ticker.replace"
+PLAY_TICKER_DIRECTION = "playinfo.ticker.direction"
+PLAY_TICKER_APPEND_NEXT = "playinfo.ticker.append_next"
+PLAY_TICKER_POS = "playinfo.ticker.pos"
+PLAY_TICKER_COLOR = "playinfo.ticker.color"
+PLAY_TICKER_MAX = "playinfo.ticker.maxwidth"
+PLAY_TICKER_STYLE = "PLAY_TICKER_STYLE"
+PLAY_TICKER_SPEED = "playinfo.ticker.speed"
+PLAY_TICKER_SEPARATOR = "playinfo.ticker.separator"
+PLAY_TICKER_SPACE_BETWEEN = "playinfo.ticker.space_between"
+PLAY_TICKER_END_SPACES = "playinfo.ticker.end_spaces"
 PLAY_TYPE_POS = "playinfo.type.pos"
 PLAY_TYPE_COLOR = "playinfo.type.color"
 PLAY_TYPE_DIM = "playinfo.type.dimension"
@@ -245,7 +277,11 @@ PLAY_SAMPLE_POS = "playinfo.samplerate.pos"
 PLAY_SAMPLE_STYLE = "PLAY_SAMPLE_STYLE"
 PLAY_SAMPLE_MAX = "playinfo.samplerate.maxwidth"
 TIME_REMAINING_POS = "time.remaining.pos"
-TIMECOLOR = "time.remaining.color" 
+TIMECOLOR = "time.remaining.color"
+TIME_ELAPSED_POS = "time.elapsed.pos"
+TIME_ELAPSED_COLOR = "time.elapsed.color"
+TIME_TOTAL_POS = "time.total.pos"
+TIME_TOTAL_COLOR = "time.total.color"
 FONT_STYLE_B = "bold"
 FONT_STYLE_R = "regular"
 FONT_STYLE_L = "light"
@@ -1041,6 +1077,39 @@ class Volumio_ConfigFileParser(object):
         except:
             d[PROGRESS_FONT_SIZE] = 24
 
+        # Optional progress bar markers (1..5): position 0-100, optional image filename, optional label
+        d["progress.markers"] = []
+        for n in range(1, 6):
+            try:
+                pos_key = PROGRESS_MARKER_POS % n
+                pos_val = config_file.getfloat(section, pos_key)
+                pos_val = max(0.0, min(100.0, float(pos_val)))
+            except Exception:
+                break
+            img_key = PROGRESS_MARKER_IMAGE % n
+            lbl_key = PROGRESS_MARKER_LABEL % n
+            try:
+                img_val = config_file.get(section, img_key).strip() or None
+            except Exception:
+                img_val = None
+            try:
+                lbl_val = config_file.get(section, lbl_key).strip() or None
+            except Exception:
+                lbl_val = None
+            if img_val is not None or lbl_val is not None:
+                d["progress.markers"].append({"pos": pos_val, "image": img_val, "label": lbl_val})
+
+        # Optional progress bar head icon (moves with current progress; matches bar orientation)
+        try:
+            d[PROGRESS_HEAD_IMAGE] = config_file.get(section, PROGRESS_HEAD_IMAGE).strip() or None
+        except Exception:
+            d[PROGRESS_HEAD_IMAGE] = None
+        try:
+            spl = config_file.get(section, PROGRESS_HEAD_OFFSET).split(',')
+            d[PROGRESS_HEAD_OFFSET] = (int(spl[0]), int(spl[1]))
+        except Exception:
+            d[PROGRESS_HEAD_OFFSET] = (0, 0)
+
         try:
             d[PLAY_TXT_CENTER] = config_file.getboolean(section, PLAY_TXT_CENTER)
         except:
@@ -1123,6 +1192,108 @@ class Volumio_ConfigFileParser(object):
         except:
             d[SCROLLING_SPEED_ALBUM] = global_speed
 
+        # Ticker: single scrolling line (optional; direction rtl/ltr, optional append next)
+        try:
+            d[PLAY_TICKER] = config_file.getboolean(section, PLAY_TICKER)
+        except:
+            d[PLAY_TICKER] = False
+        if d[PLAY_TICKER]:
+            try:
+                d[PLAY_TICKER_REPLACE] = config_file.getboolean(section, PLAY_TICKER_REPLACE)
+            except:
+                d[PLAY_TICKER_REPLACE] = False
+            try:
+                direction = config_file.get(section, PLAY_TICKER_DIRECTION).strip().lower()
+                d[PLAY_TICKER_DIRECTION] = direction if direction in ("ltr", "rtl") else "rtl"
+            except:
+                d[PLAY_TICKER_DIRECTION] = "rtl"
+            try:
+                d[PLAY_TICKER_APPEND_NEXT] = config_file.getboolean(section, PLAY_TICKER_APPEND_NEXT)
+            except:
+                d[PLAY_TICKER_APPEND_NEXT] = False
+            try:
+                spl = config_file.get(section, PLAY_TICKER_POS).split(',')
+                d[PLAY_TICKER_POS] = (int(spl[0]), int(spl[1]))
+                d[PLAY_TICKER_STYLE] = spl[2].strip() if len(spl) >= 3 else FONT_STYLE_R
+            except:
+                d[PLAY_TICKER_POS] = None
+                d[PLAY_TICKER_STYLE] = FONT_STYLE_R
+            try:
+                spl = config_file.get(section, PLAY_TICKER_COLOR).split(',')
+                d[PLAY_TICKER_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+            except:
+                d[PLAY_TICKER_COLOR] = d.get(PLAY_TITLE_COLOR) or (255, 255, 255)
+            try:
+                d[PLAY_TICKER_MAX] = config_file.getint(section, PLAY_TICKER_MAX)
+            except:
+                d[PLAY_TICKER_MAX] = None
+            try:
+                d[PLAY_TICKER_SPEED] = config_file.getint(section, PLAY_TICKER_SPEED)
+            except:
+                d[PLAY_TICKER_SPEED] = global_speed
+            try:
+                d[PLAY_TICKER_SEPARATOR] = config_file.get(section, PLAY_TICKER_SEPARATOR).strip() or " · "
+            except:
+                d[PLAY_TICKER_SEPARATOR] = " · "
+            try:
+                d[PLAY_TICKER_SPACE_BETWEEN] = max(0, config_file.getint(section, PLAY_TICKER_SPACE_BETWEEN))
+            except:
+                d[PLAY_TICKER_SPACE_BETWEEN] = 0
+            try:
+                d[PLAY_TICKER_END_SPACES] = max(0, config_file.getint(section, PLAY_TICKER_END_SPACES))
+            except:
+                d[PLAY_TICKER_END_SPACES] = 8
+
+        # Next track: title, artist, album (same structure as playinfo.title/artist/album)
+        try:
+            spl = config_file.get(section, PLAY_NEXT_TITLE_POS).split(',')
+            d[PLAY_NEXT_TITLE_POS] = (int(spl[0]), int(spl[1]))
+            d[PLAY_NEXT_TITLE_STYLE] = spl[2].strip() if len(spl) >= 3 else FONT_STYLE_R
+        except:
+            d[PLAY_NEXT_TITLE_POS] = None
+            d[PLAY_NEXT_TITLE_STYLE] = FONT_STYLE_R
+        try:
+            spl = config_file.get(section, PLAY_NEXT_TITLE_COLOR).split(',')
+            d[PLAY_NEXT_TITLE_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[PLAY_NEXT_TITLE_COLOR] = None
+        try:
+            d[PLAY_NEXT_TITLE_MAX] = config_file.getint(section, PLAY_NEXT_TITLE_MAX)
+        except:
+            d[PLAY_NEXT_TITLE_MAX] = None
+        try:
+            spl = config_file.get(section, PLAY_NEXT_ARTIST_POS).split(',')
+            d[PLAY_NEXT_ARTIST_POS] = (int(spl[0]), int(spl[1]))
+            d[PLAY_NEXT_ARTIST_STYLE] = spl[2].strip() if len(spl) >= 3 else FONT_STYLE_R
+        except:
+            d[PLAY_NEXT_ARTIST_POS] = None
+            d[PLAY_NEXT_ARTIST_STYLE] = FONT_STYLE_R
+        try:
+            spl = config_file.get(section, PLAY_NEXT_ARTIST_COLOR).split(',')
+            d[PLAY_NEXT_ARTIST_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[PLAY_NEXT_ARTIST_COLOR] = None
+        try:
+            d[PLAY_NEXT_ARTIST_MAX] = config_file.getint(section, PLAY_NEXT_ARTIST_MAX)
+        except:
+            d[PLAY_NEXT_ARTIST_MAX] = None
+        try:
+            spl = config_file.get(section, PLAY_NEXT_ALBUM_POS).split(',')
+            d[PLAY_NEXT_ALBUM_POS] = (int(spl[0]), int(spl[1]))
+            d[PLAY_NEXT_ALBUM_STYLE] = spl[2].strip() if len(spl) >= 3 else FONT_STYLE_R
+        except:
+            d[PLAY_NEXT_ALBUM_POS] = None
+            d[PLAY_NEXT_ALBUM_STYLE] = FONT_STYLE_R
+        try:
+            spl = config_file.get(section, PLAY_NEXT_ALBUM_COLOR).split(',')
+            d[PLAY_NEXT_ALBUM_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[PLAY_NEXT_ALBUM_COLOR] = None
+        try:
+            d[PLAY_NEXT_ALBUM_MAX] = config_file.getint(section, PLAY_NEXT_ALBUM_MAX)
+        except:
+            d[PLAY_NEXT_ALBUM_MAX] = None
+
         try:
             spl = config_file.get(section, PLAY_TYPE_POS).split(',')		
             d[PLAY_TYPE_POS] = (int(spl[0]), int(spl[1]))
@@ -1181,6 +1352,26 @@ class Volumio_ConfigFileParser(object):
             d[TIMECOLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
         except:
             d[TIMECOLOR] = (255,255,255)
+        try:
+            spl = config_file.get(section, TIME_ELAPSED_POS).split(',')
+            d[TIME_ELAPSED_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[TIME_ELAPSED_POS] = None
+        try:
+            spl = config_file.get(section, TIME_ELAPSED_COLOR).split(',')
+            d[TIME_ELAPSED_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[TIME_ELAPSED_COLOR] = (255, 255, 255)
+        try:
+            spl = config_file.get(section, TIME_TOTAL_POS).split(',')
+            d[TIME_TOTAL_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[TIME_TOTAL_POS] = None
+        try:
+            spl = config_file.get(section, TIME_TOTAL_COLOR).split(',')
+            d[TIME_TOTAL_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[TIME_TOTAL_COLOR] = (255, 255, 255)
 
         try:
             d[SPECTRUM_VISIBLE] = config_file.getboolean(section, SPECTRUM_VISIBLE)

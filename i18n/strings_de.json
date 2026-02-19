@@ -68,6 +68,8 @@
     "MOUSE_DOC":"Für Touch-Displays schalten sie diese Funktion ein, um die Möglichkeit zuhaben, den Screensaver per Touch zu benden. Für Standard HDMI-Displays ohne Touch-Funktion schalten Sie diese Funktion aus",
     "DISPLAY_OUTPUT_DOC":"Per default wird display port 0 verwendet auf einem raspberry pi für beide hdmi ports. Bei Volumio Primo wird allerdings display port 1 verwendet", 
     "DISPLAY_OUTPUT":"Displayport",
+    "DO_NOT_DELETE_THEMES":"Themes nicht löschen",
+    "DO_NOT_DELETE_THEMES_DOC":"Wenn aktiviert: Beim Deinstallieren wird der Theme-Ordner nicht gelöscht; beim Installieren oder Aktualisieren werden vorhandene Themes nicht überschrieben. Gilt für alle benutzerdefinierten Themes (Meter, Spektrum, Kassette, Plattenspieler usw.).",
     "APPLY":"Anwenden",
     "INFO_MIN":"Der Wert wurde auf den kleinstmöglichen angepasst, weil der eingegebene Wert zu klein ist.",
     "INFO_MAX":"Der Wert wurde auf den größstmöglichen angepasst, weil der eingegebene Wert zu groß ist.",

@@ -48,9 +48,16 @@ from volumio_configfileparser import (
     PLAY_TITLE_POS, PLAY_TITLE_COLOR, PLAY_TITLE_MAX, PLAY_TITLE_STYLE,
     PLAY_ARTIST_POS, PLAY_ARTIST_COLOR, PLAY_ARTIST_MAX, PLAY_ARTIST_STYLE,
     PLAY_ALBUM_POS, PLAY_ALBUM_COLOR, PLAY_ALBUM_MAX, PLAY_ALBUM_STYLE,
+    PLAY_NEXT_TITLE_POS, PLAY_NEXT_TITLE_COLOR, PLAY_NEXT_TITLE_MAX, PLAY_NEXT_TITLE_STYLE,
+    PLAY_NEXT_ARTIST_POS, PLAY_NEXT_ARTIST_COLOR, PLAY_NEXT_ARTIST_MAX, PLAY_NEXT_ARTIST_STYLE,
+    PLAY_NEXT_ALBUM_POS, PLAY_NEXT_ALBUM_COLOR, PLAY_NEXT_ALBUM_MAX, PLAY_NEXT_ALBUM_STYLE,
+    PLAY_TICKER, PLAY_TICKER_REPLACE, PLAY_TICKER_DIRECTION, PLAY_TICKER_APPEND_NEXT,
+    PLAY_TICKER_POS, PLAY_TICKER_COLOR, PLAY_TICKER_MAX, PLAY_TICKER_STYLE, PLAY_TICKER_SPEED,
+    PLAY_TICKER_SEPARATOR, PLAY_TICKER_SPACE_BETWEEN, PLAY_TICKER_END_SPACES,
     PLAY_TYPE_POS, PLAY_TYPE_COLOR, PLAY_TYPE_DIM,
     PLAY_SAMPLE_POS, PLAY_SAMPLE_STYLE, PLAY_SAMPLE_MAX,
     TIME_REMAINING_POS, TIMECOLOR,
+    TIME_ELAPSED_POS, TIME_ELAPSED_COLOR, TIME_TOTAL_POS, TIME_TOTAL_COLOR,
     FONTSIZE_LIGHT, FONTSIZE_REGULAR, FONTSIZE_BOLD, FONTSIZE_DIGI, FONTCOLOR,
     FONT_STYLE_B, FONT_STYLE_R, FONT_STYLE_L,
     METER_DELAY
@@ -356,10 +363,11 @@ def compute_foreground_regions(surface, min_gap=50, padding=2):
 # ScrollingLabel - Text animation with self-backing
 # =============================================================================
 class ScrollingLabel:
-    """Single-threaded scrolling text label with bidirectional scroll and self-backing."""
+    """Single-threaded scrolling text label with bidirectional or one-way scroll and self-backing."""
     
     def __init__(self, font, color, pos, box_width, center=False,
-                 speed_px_per_sec=40, pause_ms=400):
+                 speed_px_per_sec=40, pause_ms=400, scroll_direction="default",
+                 loop_segment_pixels=None):
         self.font = font
         self.color = color
         self.pos = pos
@@ -367,6 +375,9 @@ class ScrollingLabel:
         self.center = bool(center)
         self.speed = float(speed_px_per_sec)
         self.pause_ms = int(pause_ms)
+        sd = (scroll_direction or "default").lower()
+        self.scroll_direction = sd if sd in ("default", "ltr", "rtl") else "default"
+        self.loop_segment_pixels = int(loop_segment_pixels) if loop_segment_pixels is not None and loop_segment_pixels > 0 else None
         self.text = ""
         self.surf = None
         self.text_w = 0
@@ -410,16 +421,24 @@ class ScrollingLabel:
         if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("scrolling", False):
             log_debug(f"[Scrolling] CAPTURE: pos={self.pos}, box_w={self.box_width}, backing_rect={self._backing_rect}", "trace", "scrolling")
 
-    def update_text(self, new_text):
-        """Update text content, reset scroll position if changed."""
+    def update_text(self, new_text, segment_pixels=None):
+        """Update text content, reset scroll position if changed.
+        segment_pixels: optional; when set (e.g. ticker loop), use for seamless wrap."""
         new_text = new_text or ""
+        if segment_pixels is not None and segment_pixels > 0:
+            self.loop_segment_pixels = int(segment_pixels)
         if new_text == self.text and self.surf is not None:
             return False
         self.text = new_text
         self.surf = self.font.render(self.text, True, self.color)
         self.text_w, self.text_h = self.surf.get_size()
-        self.offset = 0.0
-        self.direction = 1
+        limit = max(0, self.text_w - self.box_width) if self.box_width > 0 else 0
+        if self.scroll_direction == "rtl":
+            self.offset = float(limit)
+            self.direction = -1
+        else:
+            self.offset = 0.0
+            self.direction = 1
         self._pause_until = 0
         self._last_time = pg.time.get_ticks()
         self._needs_redraw = True
@@ -491,14 +510,34 @@ class ScrollingLabel:
             limit = max(0, self.text_w - self.box_width)
             self.offset += self.direction * self.speed * dt
             
-            if self.offset <= 0:
-                self.offset = 0
-                self.direction = 1
-                self._pause_until = now + self.pause_ms
-            elif self.offset >= limit:
-                self.offset = float(limit)
-                self.direction = -1
-                self._pause_until = now + self.pause_ms
+            if self.scroll_direction == "default":
+                if self.offset <= 0:
+                    self.offset = 0
+                    self.direction = 1
+                    self._pause_until = now + self.pause_ms
+                elif self.offset >= limit:
+                    self.offset = float(limit)
+                    self.direction = -1
+                    self._pause_until = now + self.pause_ms
+            elif self.scroll_direction == "ltr":
+                if self.loop_segment_pixels and self.offset >= self.loop_segment_pixels:
+                    while self.offset >= self.loop_segment_pixels:
+                        self.offset -= self.loop_segment_pixels
+                elif not self.loop_segment_pixels and self.offset >= limit:
+                    self.offset = float(limit)
+                    self._pause_until = now + self.pause_ms
+                if not self.loop_segment_pixels and self.offset > limit:
+                    self.offset = 0.0
+            elif self.scroll_direction == "rtl":
+                if self.loop_segment_pixels and self.offset <= limit - self.loop_segment_pixels:
+                    while self.offset <= limit - self.loop_segment_pixels:
+                        self.offset += self.loop_segment_pixels
+                elif not self.loop_segment_pixels and self.offset <= 0:
+                    self.offset = 0
+                    self._pause_until = now + self.pause_ms
+                if not self.loop_segment_pixels and self.offset < 0:
+                    self.offset = float(limit)
+                    self.direction = -1
         
         current_offset_int = int(self.offset)
         if current_offset_int == self._last_draw_offset and not self._needs_redraw:
@@ -1730,7 +1769,10 @@ class TurntableHandler:
         self.artist_scroller = None
         self.title_scroller = None
         self.album_scroller = None
-        
+        self.next_title_scroller = None
+        self.next_artist_scroller = None
+        self.next_album_scroller = None
+
         # Positions and fonts
         self.time_pos = None
         self.sample_pos = None
@@ -1761,6 +1803,8 @@ class TurntableHandler:
         
         # Caches
         self.last_time_str = ""
+        self.last_elapsed_str = ""
+        self.last_total_str = ""
         self.last_time_surf = None
         self.last_sample_text = ""
         self.last_sample_surf = None
@@ -1781,6 +1825,8 @@ class TurntableHandler:
         
         # Reset caches
         self.last_time_str = ""
+        self.last_elapsed_str = ""
+        self.last_total_str = ""
         self.last_time_surf = None
         self.last_sample_text = ""
         self.last_sample_surf = None
@@ -1830,10 +1876,20 @@ class TurntableHandler:
         
         log_debug(f"Scrolling: mode={scrolling_mode}, artist={scroll_speed_artist}, title={scroll_speed_title}, album={scroll_speed_album}")
         
+        ticker_enabled = bool(mc_vol.get(PLAY_TICKER)) and mc_vol.get(PLAY_TICKER_POS)
+        ticker_replace = bool(mc_vol.get(PLAY_TICKER_REPLACE)) if ticker_enabled else False
         artist_pos = mc_vol.get(PLAY_ARTIST_POS)
         title_pos = mc_vol.get(PLAY_TITLE_POS)
         album_pos = mc_vol.get(PLAY_ALBUM_POS)
+        next_title_pos = mc_vol.get(PLAY_NEXT_TITLE_POS)
+        next_artist_pos = mc_vol.get(PLAY_NEXT_ARTIST_POS)
+        next_album_pos = mc_vol.get(PLAY_NEXT_ALBUM_POS)
+        if ticker_enabled and ticker_replace:
+            artist_pos = title_pos = album_pos = None
+            next_title_pos = next_artist_pos = next_album_pos = None
         self.time_pos = mc_vol.get(TIME_REMAINING_POS)
+        self.time_elapsed_pos = mc_vol.get(TIME_ELAPSED_POS)
+        self.time_total_pos = mc_vol.get(TIME_TOTAL_POS)
         self.sample_pos = mc_vol.get(PLAY_SAMPLE_POS)
         self.type_pos = mc_vol.get(PLAY_TYPE_POS)
         type_dim = mc_vol.get(PLAY_TYPE_DIM)
@@ -1844,6 +1900,9 @@ class TurntableHandler:
         artist_style = mc_vol.get(PLAY_ARTIST_STYLE, FONT_STYLE_L)
         title_style = mc_vol.get(PLAY_TITLE_STYLE, FONT_STYLE_B)
         album_style = mc_vol.get(PLAY_ALBUM_STYLE, FONT_STYLE_L)
+        next_title_style = mc_vol.get(PLAY_NEXT_TITLE_STYLE, FONT_STYLE_R)
+        next_artist_style = mc_vol.get(PLAY_NEXT_ARTIST_STYLE, FONT_STYLE_R)
+        next_album_style = mc_vol.get(PLAY_NEXT_ALBUM_STYLE, FONT_STYLE_R)
         sample_style = mc_vol.get(PLAY_SAMPLE_STYLE, FONT_STYLE_L)
         
         # Fonts per field
@@ -1857,13 +1916,21 @@ class TurntableHandler:
         artist_color = sanitize_color(mc_vol.get(PLAY_ARTIST_COLOR), self.font_color)
         title_color = sanitize_color(mc_vol.get(PLAY_TITLE_COLOR), self.font_color)
         album_color = sanitize_color(mc_vol.get(PLAY_ALBUM_COLOR), self.font_color)
+        next_title_color = sanitize_color(mc_vol.get(PLAY_NEXT_TITLE_COLOR), self.font_color)
+        next_artist_color = sanitize_color(mc_vol.get(PLAY_NEXT_ARTIST_COLOR), self.font_color)
+        next_album_color = sanitize_color(mc_vol.get(PLAY_NEXT_ALBUM_COLOR), self.font_color)
         self.time_color = sanitize_color(mc_vol.get(TIMECOLOR), self.font_color)
+        self.time_elapsed_color = sanitize_color(mc_vol.get(TIME_ELAPSED_COLOR), self.time_color)
+        self.time_total_color = sanitize_color(mc_vol.get(TIME_TOTAL_COLOR), self.time_color)
         self.type_color = sanitize_color(mc_vol.get(PLAY_TYPE_COLOR), self.font_color)
         
         # Max widths
         artist_max = as_int(mc_vol.get(PLAY_ARTIST_MAX), 0)
         title_max = as_int(mc_vol.get(PLAY_TITLE_MAX), 0)
         album_max = as_int(mc_vol.get(PLAY_ALBUM_MAX), 0)
+        next_title_max = as_int(mc_vol.get(PLAY_NEXT_TITLE_MAX), 0)
+        next_artist_max = as_int(mc_vol.get(PLAY_NEXT_ARTIST_MAX), 0)
+        next_album_max = as_int(mc_vol.get(PLAY_NEXT_ALBUM_MAX), 0)
         sample_max = as_int(mc_vol.get(PLAY_SAMPLE_MAX), 0)
         
         # Calculate box widths
@@ -1886,7 +1953,14 @@ class TurntableHandler:
         artist_box = get_box_width(artist_pos, artist_max)
         title_box = get_box_width(title_pos, title_max)
         album_box = get_box_width(album_pos, album_max)
-        
+        next_title_box = get_box_width(next_title_pos, next_title_max)
+        next_artist_box = get_box_width(next_artist_pos, next_artist_max)
+        next_album_box = get_box_width(next_album_pos, next_album_max)
+        ticker_pos = mc_vol.get(PLAY_TICKER_POS) if ticker_enabled else None
+        ticker_box = get_box_width(ticker_pos, as_int(mc_vol.get(PLAY_TICKER_MAX), 0) or 0) if ticker_pos else 0
+        if ticker_pos and ticker_box > 0:
+            ticker_box = min(ticker_box, max(0, self.SCREEN_WIDTH - ticker_pos[0]))
+
         if self.sample_pos and (global_max or sample_max):
             if sample_max:
                 self.sample_box = sample_max
@@ -2054,10 +2128,25 @@ class TurntableHandler:
             print(f"[TurntableHandler] Failed to create IndicatorRenderer: {e}")
         
         # Create scrollers
-        self.artist_scroller = ScrollingLabel(artist_font, artist_color, artist_pos, artist_box, center=self.center_flag, speed_px_per_sec=scroll_speed_artist) if artist_pos else None
-        self.title_scroller = ScrollingLabel(title_font, title_color, title_pos, title_box, center=self.center_flag, speed_px_per_sec=scroll_speed_title) if title_pos else None
-        self.album_scroller = ScrollingLabel(album_font, album_color, album_pos, album_box, center=self.center_flag, speed_px_per_sec=scroll_speed_album) if album_pos else None
-        
+        self.artist_scroller = ScrollingLabel(artist_font, artist_color, artist_pos, artist_box, center=self.center_flag, speed_px_per_sec=scroll_speed_artist, scroll_direction="default") if artist_pos else None
+        self.title_scroller = ScrollingLabel(title_font, title_color, title_pos, title_box, center=self.center_flag, speed_px_per_sec=scroll_speed_title, scroll_direction="default") if title_pos else None
+        self.album_scroller = ScrollingLabel(album_font, album_color, album_pos, album_box, center=self.center_flag, speed_px_per_sec=scroll_speed_album, scroll_direction="default") if album_pos else None
+        self.next_title_scroller = ScrollingLabel(self._font_for_style(next_title_style), next_title_color, next_title_pos, next_title_box, center=self.center_flag, speed_px_per_sec=scroll_speed_title, scroll_direction="default") if next_title_pos else None
+        self.next_artist_scroller = ScrollingLabel(self._font_for_style(next_artist_style), next_artist_color, next_artist_pos, next_artist_box, center=self.center_flag, speed_px_per_sec=scroll_speed_artist, scroll_direction="default") if next_artist_pos else None
+        self.next_album_scroller = ScrollingLabel(self._font_for_style(next_album_style), next_album_color, next_album_pos, next_album_box, center=self.center_flag, speed_px_per_sec=scroll_speed_album, scroll_direction="default") if next_album_pos else None
+
+        ticker_speed = mc_vol.get(PLAY_TICKER_SPEED, scroll_speed_title) if ticker_enabled else 40
+        ticker_direction = (mc_vol.get(PLAY_TICKER_DIRECTION) or "rtl").lower()
+        if ticker_direction not in ("ltr", "rtl"):
+            ticker_direction = "rtl"
+        ticker_font = self._font_for_style(mc_vol.get(PLAY_TICKER_STYLE, FONT_STYLE_R)) if ticker_enabled else None
+        ticker_color = sanitize_color(mc_vol.get(PLAY_TICKER_COLOR), self.font_color) if ticker_enabled else None
+        self.ticker_separator = mc_vol.get(PLAY_TICKER_SEPARATOR) or " · "
+        self.ticker_space_between = max(0, int(mc_vol.get(PLAY_TICKER_SPACE_BETWEEN, 0)))
+        self.ticker_end_spaces = max(0, int(mc_vol.get(PLAY_TICKER_END_SPACES, 8)))
+        self.ticker_scroller = ScrollingLabel(ticker_font, ticker_color, ticker_pos, ticker_box, center=self.center_flag, speed_px_per_sec=ticker_speed, scroll_direction=ticker_direction, loop_segment_pixels=None) if (ticker_enabled and ticker_pos and ticker_box) else None
+        self.ticker_append_next = bool(mc_vol.get(PLAY_TICKER_APPEND_NEXT)) if ticker_enabled else False
+
         # LAYER COMPOSITION: Set background surface on scrollers for proper clearing
         if self.bgr_surface:
             if self.artist_scroller:
@@ -2069,6 +2158,18 @@ class TurntableHandler:
             if self.album_scroller:
                 self.album_scroller.set_background_surface(self.bgr_surface)
                 self.album_scroller.capture_backing(self.screen)
+            if self.next_title_scroller:
+                self.next_title_scroller.set_background_surface(self.bgr_surface)
+                self.next_title_scroller.capture_backing(self.screen)
+            if self.next_artist_scroller:
+                self.next_artist_scroller.set_background_surface(self.bgr_surface)
+                self.next_artist_scroller.capture_backing(self.screen)
+            if self.next_album_scroller:
+                self.next_album_scroller.set_background_surface(self.bgr_surface)
+                self.next_album_scroller.capture_backing(self.screen)
+            if self.ticker_scroller:
+                self.ticker_scroller.set_background_surface(self.bgr_surface)
+                self.ticker_scroller.capture_backing(self.screen)
             # Tonearm also needs bgr_surface to avoid capturing meter needles
             if self.tonearm_renderer:
                 self.tonearm_renderer.set_background_surface(self.bgr_surface)
@@ -2085,6 +2186,14 @@ class TurntableHandler:
                 self.title_scroller.capture_backing(self.screen)
             if self.album_scroller:
                 self.album_scroller.capture_backing(self.screen)
+            if self.next_title_scroller:
+                self.next_title_scroller.capture_backing(self.screen)
+            if self.next_artist_scroller:
+                self.next_artist_scroller.capture_backing(self.screen)
+            if self.next_album_scroller:
+                self.next_album_scroller.capture_backing(self.screen)
+            if self.ticker_scroller:
+                self.ticker_scroller.capture_backing(self.screen)
             # Indicators fallback
             if self.indicator_renderer and self.indicator_renderer.has_indicators():
                 self.indicator_renderer.capture_backings(self.screen)
@@ -2104,7 +2213,19 @@ class TurntableHandler:
             self.time_rect = pg.Rect(self.time_pos[0], self.time_pos[1], time_width, time_height)
         else:
             self.time_rect = None
-        
+        if self.time_elapsed_pos and self.fontDigi:
+            time_width = self.fontDigi.size('00:00')[0] + 10
+            time_height = self.fontDigi.get_linesize()
+            self.time_elapsed_rect = pg.Rect(self.time_elapsed_pos[0], self.time_elapsed_pos[1], time_width, time_height)
+        else:
+            self.time_elapsed_rect = None
+        if self.time_total_pos and self.fontDigi:
+            time_width = self.fontDigi.size('00:00')[0] + 10
+            time_height = self.fontDigi.get_linesize()
+            self.time_total_rect = pg.Rect(self.time_total_pos[0], self.time_total_pos[1], time_width, time_height)
+        else:
+            self.time_total_rect = None
+
         # Sample rect (for clearing from bgr_surface)
         if self.sample_pos and self.sample_box and self.sample_font:
             sample_height = self.sample_font.get_linesize()
@@ -2505,7 +2626,23 @@ class TurntableHandler:
             scroller_rect = self.album_scroller.get_rect()
             if overlaps_cleared(scroller_rect):
                 self.album_scroller.force_redraw()
-        
+        if self.next_title_scroller:
+            scroller_rect = self.next_title_scroller.get_rect()
+            if overlaps_cleared(scroller_rect):
+                self.next_title_scroller.force_redraw()
+        if self.next_artist_scroller:
+            scroller_rect = self.next_artist_scroller.get_rect()
+            if overlaps_cleared(scroller_rect):
+                self.next_artist_scroller.force_redraw()
+        if self.next_album_scroller:
+            scroller_rect = self.next_album_scroller.get_rect()
+            if overlaps_cleared(scroller_rect):
+                self.next_album_scroller.force_redraw()
+        if self.ticker_scroller:
+            scroller_rect = self.ticker_scroller.get_rect()
+            if overlaps_cleared(scroller_rect):
+                self.ticker_scroller.force_redraw()
+
         if self.artist_scroller:
             display_artist = artist
             if not self.album_pos and album:
@@ -2526,7 +2663,44 @@ class TurntableHandler:
             rect = self.album_scroller.draw(self.screen)
             if rect:
                 dirty_rects.append(rect)
-        
+
+        if self.next_title_scroller:
+            self.next_title_scroller.update_text(meta.get("next_title", "") or "")
+            rect = self.next_title_scroller.draw(self.screen)
+            if rect:
+                dirty_rects.append(rect)
+        if self.next_artist_scroller:
+            self.next_artist_scroller.update_text(meta.get("next_artist", "") or "")
+            rect = self.next_artist_scroller.draw(self.screen)
+            if rect:
+                dirty_rects.append(rect)
+        if self.next_album_scroller:
+            self.next_album_scroller.update_text(meta.get("next_album", "") or "")
+            rect = self.next_album_scroller.draw(self.screen)
+            if rect:
+                dirty_rects.append(rect)
+
+        if self.ticker_scroller:
+            sep = self.ticker_separator or " · "
+            space = " " * self.ticker_space_between
+            between = space + sep + space
+            parts = [p for p in (artist, title, album) if p]
+            content = between.join(parts) if parts else ""
+            if self.ticker_append_next:
+                na = meta.get("next_artist", "") or ""
+                nt = meta.get("next_title", "") or ""
+                next_part = " - ".join(filter(None, [na, nt])) or ""
+                if next_part:
+                    content = (content + between + "Next: " + next_part) if content else ("Next: " + next_part)
+            end_sp = " " * self.ticker_end_spaces
+            segment = content + end_sp
+            display = (segment * 3) if segment else ""
+            segment_px = self.ticker_scroller.font.size(segment)[0] if segment else 0
+            self.ticker_scroller.update_text(display, segment_pixels=segment_px if segment_px > 0 else None)
+            rect = self.ticker_scroller.draw(self.screen)
+            if rect:
+                dirty_rects.append(rect)
+
         # Z5: Tonearm (render AFTER scrollers)
         # Always render when force_flag is set (tonearm is part of animated elements)
         if self.tonearm_renderer and force_flag:
@@ -2622,7 +2796,36 @@ class TurntableHandler:
                     
                     if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
                         log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {self.time_pos}, color={t_color}", "trace", "time")
-        
+
+        # Z7b: Elapsed time (when time.elapsed.pos set; anti-collision: force redraw when tonearm/vinyl/art overlap)
+        if self.time_elapsed_pos and self.fontDigi:
+            seek_ms = meta.get("seek") or 0
+            elapsed_sec = max(0, int(seek_ms) // 1000)
+            elapsed_str = f"{elapsed_sec // 60:02d}:{elapsed_sec % 60:02d}"
+            elapsed_overlaps = overlaps_cleared(self.time_elapsed_rect) if self.time_elapsed_rect else False
+            needs_redraw = elapsed_str != self.last_elapsed_str or elapsed_overlaps
+            if needs_redraw:
+                self.last_elapsed_str = elapsed_str
+                if self.bgr_surface and self.time_elapsed_rect:
+                    self.screen.blit(self.bgr_surface, self.time_elapsed_rect.topleft, self.time_elapsed_rect)
+                    dirty_rects.append(self.time_elapsed_rect.copy())
+                surf = self.fontDigi.render(elapsed_str, True, self.time_elapsed_color)
+                self.screen.blit(surf, self.time_elapsed_pos)
+
+        # Z7c: Total time (when time.total.pos set; anti-collision: force redraw when tonearm/vinyl/art overlap)
+        if self.time_total_pos and self.fontDigi:
+            duration_sec = max(0, int(meta.get("duration") or 0))
+            total_str = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}"
+            total_overlaps = overlaps_cleared(self.time_total_rect) if self.time_total_rect else False
+            needs_redraw = total_str != self.last_total_str or total_overlaps
+            if needs_redraw:
+                self.last_total_str = total_str
+                if self.bgr_surface and self.time_total_rect:
+                    self.screen.blit(self.bgr_surface, self.time_total_rect.topleft, self.time_total_rect)
+                    dirty_rects.append(self.time_total_rect.copy())
+                surf = self.fontDigi.render(total_str, True, self.time_total_color)
+                self.screen.blit(surf, self.time_total_pos)
+
         # LAYER: Sample rate / format icon - only force if overlapping cleared regions
         # Format icon
         if self.type_rect:
@@ -2784,5 +2987,8 @@ class TurntableHandler:
         self.artist_scroller = None
         self.title_scroller = None
         self.album_scroller = None
+        self.next_title_scroller = None
+        self.next_artist_scroller = None
+        self.next_album_scroller = None
         self.bgr_surface = None
 

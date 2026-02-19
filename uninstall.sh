@@ -69,10 +69,14 @@ if [ -d "$PLUGIN_DIR/screensaver" ]; then
   rm -rf "$PLUGIN_DIR/screensaver"
 fi
 
-# Remove templates and data
+# Remove templates and data (unless user chose to preserve themes)
 if [ -d "$DATA_DIR" ]; then
-  echo "Removing templates..."
-  rm -rf "$DATA_DIR"
+  if [ -f "$DATA_DIR/.preserve" ]; then
+    echo "Preserving themes (user setting)..."
+  else
+    echo "Removing templates..."
+    rm -rf "$DATA_DIR"
+  fi
 fi
 
 # Remove system packages if not needed by other software
