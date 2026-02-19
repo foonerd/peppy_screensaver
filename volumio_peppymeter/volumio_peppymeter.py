@@ -19,7 +19,10 @@ import os
 import sys
 import time
 import ctypes
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None  # Unix-only; not available on Windows
 import io
 import math
 import json
@@ -3575,16 +3578,23 @@ def get_memory():
 
 
 def memory_limit():
-    """Limit maximum memory usage."""
+    """Limit maximum memory usage (Unix only). No-op on Windows."""
+    if resource is None:
+        return
     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
     free_memory = get_memory() * 1024
     resource.setrlimit(resource.RLIMIT_AS, (free_memory + 90000000, hard))
 
 
 def trim_memory():
-    """Trim memory allocation."""
-    libc = ctypes.CDLL("libc.so.6")
-    return libc.malloc_trim(0)
+    """Trim memory allocation (Unix only). No-op on Windows."""
+    if os.name == 'nt':
+        return
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        return libc.malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
 
 
 # =============================================================================
