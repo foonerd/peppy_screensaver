@@ -1710,10 +1710,10 @@ class DiscoveryAnnouncer:
 # ScrollingLabel - Replaces TextAnimator threads
 # =============================================================================
 class ScrollingLabel:
-    """Single-threaded scrolling text label with bidirectional scroll and self-backing."""
+    """Single-threaded scrolling text label with bidirectional or one-way scroll and self-backing."""
     
     def __init__(self, font, color, pos, box_width, center=False,
-                 speed_px_per_sec=40, pause_ms=400):
+                 speed_px_per_sec=40, pause_ms=400, scroll_direction="default"):
         self.font = font
         self.color = color
         self.pos = pos
@@ -1721,6 +1721,8 @@ class ScrollingLabel:
         self.center = bool(center)
         self.speed = float(speed_px_per_sec)
         self.pause_ms = int(pause_ms)
+        sd = (scroll_direction or "default").lower()
+        self.scroll_direction = sd if sd in ("default", "ltr", "rtl") else "default"
         self.text = ""
         self.surf = None
         self.text_w = 0
@@ -1762,8 +1764,13 @@ class ScrollingLabel:
         self.text = new_text
         self.surf = self.font.render(self.text, True, self.color)
         self.text_w, self.text_h = self.surf.get_size()
-        self.offset = 0.0
-        self.direction = 1
+        limit = max(0, self.text_w - self.box_width) if self.box_width > 0 else 0
+        if self.scroll_direction == "rtl":
+            self.offset = float(limit)
+            self.direction = -1
+        else:
+            self.offset = 0.0
+            self.direction = 1
         self._pause_until = 0
         self._last_time = pg.time.get_ticks()
         self._needs_redraw = True
@@ -1832,14 +1839,28 @@ class ScrollingLabel:
             limit = max(0, self.text_w - self.box_width)
             self.offset += self.direction * self.speed * dt
             
-            if self.offset <= 0:
-                self.offset = 0
-                self.direction = 1
-                self._pause_until = now + self.pause_ms
-            elif self.offset >= limit:
-                self.offset = float(limit)
-                self.direction = -1
-                self._pause_until = now + self.pause_ms
+            if self.scroll_direction == "default":
+                if self.offset <= 0:
+                    self.offset = 0
+                    self.direction = 1
+                    self._pause_until = now + self.pause_ms
+                elif self.offset >= limit:
+                    self.offset = float(limit)
+                    self.direction = -1
+                    self._pause_until = now + self.pause_ms
+            elif self.scroll_direction == "ltr":
+                if self.offset >= limit:
+                    self.offset = float(limit)
+                    self._pause_until = now + self.pause_ms
+                if self.offset > limit:
+                    self.offset = 0.0
+            elif self.scroll_direction == "rtl":
+                if self.offset <= 0:
+                    self.offset = 0
+                    self._pause_until = now + self.pause_ms
+                if self.offset < 0:
+                    self.offset = float(limit)
+                    self.direction = -1
         
         # OPTIMIZATION: Only redraw if offset changed by at least 1 pixel
         current_offset_int = int(self.offset)

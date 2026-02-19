@@ -257,6 +257,19 @@ SCROLLING_SPEED = "playinfo.scrolling.speed"
 SCROLLING_SPEED_ARTIST = "playinfo.scrolling.speed.artist"
 SCROLLING_SPEED_TITLE = "playinfo.scrolling.speed.title"
 SCROLLING_SPEED_ALBUM = "playinfo.scrolling.speed.album"
+# Ticker: single scrolling line (artist · title · album; optional "Next: ...")
+PLAY_TICKER = "playinfo.ticker"
+PLAY_TICKER_REPLACE = "playinfo.ticker.replace"
+PLAY_TICKER_DIRECTION = "playinfo.ticker.direction"
+PLAY_TICKER_APPEND_NEXT = "playinfo.ticker.append_next"
+PLAY_TICKER_POS = "playinfo.ticker.pos"
+PLAY_TICKER_COLOR = "playinfo.ticker.color"
+PLAY_TICKER_MAX = "playinfo.ticker.maxwidth"
+PLAY_TICKER_STYLE = "PLAY_TICKER_STYLE"
+PLAY_TICKER_SPEED = "playinfo.ticker.speed"
+PLAY_TICKER_SEPARATOR = "playinfo.ticker.separator"
+PLAY_TICKER_SPACE_BETWEEN = "playinfo.ticker.space_between"
+PLAY_TICKER_END_SPACES = "playinfo.ticker.end_spaces"
 PLAY_TYPE_POS = "playinfo.type.pos"
 PLAY_TYPE_COLOR = "playinfo.type.color"
 PLAY_TYPE_DIM = "playinfo.type.dimension"
@@ -1178,6 +1191,58 @@ class Volumio_ConfigFileParser(object):
             d[SCROLLING_SPEED_ALBUM] = config_file.getint(section, SCROLLING_SPEED_ALBUM)
         except:
             d[SCROLLING_SPEED_ALBUM] = global_speed
+
+        # Ticker: single scrolling line (optional; direction rtl/ltr, optional append next)
+        try:
+            d[PLAY_TICKER] = config_file.getboolean(section, PLAY_TICKER)
+        except:
+            d[PLAY_TICKER] = False
+        if d[PLAY_TICKER]:
+            try:
+                d[PLAY_TICKER_REPLACE] = config_file.getboolean(section, PLAY_TICKER_REPLACE)
+            except:
+                d[PLAY_TICKER_REPLACE] = False
+            try:
+                direction = config_file.get(section, PLAY_TICKER_DIRECTION).strip().lower()
+                d[PLAY_TICKER_DIRECTION] = direction if direction in ("ltr", "rtl") else "rtl"
+            except:
+                d[PLAY_TICKER_DIRECTION] = "rtl"
+            try:
+                d[PLAY_TICKER_APPEND_NEXT] = config_file.getboolean(section, PLAY_TICKER_APPEND_NEXT)
+            except:
+                d[PLAY_TICKER_APPEND_NEXT] = False
+            try:
+                spl = config_file.get(section, PLAY_TICKER_POS).split(',')
+                d[PLAY_TICKER_POS] = (int(spl[0]), int(spl[1]))
+                d[PLAY_TICKER_STYLE] = spl[2].strip() if len(spl) >= 3 else FONT_STYLE_R
+            except:
+                d[PLAY_TICKER_POS] = None
+                d[PLAY_TICKER_STYLE] = FONT_STYLE_R
+            try:
+                spl = config_file.get(section, PLAY_TICKER_COLOR).split(',')
+                d[PLAY_TICKER_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+            except:
+                d[PLAY_TICKER_COLOR] = d.get(PLAY_TITLE_COLOR) or (255, 255, 255)
+            try:
+                d[PLAY_TICKER_MAX] = config_file.getint(section, PLAY_TICKER_MAX)
+            except:
+                d[PLAY_TICKER_MAX] = None
+            try:
+                d[PLAY_TICKER_SPEED] = config_file.getint(section, PLAY_TICKER_SPEED)
+            except:
+                d[PLAY_TICKER_SPEED] = global_speed
+            try:
+                d[PLAY_TICKER_SEPARATOR] = config_file.get(section, PLAY_TICKER_SEPARATOR).strip() or " · "
+            except:
+                d[PLAY_TICKER_SEPARATOR] = " · "
+            try:
+                d[PLAY_TICKER_SPACE_BETWEEN] = max(0, config_file.getint(section, PLAY_TICKER_SPACE_BETWEEN))
+            except:
+                d[PLAY_TICKER_SPACE_BETWEEN] = 0
+            try:
+                d[PLAY_TICKER_END_SPACES] = max(0, config_file.getint(section, PLAY_TICKER_END_SPACES))
+            except:
+                d[PLAY_TICKER_END_SPACES] = 8
 
         # Next track: title, artist, album (same structure as playinfo.title/artist/album)
         try:
