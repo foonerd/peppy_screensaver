@@ -68,12 +68,13 @@ After installation, enable and configure the plugin:
 - Playback state indicators (volume, mute, shuffle, repeat, play/pause, progress)
 - Cassette deck skins with rotating reel animation
 - Track info overlay with scrolling text
+- Optional ticker (single continuously looping line: artist · title · album) per theme in meters.txt
 - Display persistence during pause/track changes (eliminates flicker)
 - Random meter rotation
 - Touch to exit
 - Configurable frame rate and update interval for CPU tuning
 - Meter window positioning (centered or manual coordinates)
-- Configurable text scrolling speeds
+- Configurable text scrolling speeds (plugin UI); scroll direction and ticker are set per theme in meters.txt
 - **Remote display server** - Stream visualization to other devices on your network
 
 ## Plugin Settings
@@ -154,7 +155,7 @@ Album art and cassette spool rotation speed and quality.
 
 ### Scrolling Settings
 
-Text scrolling speed for artist, title, and album display.
+Text scrolling speed for artist, title, and album display. The plugin UI controls only speed. Scroll direction (e.g. for a ticker) and the optional ticker (single looping line) are configured per theme in `meters.txt`; see the wiki meters.txt reference.
 
 | Setting | Description |
 |---------|-------------|
@@ -386,6 +387,10 @@ Priority when using "Use skin value" mode:
 1. Per-field speed (e.g., `playinfo.scrolling.speed.title`)
 2. Global speed (`playinfo.scrolling.speed`)
 3. Default (40)
+
+### Ticker (single looping line)
+
+You can show artist, title, and album (and optionally "Next: ...") in one continuously scrolling, looping line. Enable it per meter in `meters.txt` with `playinfo.ticker = True`, and set position, direction (`rtl` or `ltr`), separator, and spacing. The ticker can replace the separate artist/title/album fields or coexist with them. Width is always capped to the visible screen. See the wiki [meters.txt reference](https://github.com/foonerd/peppy_screensaver/wiki/meters.txt-Reference) for all `playinfo.ticker.*` options.
 
 ### Time display (elapsed and total)
 
@@ -972,6 +977,7 @@ The following configuration options are deprecated and will be removed in a futu
   - `playinfo.artist.maxwidth`
   - `playinfo.album.maxwidth`
   - `playinfo.samplerate.maxwidth`
+  - For the ticker line, use `playinfo.ticker.maxwidth` (optional; width is always capped to the visible screen).
 
 ## License
 
