@@ -252,7 +252,11 @@ PLAY_SAMPLE_POS = "playinfo.samplerate.pos"
 PLAY_SAMPLE_STYLE = "PLAY_SAMPLE_STYLE"
 PLAY_SAMPLE_MAX = "playinfo.samplerate.maxwidth"
 TIME_REMAINING_POS = "time.remaining.pos"
-TIMECOLOR = "time.remaining.color" 
+TIMECOLOR = "time.remaining.color"
+TIME_ELAPSED_POS = "time.elapsed.pos"
+TIME_ELAPSED_COLOR = "time.elapsed.color"
+TIME_TOTAL_POS = "time.total.pos"
+TIME_TOTAL_COLOR = "time.total.color"
 FONT_STYLE_B = "bold"
 FONT_STYLE_R = "regular"
 FONT_STYLE_L = "light"
@@ -1221,6 +1225,26 @@ class Volumio_ConfigFileParser(object):
             d[TIMECOLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
         except:
             d[TIMECOLOR] = (255,255,255)
+        try:
+            spl = config_file.get(section, TIME_ELAPSED_POS).split(',')
+            d[TIME_ELAPSED_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[TIME_ELAPSED_POS] = None
+        try:
+            spl = config_file.get(section, TIME_ELAPSED_COLOR).split(',')
+            d[TIME_ELAPSED_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[TIME_ELAPSED_COLOR] = (255, 255, 255)
+        try:
+            spl = config_file.get(section, TIME_TOTAL_POS).split(',')
+            d[TIME_TOTAL_POS] = (int(spl[0]), int(spl[1]))
+        except:
+            d[TIME_TOTAL_POS] = None
+        try:
+            spl = config_file.get(section, TIME_TOTAL_COLOR).split(',')
+            d[TIME_TOTAL_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
+        except:
+            d[TIME_TOTAL_COLOR] = (255, 255, 255)
 
         try:
             d[SPECTRUM_VISIBLE] = config_file.getboolean(section, SPECTRUM_VISIBLE)
