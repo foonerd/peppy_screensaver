@@ -57,7 +57,9 @@ from volumio_configfileparser import (
     PLAY_TYPE_POS, PLAY_TYPE_COLOR, PLAY_TYPE_DIM,
     PLAY_SAMPLE_POS, PLAY_SAMPLE_STYLE, PLAY_SAMPLE_MAX,
     TIME_REMAINING_POS, TIMECOLOR,
-    TIME_ELAPSED_POS, TIME_ELAPSED_COLOR, TIME_TOTAL_POS, TIME_TOTAL_COLOR,
+    TIME_REMAINING_STYLE, TIME_REMAINING_FONT, TIME_REMAINING_FONTSIZE,
+    TIME_ELAPSED_POS, TIME_ELAPSED_COLOR, TIME_ELAPSED_STYLE, TIME_ELAPSED_FONT, TIME_ELAPSED_FONTSIZE,
+    TIME_TOTAL_POS, TIME_TOTAL_COLOR, TIME_TOTAL_STYLE, TIME_TOTAL_FONT, TIME_TOTAL_FONTSIZE,
     FONTSIZE_LIGHT, FONTSIZE_REGULAR, FONTSIZE_BOLD, FONTSIZE_DIGI, FONTCOLOR,
     FONT_STYLE_B, FONT_STYLE_R, FONT_STYLE_L,
     METER_DELAY
@@ -2206,22 +2208,22 @@ class TurntableHandler:
         # Type rect
         self.type_rect = pg.Rect(self.type_pos[0], self.type_pos[1], type_dim[0], type_dim[1]) if (self.type_pos and type_dim) else None
         
-        # Time rect (for clearing from bgr_surface)
-        if self.time_pos and self.fontDigi:
-            time_width = self.fontDigi.size('00:00')[0] + 10
-            time_height = self.fontDigi.get_linesize()
+        # Time rect (for clearing from bgr_surface; use effective time font per field)
+        if self.time_pos and self.font_time_remaining:
+            time_width = self.font_time_remaining.size('00:00')[0] + 10
+            time_height = self.font_time_remaining.get_linesize()
             self.time_rect = pg.Rect(self.time_pos[0], self.time_pos[1], time_width, time_height)
         else:
             self.time_rect = None
-        if self.time_elapsed_pos and self.fontDigi:
-            time_width = self.fontDigi.size('00:00')[0] + 10
-            time_height = self.fontDigi.get_linesize()
+        if self.time_elapsed_pos and self.font_time_elapsed:
+            time_width = self.font_time_elapsed.size('00:00')[0] + 10
+            time_height = self.font_time_elapsed.get_linesize()
             self.time_elapsed_rect = pg.Rect(self.time_elapsed_pos[0], self.time_elapsed_pos[1], time_width, time_height)
         else:
             self.time_elapsed_rect = None
-        if self.time_total_pos and self.fontDigi:
-            time_width = self.fontDigi.size('00:00')[0] + 10
-            time_height = self.fontDigi.get_linesize()
+        if self.time_total_pos and self.font_time_total:
+            time_width = self.font_time_total.size('00:00')[0] + 10
+            time_height = self.font_time_total.get_linesize()
             self.time_total_rect = pg.Rect(self.time_total_pos[0], self.time_total_pos[1], time_width, time_height)
         else:
             self.time_total_rect = None
@@ -2287,12 +2289,68 @@ class TurntableHandler:
         else:
             self.fontB = pg.font.SysFont("DejaVuSans", size_bold, bold=True)
         
-        # Digital font for time
-        digi_path = os.path.join(os.path.dirname(__file__), 'fonts', 'DSEG7Classic-Italic.ttf')
-        if os.path.exists(digi_path):
-            self.fontDigi = pg.font.Font(digi_path, size_digi)
+        # Digital font for time (default; used when per-field font/size not set)
+        default_digi_path = os.path.join(os.path.dirname(__file__), 'fonts', 'DSEG7Classic-Italic.ttf')
+        if os.path.exists(default_digi_path):
+            self.fontDigi = pg.font.Font(default_digi_path, size_digi)
         else:
             self.fontDigi = pg.font.SysFont("DejaVuSans", size_digi)
+
+        # Per-field time fonts (remaining, elapsed, total): optional font path + fontsize; fallback to fontDigi
+        meter_path = os.path.join(self.config.get(BASE_PATH), self.config.get(SCREEN_INFO)[METER_FOLDER])
+        self._time_font_cache = {}
+
+        def resolve_time_font_path(font_value):
+            if not font_value:
+                return default_digi_path
+            if os.path.isabs(font_value) and os.path.exists(font_value):
+                return font_value
+            for base in (meter_path, font_path):
+                if base:
+                    p = os.path.join(base.rstrip(os.sep), font_value.lstrip(os.sep))
+                    if os.path.exists(p):
+                        return p
+            return default_digi_path
+
+        def get_time_font(path, size):
+            if (path, size) == (default_digi_path, size_digi):
+                return self.fontDigi
+            key = (path, size)
+            if key not in self._time_font_cache:
+                if os.path.exists(path):
+                    self._time_font_cache[key] = pg.font.Font(path, size)
+                else:
+                    self._time_font_cache[key] = pg.font.SysFont("DejaVuSans", size)
+            return self._time_font_cache[key]
+
+        path_remaining = resolve_time_font_path(mc_vol.get(TIME_REMAINING_FONT))
+        size_remaining = mc_vol.get(TIME_REMAINING_FONTSIZE) or size_digi
+        path_elapsed = resolve_time_font_path(mc_vol.get(TIME_ELAPSED_FONT))
+        size_elapsed = mc_vol.get(TIME_ELAPSED_FONTSIZE) or size_digi
+        path_total = resolve_time_font_path(mc_vol.get(TIME_TOTAL_FONT))
+        size_total = mc_vol.get(TIME_TOTAL_FONTSIZE) or size_digi
+
+        self.fontDigiRemaining = get_time_font(path_remaining, size_remaining)
+        self.fontDigiElapsed = get_time_font(path_elapsed, size_elapsed)
+        self.fontDigiTotal = get_time_font(path_total, size_total)
+
+        # Effective font per time field: style from pos (x,y,style) — light/regular/bold use text font, digi or omit = digi font
+        def norm_time_style(s):
+            if not s:
+                return FONT_STYLE_R
+            s = s.strip().lower()
+            if s == "light":
+                return FONT_STYLE_L
+            if s == "bold":
+                return FONT_STYLE_B
+            return FONT_STYLE_R
+
+        style_rem = mc_vol.get(TIME_REMAINING_STYLE)
+        style_elapsed = mc_vol.get(TIME_ELAPSED_STYLE)
+        style_total = mc_vol.get(TIME_TOTAL_STYLE)
+        self.font_time_remaining = self.fontDigiRemaining if (not style_rem or style_rem == "digi") else self._font_for_style(norm_time_style(style_rem))
+        self.font_time_elapsed = self.fontDigiElapsed if (not style_elapsed or style_elapsed == "digi") else self._font_for_style(norm_time_style(style_elapsed))
+        self.font_time_total = self.fontDigiTotal if (not style_total or style_total == "digi") else self._font_for_style(norm_time_style(style_total))
     
     def _font_for_style(self, style):
         """Get font for style."""
@@ -2791,14 +2849,14 @@ class TurntableHandler:
                     else:
                         t_color = self.time_color
                     
-                    self.last_time_surf = self.fontDigi.render(time_str, True, t_color)
+                    self.last_time_surf = self.font_time_remaining.render(time_str, True, t_color)
                     self.screen.blit(self.last_time_surf, self.time_pos)
                     
                     if DEBUG_LEVEL_CURRENT == "trace" and DEBUG_TRACE.get("time", False):
                         log_debug(f"[Time] OUTPUT: rendered '{time_str}' at {self.time_pos}, color={t_color}", "trace", "time")
 
         # Z7b: Elapsed time (when time.elapsed.pos set; anti-collision: force redraw when tonearm/vinyl/art overlap)
-        if self.time_elapsed_pos and self.fontDigi:
+        if self.time_elapsed_pos and self.font_time_elapsed:
             seek_ms = meta.get("seek") or 0
             elapsed_sec = max(0, int(seek_ms) // 1000)
             elapsed_str = f"{elapsed_sec // 60:02d}:{elapsed_sec % 60:02d}"
@@ -2809,11 +2867,11 @@ class TurntableHandler:
                 if self.bgr_surface and self.time_elapsed_rect:
                     self.screen.blit(self.bgr_surface, self.time_elapsed_rect.topleft, self.time_elapsed_rect)
                     dirty_rects.append(self.time_elapsed_rect.copy())
-                surf = self.fontDigi.render(elapsed_str, True, self.time_elapsed_color)
+                surf = self.font_time_elapsed.render(elapsed_str, True, self.time_elapsed_color)
                 self.screen.blit(surf, self.time_elapsed_pos)
 
         # Z7c: Total time (when time.total.pos set; anti-collision: force redraw when tonearm/vinyl/art overlap)
-        if self.time_total_pos and self.fontDigi:
+        if self.time_total_pos and self.font_time_total:
             duration_sec = max(0, int(meta.get("duration") or 0))
             total_str = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}"
             total_overlaps = overlaps_cleared(self.time_total_rect) if self.time_total_rect else False
@@ -2823,7 +2881,7 @@ class TurntableHandler:
                 if self.bgr_surface and self.time_total_rect:
                     self.screen.blit(self.bgr_surface, self.time_total_rect.topleft, self.time_total_rect)
                     dirty_rects.append(self.time_total_rect.copy())
-                surf = self.fontDigi.render(total_str, True, self.time_total_color)
+                surf = self.font_time_total.render(total_str, True, self.time_total_color)
                 self.screen.blit(surf, self.time_total_pos)
 
         # LAYER: Sample rate / format icon - only force if overlapping cleared regions

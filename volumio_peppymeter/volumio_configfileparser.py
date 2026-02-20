@@ -278,10 +278,19 @@ PLAY_SAMPLE_STYLE = "PLAY_SAMPLE_STYLE"
 PLAY_SAMPLE_MAX = "playinfo.samplerate.maxwidth"
 TIME_REMAINING_POS = "time.remaining.pos"
 TIMECOLOR = "time.remaining.color"
+TIME_REMAINING_STYLE = "time.remaining.style"
+TIME_REMAINING_FONT = "time.remaining.font"
+TIME_REMAINING_FONTSIZE = "time.remaining.fontsize"
 TIME_ELAPSED_POS = "time.elapsed.pos"
+TIME_ELAPSED_STYLE = "time.elapsed.style"
 TIME_ELAPSED_COLOR = "time.elapsed.color"
+TIME_ELAPSED_FONT = "time.elapsed.font"
+TIME_ELAPSED_FONTSIZE = "time.elapsed.fontsize"
 TIME_TOTAL_POS = "time.total.pos"
 TIME_TOTAL_COLOR = "time.total.color"
+TIME_TOTAL_STYLE = "time.total.style"
+TIME_TOTAL_FONT = "time.total.font"
+TIME_TOTAL_FONTSIZE = "time.total.fontsize"
 FONT_STYLE_B = "bold"
 FONT_STYLE_R = "regular"
 FONT_STYLE_L = "light"
@@ -1322,10 +1331,12 @@ class Volumio_ConfigFileParser(object):
             d[PLAY_SAMPLE_MAX] = None
 
         try:
-            spl = config_file.get(section, TIME_REMAINING_POS).split(',')		
+            spl = config_file.get(section, TIME_REMAINING_POS).split(',')
             d[TIME_REMAINING_POS] = (int(spl[0]), int(spl[1]))
+            d[TIME_REMAINING_STYLE] = spl[2].strip().lower() if len(spl) >= 3 else None
         except:
             d[TIME_REMAINING_POS] = None
+            d[TIME_REMAINING_STYLE] = None
         try:
             d[FONTSIZE_LIGHT] = config_file.getint(section, FONTSIZE_LIGHT)
         except:
@@ -1355,8 +1366,10 @@ class Volumio_ConfigFileParser(object):
         try:
             spl = config_file.get(section, TIME_ELAPSED_POS).split(',')
             d[TIME_ELAPSED_POS] = (int(spl[0]), int(spl[1]))
+            d[TIME_ELAPSED_STYLE] = spl[2].strip().lower() if len(spl) >= 3 else None
         except:
             d[TIME_ELAPSED_POS] = None
+            d[TIME_ELAPSED_STYLE] = None
         try:
             spl = config_file.get(section, TIME_ELAPSED_COLOR).split(',')
             d[TIME_ELAPSED_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
@@ -1365,13 +1378,41 @@ class Volumio_ConfigFileParser(object):
         try:
             spl = config_file.get(section, TIME_TOTAL_POS).split(',')
             d[TIME_TOTAL_POS] = (int(spl[0]), int(spl[1]))
+            d[TIME_TOTAL_STYLE] = spl[2].strip().lower() if len(spl) >= 3 else None
         except:
             d[TIME_TOTAL_POS] = None
+            d[TIME_TOTAL_STYLE] = None
         try:
             spl = config_file.get(section, TIME_TOTAL_COLOR).split(',')
             d[TIME_TOTAL_COLOR] = (int(spl[0]), int(spl[1]), int(spl[2]))
         except:
             d[TIME_TOTAL_COLOR] = (255, 255, 255)
+
+        # Per-field time font (optional; fallback to font.size.digi and default digi TTF)
+        try:
+            d[TIME_REMAINING_FONT] = config_file.get(section, TIME_REMAINING_FONT).strip() or None
+        except:
+            d[TIME_REMAINING_FONT] = None
+        try:
+            d[TIME_REMAINING_FONTSIZE] = config_file.getint(section, TIME_REMAINING_FONTSIZE)
+        except:
+            d[TIME_REMAINING_FONTSIZE] = None
+        try:
+            d[TIME_ELAPSED_FONT] = config_file.get(section, TIME_ELAPSED_FONT).strip() or None
+        except:
+            d[TIME_ELAPSED_FONT] = None
+        try:
+            d[TIME_ELAPSED_FONTSIZE] = config_file.getint(section, TIME_ELAPSED_FONTSIZE)
+        except:
+            d[TIME_ELAPSED_FONTSIZE] = None
+        try:
+            d[TIME_TOTAL_FONT] = config_file.get(section, TIME_TOTAL_FONT).strip() or None
+        except:
+            d[TIME_TOTAL_FONT] = None
+        try:
+            d[TIME_TOTAL_FONTSIZE] = config_file.getint(section, TIME_TOTAL_FONTSIZE)
+        except:
+            d[TIME_TOTAL_FONTSIZE] = None
 
         try:
             d[SPECTRUM_VISIBLE] = config_file.getboolean(section, SPECTRUM_VISIBLE)
