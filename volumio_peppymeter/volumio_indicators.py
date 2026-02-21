@@ -1752,12 +1752,22 @@ class IndicatorRenderer:
                 _log_debug(f"[Progress] INPUT: mode={mode}, pct={progress_pct:.1f}%, will_render={will_render}", "trace", "progress")
             
             if will_render:
-                if not skip_restore:
-                    self._progress.restore_backing(screen)
+                # Always restore progress backing before draw so previous head position is cleared.
+                # Required when skip_restore=True (e.g. BasicHandler 1920x550) where we don't
+                # restore other indicators; progress head would otherwise leave a ghost.
+                self._progress.restore_backing(screen)
                 # SliderIndicator expects 0-100 integer
                 rect = self._progress.render(screen, int(progress_pct))
                 if rect:
-                    dirty_rects.append(rect)
+                    # Use full head travel rect for dirty region so display update includes head top and bottom.
+                    # render() returns bar rect only; head extends above/below bar and would otherwise
+                    # leave bottom-half ghost until a later full redraw.
+                    progress_rect = self._progress.get_rect()
+                    if progress_rect:
+                        screen_bounds = screen.get_rect()
+                        dirty_rects.append(progress_rect.clip(screen_bounds))
+                    else:
+                        dirty_rects.append(rect)
                     # TRACE: Log progress output
                     if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("progress", False):
                         _log_debug(f"[Progress] OUTPUT: pct={progress_pct:.1f}%, rect={rect}", "trace", "progress")
