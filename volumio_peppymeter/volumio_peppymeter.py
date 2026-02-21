@@ -17,6 +17,7 @@
 
 import os
 import sys
+import tempfile
 import time
 import ctypes
 try:
@@ -542,8 +543,8 @@ def log_frame_timing(frame_num, t_start, t_meter=None, t_rotation=None, t_blit=N
         )
 
 
-# Runtime paths
-PeppyRunning = '/tmp/peppyrunning'
+# Runtime paths (temp dir works on Windows and Linux)
+PeppyRunning = os.path.join(tempfile.gettempdir(), 'peppyrunning')
 CurDir = os.getcwd()
 PeppyPath = CurDir + '/screensaver/peppymeter'
 
@@ -1757,7 +1758,7 @@ class ScrollingLabel:
 
     def update_text(self, new_text):
         """Update text content, reset scroll position if changed."""
-        new_text = new_text or ""
+        new_text = (new_text or "").replace("\u00a0", " ")  # normalize NBSP for display (avoids Â· on Windows)
         if new_text == self.text and self.surf is not None:
             return False  # No change
         old_text = self.text
@@ -3391,7 +3392,7 @@ class CallBack:
         
         # Use file-based cooldown that persists across process restarts
         # This prevents double fade when skin change triggers multiple restarts
-        fade_lockfile = '/tmp/peppy_fade_lock'
+        fade_lockfile = os.path.join(tempfile.gettempdir(), 'peppy_fade_lock')
         should_fade = False
         
         try:
@@ -3504,10 +3505,15 @@ class CallBack:
             return None
     
     def trim_memory(self):
-        """Trim memory allocation."""
-        libc = ctypes.CDLL("libc.so.6")
-        return libc.malloc_trim(0)
-    
+        """Trim memory allocation (Unix only). No-op on Windows."""
+        if os.name == "nt":
+            return
+        try:
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+        except (OSError, AttributeError):
+            pass
+
     def exit_trim_memory(self):
         """Cleanup on exit."""
         if os.path.exists(PeppyRunning):
@@ -4566,8 +4572,10 @@ if __name__ == "__main__":
     
     try:
         Path(PeppyRunning).touch()
-        Path(PeppyRunning).chmod(0o0777)
-        
+        try:
+            Path(PeppyRunning).chmod(0o0777)
+        except OSError:
+            pass  # chmod not needed / not supported on Windows
         # Start stop watcher
         watcher = Thread(target=stop_watcher, daemon=True)
         watcher.start()
