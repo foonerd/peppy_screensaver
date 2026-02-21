@@ -773,8 +773,11 @@ class SliderIndicator:
     def get_rect(self):
         """Get bounding rectangle for this indicator.
         
-        For image-based sliders, expands to include full tip travel area
-        accounting for tip size, offset, AND travel range to prevent ghosting.
+        For image-based sliders (progress.slider.tip), expands to include full
+        tip travel area so restore_backing clears previous tip (no ghosting).
+        For progress bar with head image (progress.head.image), expands to
+        full head travel area so restore_backing clears previous head position
+        (no burn when head moves); head keeps transparency.
         """
         if not self.pos:
             return None
@@ -814,6 +817,33 @@ class SliderIndicator:
                 # Plus tip width at the right position
                 left = x + travel_start + off_x
                 right = x + travel_end + off_x + tip_w
+                return pg.Rect(left, top, right - left, bottom - top)
+        elif self.style == self.STYLE_SLIDER and self._head_surface:
+            # Progress bar with head image: expand rect to full head travel area so
+            # restore_backing clears previous head position (no burn when head moves).
+            # Use exact head bounds and 1px padding to avoid edge ghost from rounding/scaling.
+            x, y = self.pos
+            w, h = self.dim
+            hw, hh = self._head_surface.get_size()
+            off_x, off_y = self.head_offset
+            pad = 1
+            head_half_w_lo, head_half_w_hi = hw // 2, hw - hw // 2
+            head_half_h_lo, head_half_h_hi = hh // 2, hh - hh // 2
+            if self.slider_orientation == "vertical":
+                # Head moves vertically; center horizontally on bar
+                tip_center_x = x + (w - hw) // 2 + off_x
+                left = min(x, tip_center_x) - pad
+                right = max(x + w, tip_center_x + hw) + pad
+                top = y - head_half_h_lo + off_y - pad
+                bottom = y + h + head_half_h_hi + off_y + pad
+                return pg.Rect(left, top, right - left, bottom - top)
+            else:
+                # Head moves horizontally; center vertically on bar (tip_center_y = head top when centered)
+                tip_center_y = y + (h - hh) // 2 + off_y
+                top = min(y, tip_center_y) - pad
+                bottom = max(y + h, tip_center_y + hh) + pad
+                left = x - head_half_w_lo + off_x - pad
+                right = x + w + head_half_w_hi + off_x + pad
                 return pg.Rect(left, top, right - left, bottom - top)
         else:
             return pg.Rect(self.pos[0], self.pos[1], self.dim[0], self.dim[1])
