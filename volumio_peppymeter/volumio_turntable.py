@@ -856,7 +856,9 @@ class AlbumArtRenderer:
             log_debug(f"[AlbumArt] INPUT: status={status}, angle={self._current_angle:.1f}, advance={advance_angle}, {coupled}", "trace", "albumart")
 
         dirty_rect = None
-        if advance_angle:
+        # Keep timing semantics aligned with VinylRenderer:
+        # in smooth mode, _update_angle() owns _last_blit_tick updates.
+        if advance_angle and not getattr(self, '_smooth_rotation', False):
             self._last_blit_tick = now_ticks
 
         if self.rotate_enabled and self.art_center and self.rotate_rpm > 0.0:
