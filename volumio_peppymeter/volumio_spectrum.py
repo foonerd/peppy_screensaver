@@ -6,6 +6,7 @@
 
 import os
 import time
+import configparser
 from datetime import datetime
 from threading import Thread
 
@@ -129,6 +130,20 @@ class SpectrumOutput(Thread):
         self.util.image_util = SpectrumUtil()
      
         # get the peppy spectrum object
+        spectrum_config_path = os.path.join(self.SpectrumPath, "config.txt")
+        if os.path.exists(spectrum_config_path):
+            try:
+                sp_config = configparser.ConfigParser()
+                sp_config.read(spectrum_config_path)
+                if "current" not in sp_config:
+                    sp_config["current"] = {}
+                # Ensure Spectrum.__init__ loads only the active section.
+                sp_config["current"]["spectrum"] = self.s
+                with open(spectrum_config_path, "w") as f:
+                    sp_config.write(f)
+            except Exception as e:
+                _log_debug(f"[Spectrum] failed to update config.txt spectrum key: {e}", "verbose")
+
         os.chdir(self.SpectrumPath) # to find the config file
         self.sp = None
         self.sp = Spectrum(self.util, standalone=False)
