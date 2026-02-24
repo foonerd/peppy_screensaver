@@ -3479,11 +3479,13 @@ class CallBack:
                     meter_name = self._get_active_meter_name()
                     if meter_name:
                         self.discovery_announcer.set_active_meter(meter_name)
-            return
+            return []
         
         # Update spectrum
         if self.spectrum_output is not None:
-            self.spectrum_output.update()
+            return self.spectrum_output.update()
+        
+        return []
     
     def _get_active_meter_name(self):
         """Get the currently active meter section name from the meter config.
@@ -4093,6 +4095,27 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
     # -------------------------------------------------------------------------
     # Main loop - OPTIMIZED with dirty rectangle updates
     # -------------------------------------------------------------------------
+    def _merge_dirty_rects(base_rects, extra_rects):
+        """Merge dirty-rect collections into a flat list."""
+        merged = []
+        
+        def _append_rects(src):
+            if not src:
+                return
+            if isinstance(src, pg.Rect):
+                merged.append(src)
+                return
+            try:
+                for r in src:
+                    if r:
+                        merged.append(r)
+            except TypeError:
+                pass
+        
+        _append_rects(base_rects)
+        _append_rects(extra_rects)
+        return merged
+    
     clock = Clock()
     pm.meter.start()
     
@@ -4217,7 +4240,8 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
         if not ov.get("enabled", False):
             # No extended config - just run meter with dirty rect updates
             meter_rects = pm.meter.run()
-            callback.peppy_meter_update()
+            spectrum_rects = callback.peppy_meter_update()
+            meter_rects = _merge_dirty_rects(meter_rects, spectrum_rects)
             # OPTIMIZATION: Use dirty rectangle update
             if meter_rects:
                 pg.display.update(meter_rects)
@@ -4266,7 +4290,8 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                     except Exception:
                         pass
                 
-                callback.peppy_meter_update()
+                spectrum_rects = callback.peppy_meter_update()
+                dirty_rects = _merge_dirty_rects(dirty_rects, spectrum_rects)
                 
                 # Display update
                 if dirty_rects:
