@@ -173,6 +173,8 @@ class SpectrumOutput(Thread):
         The parent (volumio_peppymeter) handles display updates.
         """
         
+        dirty_rects = []
+        
         if hasattr(self, 'sp') and self.sp is not None:
             # if background is ready
             if self.sp.components[0].content is not None:
@@ -183,10 +185,20 @@ class SpectrumOutput(Thread):
                 # Clean dirty areas and draw WITHOUT calling display.update()
                 # This prevents double display updates that cause flicker
                 if hasattr(self.sp, '_dirty_rects') and self.sp._dirty_rects:
-                    for rect in self.sp._dirty_rects:
+                    # Keep old dirty rects: draw_area() cleans previous frame regions.
+                    old_dirty = [r.copy() for r in self.sp._dirty_rects if r]
+                    for rect in old_dirty:
                         self.sp.draw_area(rect)
                     self.sp._dirty_rects = []
+                    dirty_rects.extend(old_dirty)
                 self.sp.draw()
+                
+                # Keep current dirty rects produced by draw() for parent display update.
+                if hasattr(self.sp, '_dirty_rects') and self.sp._dirty_rects:
+                    dirty_rects.extend([r.copy() for r in self.sp._dirty_rects if r])
+                elif self.util.screen_rect:
+                    # Conservative fallback: ensure spectrum region is refreshed.
+                    dirty_rects.append(self.util.screen_rect.copy())
                 
                 # Restore previous clip
                 self.util.pygame_screen.set_clip(prev_clip)
@@ -194,6 +206,8 @@ class SpectrumOutput(Thread):
                 # TRACE: Log update (only occasionally to reduce noise)
                 if _DEBUG_LEVEL == "trace" and _DEBUG_TRACE.get("spectrum", False):
                     _log_debug(f"[Spectrum] OUTPUT: draw (no display.update), clip={self.util.screen_rect}", "trace", "spectrum")
+        
+        return dirty_rects
     
     def get_current_bins(self):
         """Get current spectrum bin values for network broadcast.
