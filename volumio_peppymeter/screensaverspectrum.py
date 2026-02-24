@@ -6,7 +6,11 @@
 # Overwrites ScreensaverSpectrum from PeppySpectrum
 
 import pygame as pg
-from spectrum.spectrumconfigparser import SpectrumConfigParser, SPECTRUM_X, SPECTRUM_Y, AVAILABLE_SPECTRUM_NAMES
+from configparser import ConfigParser
+from spectrum.spectrumconfigparser import (
+    SpectrumConfigParser, SPECTRUM_X, SPECTRUM_Y, AVAILABLE_SPECTRUM_NAMES,
+    FILE_SPECTRUM_CONFIG, SPECTRUM_FOLDER
+)
 
 class ScreensaverSpectrum():
     """ Parent class for spectrum plug-in """
@@ -22,6 +26,17 @@ class ScreensaverSpectrum():
 
         # define the spectrum dimensions
         parser_SP = SpectrumConfigParser(standalone=False)
-        parser_SP.config[AVAILABLE_SPECTRUM_NAMES] = [self.s] # update spectrum name to read correct section
+        parser_SP.config[AVAILABLE_SPECTRUM_NAMES] = [self.s]
         spectrum_configs = parser_SP.get_spectrum_configs()
+        if not spectrum_configs:
+            # Fallback: requested spectrum not in template (e.g. remote with meter/template mismatch), use first available
+            spectrum_config_path = parser_SP.get_path(FILE_SPECTRUM_CONFIG, parser_SP.config[SPECTRUM_FOLDER])
+            c = ConfigParser()
+            c.read(spectrum_config_path)
+            names = c.sections()
+            if not names:
+                raise RuntimeError(f"Spectrum template has no sections: {spectrum_config_path}")
+            parser_SP.config[AVAILABLE_SPECTRUM_NAMES] = [names[0]]
+            spectrum_configs = parser_SP.get_spectrum_configs()
+            self.s = names[0]
         self.util.screen_rect = pg.Rect(spectrum_configs[0][SPECTRUM_X], spectrum_configs[0][SPECTRUM_Y], self.w, self.h)
