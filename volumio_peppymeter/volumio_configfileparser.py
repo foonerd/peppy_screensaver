@@ -95,8 +95,18 @@ ALBUMART_POS = "albumart.pos"
 ALBUMART_DIM = "albumart.dimension"
 ALBUMART_MSK = "albumart.mask"
 ALBUMBORDER = "albumart.border"
+ALBUMART_SOURCE = "albumart.source"
 ALBUMART_ROT = "albumart.rotation"
 ALBUMART_ROT_SPEED = "albumart.rotation.speed"
+
+# Fallback filenames for albumart.source when not specified (try in order)
+ALBUMART_SOURCE_FALLBACKS = (
+    'cover.jpg', 'cover.png', 'Cover.jpg', 'Cover.png',
+    'folder.jpg', 'folder.png', 'Folder.jpg', 'Folder.png',
+    'albumart.jpg', 'albumart.png', 'coverart.jpg', 'coverart.png',
+    'cdcover.jpg', 'cdcover.png', 'front.jpg', 'front.png',
+    'album.jpg', 'album.png'
+)
 
 # Reel configuration constants (for cassette skins)
 REEL_LEFT_FILE = "reel.left.filename"
@@ -561,6 +571,11 @@ class Volumio_ConfigFileParser(object):
             d[ALBUMBORDER] = config_file.getint(section, ALBUMBORDER)
         except:
             d[ALBUMBORDER] = None
+        try:
+            val = config_file.get(section, ALBUMART_SOURCE, fallback='')
+            d[ALBUMART_SOURCE] = (val or '').strip() or None
+        except Exception:
+            d[ALBUMART_SOURCE] = None
 
         try:
             d[ALBUMART_ROT] = config_file.getboolean(section, ALBUMART_ROT)

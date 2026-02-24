@@ -16,6 +16,7 @@ import os
 import io
 import math
 import time
+from urllib.parse import quote
 import time as time_module
 import requests
 import pygame as pg
@@ -49,6 +50,7 @@ from volumio_configfileparser import (
     REEL_DIRECTION, SPOOL_LEFT_SPEED, SPOOL_RIGHT_SPEED, SPOOL_ADAPTIVE, QUEUE_MODE,
     FONT_PATH, FONT_LIGHT, FONT_REGULAR, FONT_BOLD,
     ALBUMART_POS, ALBUMART_DIM, ALBUMART_MSK, ALBUMBORDER,
+    ALBUMART_SOURCE, ALBUMART_SOURCE_FALLBACKS,
     ALBUMART_ROT, ALBUMART_ROT_SPEED,
     PLAY_TXT_CENTER, PLAY_CENTER, PLAY_MAX,
     SCROLLING_SPEED, SCROLLING_SPEED_ARTIST, SCROLLING_SPEED_TITLE, SCROLLING_SPEED_ALBUM,
@@ -632,44 +634,70 @@ class AlbumArtRenderer:
                 surf = None
         return surf
 
-    def load_from_url(self, url):
+    def _process_image_bytes(self, img_bytes):
+        """Process image bytes into scaled surface. Returns True on success."""
+        surf = None
+        if PIL_AVAILABLE:
+            surf = self._apply_mask_with_pil(img_bytes)
+        if surf is None:
+            surf = self._load_surface_from_bytes(img_bytes)
+        if not surf:
+            return False
+        try:
+            scaled = pg.transform.smoothscale(surf, self.art_dim)
+        except Exception:
+            scaled = pg.transform.scale(surf, self.art_dim)
+        try:
+            self._scaled_surf = scaled.convert_alpha()
+        except Exception:
+            self._scaled_surf = scaled
+        self._need_first_blit = True
+        return True
+
+    def load_from_url(self, url, source_id=None):
         """Fetch image from URL, build scaled surface."""
-        self._current_url = url
+        self._current_url = source_id if source_id is not None else url
         self._scaled_surf = None
         self._needs_redraw = True
         self._need_first_blit = False
-
         if not url:
             return
-
         try:
             real_url = url if not url.startswith("/") else f"http://localhost:3000{url}"
             resp = self._requests.get(real_url, timeout=3)
             if not (resp.ok and "image" in resp.headers.get("Content-Type", "").lower()):
                 return
-
             img_bytes = io.BytesIO(resp.content)
+            self._process_image_bytes(img_bytes)
+        except Exception:
+            pass
 
-            surf = None
-            if PIL_AVAILABLE:
-                surf = self._apply_mask_with_pil(img_bytes)
+    def load_from_file(self, path, source_id=None):
+        """Load image from local filesystem path."""
+        self._current_url = source_id if source_id is not None else path
+        self._scaled_surf = None
+        self._needs_redraw = True
+        self._need_first_blit = False
+        if not path or not os.path.isfile(path):
+            return
+        try:
+            with open(path, 'rb') as f:
+                img_bytes = io.BytesIO(f.read())
+            self._process_image_bytes(img_bytes)
+        except Exception:
+            pass
 
-            if surf is None:
-                surf = self._load_surface_from_bytes(img_bytes)
-
-            if surf:
-                try:
-                    scaled = pg.transform.smoothscale(surf, self.art_dim)
-                except Exception:
-                    scaled = pg.transform.scale(surf, self.art_dim)
-                
-                try:
-                    self._scaled_surf = scaled.convert_alpha()
-                except Exception:
-                    self._scaled_surf = scaled
-                
-                self._need_first_blit = True
-
+    def load_from_bytes(self, img_bytes, source_id):
+        """Load image from bytes. source_id used for change detection."""
+        self._current_url = source_id
+        self._scaled_surf = None
+        self._needs_redraw = True
+        self._need_first_blit = False
+        if not img_bytes:
+            return
+        try:
+            buf = io.BytesIO(img_bytes) if isinstance(img_bytes, bytes) else img_bytes
+            self._process_image_bytes(buf)
         except Exception:
             pass
 
@@ -1706,6 +1734,8 @@ class CassetteHandler:
         title = meta.get("title", "")
         album = meta.get("album", "")
         albumart = meta.get("albumart", "")
+        uri = meta.get("uri", "")
+        volumio_url = meta.get("_volumio_url", "http://localhost:3000")
         samplerate = meta.get("samplerate", "")
         bitdepth = meta.get("bitdepth", "")
         track_type = meta.get("trackType", "")
@@ -1808,7 +1838,13 @@ class CassetteHandler:
         # Pre-calculate album art state
         album_url_changed = False
         if self.album_renderer:
-            album_url_changed = albumart != self.album_renderer._current_url
+            albumart_source_raw = self.mc_vol.get(ALBUMART_SOURCE)
+            use_path_source = uri and albumart_source_raw is not None
+            albumart_source = (albumart_source_raw or "").strip() or None
+            effective_source = albumart
+            if use_path_source:
+                effective_source = "path:" + uri
+            album_url_changed = effective_source != self.album_renderer._current_url
         
         # =================================================================
         # LAYER COMPOSITION: Clear and render in z-order
@@ -1877,7 +1913,29 @@ class CassetteHandler:
         # LAYER 3: Album art (draw BEFORE meters so meters appear on top)
         if self.album_renderer:
             if album_url_changed:
-                self.album_renderer.load_from_url(albumart)
+                path_loaded = False
+                if use_path_source:
+                    is_local = "localhost" in volumio_url or "127.0.0.1" in volumio_url
+                    path_source_id = "path:" + uri
+                    if is_local:
+                        san = uri.replace("music-library/", "").replace("mnt/", "")
+                        base = "/mnt/" + san if not san.startswith("/") else "/mnt" + san
+                        album_folder = os.path.dirname(base)
+                        filenames = [albumart_source] if albumart_source else list(ALBUMART_SOURCE_FALLBACKS)
+                        if albumart_source:
+                            filenames.extend(ALBUMART_SOURCE_FALLBACKS)
+                        for fn in filenames:
+                            cand = os.path.join(album_folder, fn)
+                            if os.path.isfile(cand):
+                                self.album_renderer.load_from_file(cand, source_id=path_source_id)
+                                path_loaded = True
+                                break
+                    else:
+                        albumartd_url = f"{volumio_url.rstrip('/')}/albumartd?path={quote(uri)}"
+                        self.album_renderer.load_from_url(albumartd_url, source_id=path_source_id)
+                        path_loaded = bool(self.album_renderer._scaled_surf)
+                if not path_loaded:
+                    self.album_renderer.load_from_url(albumart)
             if force_flag:
                 self.album_renderer.force_redraw()
             if album_url_changed or force_flag:

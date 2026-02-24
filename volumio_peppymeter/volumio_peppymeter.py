@@ -676,6 +676,7 @@ class MetadataWatcher:
                 # Relative path - prepend Volumio URL for remote access
                 albumart = f"{self.volumio_url}{albumart}" if albumart.startswith('/') else f"{self.volumio_url}/{albumart}"
             self.metadata["albumart"] = albumart
+            self.metadata["uri"] = data.get("uri", "") or ""
             self.metadata["samplerate"] = str(data.get("samplerate", "") or "")
             self.metadata["bitdepth"] = str(data.get("bitdepth", "") or "")
             self.metadata["trackType"] = data.get("trackType", "") or ""
@@ -3735,10 +3736,11 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
     
     # Shared metadata dict - updated by MetadataWatcher via socket.io
     last_metadata = {
-        "artist": "", "title": "", "album": "", "albumart": "",
+        "artist": "", "title": "", "album": "", "albumart": "", "uri": "",
         "samplerate": "", "bitdepth": "", "trackType": "", "bitrate": "",
         "service": "", "status": "", "_time_remain": -1, "_time_update": 0
     }
+    last_metadata["_volumio_url"] = f"http://{volumio_host}:{volumio_port}"
     
     # Random meter tracking
     random_mode = meter_config_volumio[METER_BKP] == "random" or "," in meter_config_volumio[METER_BKP]
