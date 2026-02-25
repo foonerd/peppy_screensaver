@@ -112,6 +112,11 @@ VINYL_FILE = "vinyl.filename"
 VINYL_POS = "vinyl.pos"
 VINYL_CENTER = "vinyl.center"
 VINYL_DIRECTION = "vinyl.direction"
+VINYL_SOURCE_FALLBACKS = (
+    'vinyl_disc.png', 'vinyl_disc.jpg', 'vinyl.png', 'vinyl.jpg',
+    'Vinyl_disc.png', 'Vinyl_disc.jpg', 'Vinyl.png', 'Vinyl.jpg',
+    'disc.png', 'disc.jpg', 'Disc.png', 'Disc.jpg',
+)
 
 # Tonearm configuration constants (for turntable skins)
 TONEARM_FILE = "tonearm.filename"

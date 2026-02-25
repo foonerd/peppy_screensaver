@@ -68,13 +68,19 @@ from volumio_configfileparser import (
 # Vinyl configuration constants
 try:
     from volumio_configfileparser import (
-        VINYL_FILE, VINYL_POS, VINYL_CENTER, VINYL_DIRECTION
+        VINYL_FILE, VINYL_POS, VINYL_CENTER, VINYL_DIRECTION,
+        VINYL_SOURCE_FALLBACKS
     )
 except ImportError:
     VINYL_FILE = "vinyl.filename"
     VINYL_POS = "vinyl.pos"
     VINYL_CENTER = "vinyl.center"
     VINYL_DIRECTION = "vinyl.direction"
+    VINYL_SOURCE_FALLBACKS = (
+        'vinyl_disc.png', 'vinyl_disc.jpg', 'vinyl.png', 'vinyl.jpg',
+        'Vinyl_disc.png', 'Vinyl_disc.jpg', 'Vinyl.png', 'Vinyl.jpg',
+        'disc.png', 'disc.jpg', 'Disc.png', 'Disc.jpg',
+    )
 
 # Reel configuration constants (for edge case: single reel + tonearm)
 try:
@@ -963,6 +969,7 @@ class VinylRenderer:
         self._needs_redraw = True
         self._need_first_blit = False
         self._has_composited_art = False  # True when album art is baked into vinyl
+        self._regeneration_queue = None
         # SMOOTH_ROTATION: rollback remove next 2 lines
         self._smooth_rotation = str(smooth_rotation).strip().lower() in ('1', 'true', 'yes') if isinstance(smooth_rotation, str) else bool(smooth_rotation)
         
@@ -988,19 +995,51 @@ class VinylRenderer:
         except Exception as e:
             print(f"[VinylRenderer] Failed to load '{self.filename}': {e}")
     
+    def load_from_file(self, filepath):
+        """Load vinyl image from filesystem path. Used for path-based vinyl from track folder.
+        :param filepath: Absolute path to vinyl image file
+        :return: True if loaded, False otherwise
+        """
+        if not filepath or not os.path.isfile(filepath):
+            return False
+        try:
+            self._base_surf = pg.image.load(filepath).convert_alpha()
+            self._original_surf = self._base_surf.copy()
+            self._loaded = True
+            self._need_first_blit = True
+            self._has_composited_art = False
+            self._regenerate_rotation_frames()
+            return True
+        except Exception as e:
+            log_debug(f"[VinylRenderer] load_from_file failed: {e}", "basic")
+            return False
+    
     def _regenerate_rotation_frames(self):
-        """Regenerate precomputed rotation frames from current _original_surf."""
+        """Start incremental regeneration so turntable keeps rotating during frame build."""
         self._rot_frames = None
+        self._regeneration_queue = []
         if USE_PRECOMPUTED_FRAMES and self.center and self.rotate_rpm > 0.0 and self._original_surf:
-            try:
-                self._rot_frames = [
-                    pg.transform.rotate(self._original_surf, -a)
-                    for a in range(0, 360, self.rotation_step)
-                ]
-                log_debug(f"[VinylRenderer] Regenerated {len(self._rot_frames)} rotation frames", "verbose")
-            except Exception as e:
-                log_debug(f"[VinylRenderer] Failed to regenerate frames: {e}", "basic")
-                self._rot_frames = None
+            angles = list(range(0, 360, self.rotation_step))
+            self._regeneration_queue = [(a, i) for i, a in enumerate(angles)]
+            self._rot_frames = [None] * len(angles)
+
+    def _regenerate_rotation_batch(self, batch_size=4):
+        """Generate up to batch_size frames per call. Keeps turntable rotating during regen."""
+        if not self._regeneration_queue or not self._original_surf:
+            return
+        try:
+            for _ in range(min(batch_size, len(self._regeneration_queue))):
+                if not self._regeneration_queue:
+                    break
+                angle, idx = self._regeneration_queue.pop(0)
+                self._rot_frames[idx] = pg.transform.rotate(self._original_surf, -angle)
+            if not self._regeneration_queue:
+                self._regeneration_queue = None
+                log_debug(f"[VinylRenderer] Regenerated {len(self._rot_frames)} rotation frames (incremental)", "verbose")
+        except Exception as e:
+            log_debug(f"[VinylRenderer] Failed to regenerate frames: {e}", "basic")
+            self._rot_frames = None
+            self._regeneration_queue = None
     
     def composite_album_art(self, art_surf, art_dim):
         """Composite album art onto vinyl surface center.
@@ -1155,9 +1194,18 @@ class VinylRenderer:
         if advance_angle:
             self._update_angle(status, now_ticks, volatile=volatile, decel_factor=decel_factor)
         
+        # Incremental regen: small batch so main loop stays responsive (turntable keeps rotating)
+        if getattr(self, '_regeneration_queue', None):
+            self._regenerate_rotation_batch(4)
+        
         if self._rot_frames:
             idx = int(self._current_angle // self.rotation_step) % len(self._rot_frames)
             rot = self._rot_frames[idx]
+            if rot is None:
+                try:
+                    rot = pg.transform.rotate(self._original_surf, -self._current_angle)
+                except Exception:
+                    rot = pg.transform.rotate(self._original_surf, int(-self._current_angle))
         else:
             try:
                 rot = pg.transform.rotate(self._original_surf, -self._current_angle)
@@ -2027,13 +2075,27 @@ class TurntableHandler:
         
         log_debug(f"  Vinyl config: file={vinyl_file}, center={vinyl_center}, rpm={vinyl_rpm}", "verbose")
         
-        # Create vinyl renderer
+        # Parse vinyl.filename: (1) single = theme only (backward compat); (2) "a,b" = album a, theme b; (3) ",b" = theme only
+        self._vinyl_album_source = None
+        self._vinyl_theme_fallback = None
+        if vinyl_file and vinyl_center:
+            parts = [p.strip() for p in str(vinyl_file).split(",")]
+            if len(parts) >= 2:
+                self._vinyl_album_source = parts[0] or None
+                self._vinyl_theme_fallback = parts[1] or vinyl_file
+            elif len(parts) == 1 and parts[0]:
+                self._vinyl_album_source = None
+                self._vinyl_theme_fallback = parts[0]
+        
+        # Create vinyl renderer (theme filename for init; path-based resolved per track)
         self.vinyl_renderer = None
         if vinyl_file and vinyl_center:
+            theme_filename = self._vinyl_theme_fallback or vinyl_file
+            self._last_vinyl_uri = None
             self.vinyl_renderer = VinylRenderer(
                 base_path=self.config.get(BASE_PATH),
                 meter_folder=self.config.get(SCREEN_INFO)[METER_FOLDER],
-                filename=vinyl_file,
+                filename=theme_filename,
                 pos=vinyl_pos,
                 center=vinyl_center,
                 rotate_rpm=vinyl_rpm,
@@ -2044,6 +2106,10 @@ class TurntableHandler:
                 smooth_rotation=smooth_rot  # SMOOTH_ROTATION: rollback remove this kwarg
             )
             log_debug(f"  VinylRenderer created", "verbose")
+        else:
+            self._vinyl_album_source = None
+            self._vinyl_theme_fallback = None
+            self._last_vinyl_uri = None
         
         # Create album art renderer (with rotation support)
         self.album_renderer = None
@@ -2438,15 +2504,52 @@ class TurntableHandler:
         track_type = meta.get("trackType", "")
         bitrate = meta.get("bitrate", "")
         status = meta.get("status", "")
-        volatile = meta.get("volatile", False)
+        # volatile: True=transitional, False=genuine stop, None=unset (getEmptyState, treat as transitional)
+        volatile_raw = meta.get("volatile")
+        is_transitional = (volatile_raw is not False)  # True or None = transitional
+        volatile = is_transitional  # For render: treat stop/pause as play when transitional
         is_playing = status == "play"
         duration = meta.get("duration", 0) or 0
+        uri = meta.get("uri", "")
+        volumio_url = meta.get("_volumio_url", "http://localhost:3000")
+        
+        # Vinyl path-based: album folder first, theme fallback. Local only; remote uses theme.
+        if self.vinyl_renderer and getattr(self, '_vinyl_theme_fallback', None) and uri != self._last_vinyl_uri:
+            album_source = getattr(self, '_vinyl_album_source', None)
+            if not album_source:
+                # Theme-only: vinyl never changes, just invalidate album art for next composite
+                self._last_vinyl_uri = uri
+                if self.album_renderer and getattr(self.album_renderer, '_is_composited', False):
+                    self.album_renderer._is_composited = False
+            else:
+                vinyl_loaded = False
+                if uri:
+                    is_local = "localhost" in volumio_url or "127.0.0.1" in volumio_url
+                    if is_local:
+                        san = uri.replace("music-library/", "").replace("mnt/", "")
+                        base = "/mnt/" + san if not san.startswith("/") else "/mnt" + san
+                        album_folder = os.path.dirname(base)
+                        # Only search for user-specified album_source; do NOT add VINYL_SOURCE_FALLBACKS
+                        # (they would override vinyl.filename and pick vinyl_disc.jpg etc. against user intent)
+                        filenames = [album_source]
+                        for fn in filenames:
+                            cand = os.path.join(album_folder, fn)
+                            if os.path.isfile(cand):
+                                vinyl_loaded = self.vinyl_renderer.load_from_file(cand)
+                                if vinyl_loaded:
+                                    break
+                if not vinyl_loaded:
+                    self.vinyl_renderer.filename = self._vinyl_theme_fallback
+                    self.vinyl_renderer._load_image()
+                self._last_vinyl_uri = uri
+                if self.album_renderer and getattr(self.album_renderer, '_is_composited', False):
+                    self.album_renderer._is_composited = False
         
         # Get queue mode from config
         queue_mode = self.global_config.get(QUEUE_MODE, "track")
         
         # Determine which duration/progress to use
-        use_queue = (queue_mode == "queue" and not volatile and 
+        use_queue = (queue_mode == "queue" and not is_transitional and 
                      meta.get("queue_progress_pct") is not None)
         
         if use_queue:
@@ -2560,7 +2663,9 @@ class TurntableHandler:
         # components to redraw (anti-collision pattern from CassetteHandler)
         # =================================================================
         # Include: tonearm animating, just_reached_rest (transition frame needs final clear)
-        force_flag = vinyl_will_blit or album_will_render or tonearm_will_render or tonearm_is_animating or just_reached_rest
+        # Include: vinyl regenerating (keeps turntable rotating during frame build)
+        vinyl_regen = bool(self.vinyl_renderer and getattr(self.vinyl_renderer, '_regeneration_queue', None))
+        force_flag = vinyl_will_blit or vinyl_regen or album_will_render or tonearm_will_render or tonearm_is_animating or just_reached_rest
         
         # =================================================================
         # PHASE 1: LAYER COMPOSITION - Clear dirty regions from bgr_surface
@@ -2603,10 +2708,9 @@ class TurntableHandler:
         
         # Z1: Vinyl (draw BEFORE meters so meters appear on top)
         # Force render when tonearm is animating (tonearm clearing may overlap vinyl)
-        # advance_angle=vinyl_will_blit ensures constant rotation speed (angle only advances
-        # when vinyl's own FPS gate is ready, not when forced due to overlapping elements)
+        # advance_angle: when regen in progress, advance every frame so turntable keeps rotating
         if self.vinyl_renderer and (vinyl_will_blit or force_flag):
-            advance = vinyl_will_blit
+            advance = vinyl_will_blit or vinyl_regen
             rect = self.vinyl_renderer.render(self.screen, status, now_ticks, volatile=volatile, force=force_flag, decel_factor=decel_factor, advance_angle=advance)
             if rect:
                 dirty_rects.append(rect)
@@ -2783,10 +2887,11 @@ class TurntableHandler:
             current_time = time_module.time()
             
             # Check for persist file (countdown mode for external control)
+            # Defensive: only show countdown when NOT transitional (volatile explicitly False)
             persist_countdown_sec = None
             persist_display_mode = "freeze"
             persist_file = '/tmp/peppy_persist'
-            if not is_playing and os.path.exists(persist_file):
+            if not is_playing and not is_transitional and os.path.exists(persist_file):
                 try:
                     with open(persist_file, 'r') as f:
                         parts = f.read().strip().split(':')
