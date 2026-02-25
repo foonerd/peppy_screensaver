@@ -15,10 +15,13 @@
 # This module is intentionally self-contained with duplicated components
 # to eliminate dead code paths and reduce CPU overhead.
 
+import json
 import os
 import io
 import math
 import time
+import urllib.request
+import urllib.error
 import requests
 import pygame as pg
 
@@ -137,6 +140,40 @@ DEBUG_LOG_FILE = '/tmp/peppy_debug.log'
 # Global debug level - will be set from config after parsing
 # Default to off until config is loaded
 DEBUG_LEVEL_CURRENT = "off"
+
+# =============================================================================
+# Remote vinyl fetch (peppy_remote)
+# =============================================================================
+def _fetch_vinyl_from_server(volumio_url, uri, filename):
+    """Fetch vinyl image from server via plugin endpoint. Returns bytes or None."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(volumio_url or "http://localhost:3000")
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 3000
+        url = f"http://{host}:{port}/api/v1/pluginEndpoint"
+        body = json.dumps({
+            "endpoint": "peppy_screensaver_vinyl",
+            "data": {"uri": uri, "filename": filename},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json", "User-Agent": "PeppyRemote/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            if not data.get("success"):
+                return None
+            inner = data.get("data", {})
+            if inner.get("success") and inner.get("data"):
+                import base64
+                return base64.b64decode(inner["data"])
+            return None
+    except Exception:
+        return None
+
 
 # Debug trace switches - dict mapping component name to enabled state
 # Keys match the config key suffix (e.g., "meters" for debug.trace.meters)
@@ -1013,7 +1050,27 @@ class VinylRenderer:
         except Exception as e:
             log_debug(f"[VinylRenderer] load_from_file failed: {e}", "basic")
             return False
-    
+
+    def load_from_bytes(self, img_bytes):
+        """Load vinyl image from bytes (e.g. from remote fetch). Used for peppy_remote.
+        :param img_bytes: Raw image bytes or BytesIO
+        :return: True if loaded, False otherwise
+        """
+        if not img_bytes:
+            return False
+        try:
+            buf = img_bytes if isinstance(img_bytes, io.BytesIO) else io.BytesIO(img_bytes)
+            self._base_surf = pg.image.load(buf).convert_alpha()
+            self._original_surf = self._base_surf.copy()
+            self._loaded = True
+            self._need_first_blit = True
+            self._has_composited_art = False
+            self._regenerate_rotation_frames()
+            return True
+        except Exception as e:
+            log_debug(f"[VinylRenderer] load_from_bytes failed: {e}", "basic")
+            return False
+
     def _regenerate_rotation_frames(self):
         """Start incremental regeneration so turntable keeps rotating during frame build."""
         self._rot_frames = None
@@ -2538,6 +2595,11 @@ class TurntableHandler:
                                 vinyl_loaded = self.vinyl_renderer.load_from_file(cand)
                                 if vinyl_loaded:
                                     break
+                    else:
+                        # Remote (peppy_remote): fetch vinyl from server via plugin endpoint
+                        img_bytes = _fetch_vinyl_from_server(volumio_url, uri, album_source)
+                        if img_bytes:
+                            vinyl_loaded = self.vinyl_renderer.load_from_bytes(img_bytes)
                 if not vinyl_loaded:
                     self.vinyl_renderer.filename = self._vinyl_theme_fallback
                     self.vinyl_renderer._load_image()

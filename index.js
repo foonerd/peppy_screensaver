@@ -384,6 +384,15 @@ peppyScreensaver.prototype.onStart = function() {
     });
     self.logger.info(id + 'REST endpoint registered: peppy_screensaver_font');
     
+    // Register REST endpoint for remote vinyl fetch (album-folder vinyl for peppy_remote)
+    self.commandRouter.addPluginRestEndpoint({
+        endpoint: 'peppy_screensaver_vinyl',
+        type: 'user_interface',
+        name: 'peppy_screensaver',
+        method: 'getVinylImage'
+    });
+    self.logger.info(id + 'REST endpoint registered: peppy_screensaver_vinyl');
+    
     // Initialize config version on startup
     self.updateConfigVersion();
     
@@ -1960,6 +1969,50 @@ peppyScreensaver.prototype.getFont = function (data) {
     }
   } catch (err) {
     self.logger.error(id + 'getFont: ' + err.message);
+    defer.resolve({ success: false, error: err.message });
+  }
+  return defer.promise;
+};
+
+// HTTP endpoint: Return vinyl image from album folder for remote clients (peppy_remote)
+// Called via: POST /api/v1/pluginEndpoint with body { endpoint: 'peppy_screensaver_vinyl', data: { uri: '...', filename: 'vinyl.jpg' } }
+peppyScreensaver.prototype.getVinylImage = function (data) {
+  var self = this;
+  var defer = libQ.defer();
+  var uri = (data && typeof data.uri === 'string') ? data.uri.trim() : '';
+  var filename = (data && typeof data.filename === 'string') ? data.filename.trim() : '';
+  if (!uri || !filename || filename.indexOf('/') !== -1 || filename.indexOf('..') !== -1) {
+    defer.resolve({ success: false, error: 'invalid uri or filename' });
+    return defer.promise;
+  }
+  var allowedExt = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+  var ext = path.extname(filename).toLowerCase();
+  if (allowedExt.indexOf(ext) === -1) {
+    defer.resolve({ success: false, error: 'invalid file extension' });
+    return defer.promise;
+  }
+  try {
+    var san = uri.replace(/^music-library\/?/, '').replace(/^mnt\/?/, '');
+    var base = san.startsWith('/') ? '/mnt' + san : '/mnt/' + san;
+    var albumFolder = path.dirname(base);
+    var vinylPath = path.join(albumFolder, filename);
+    var realPath = path.resolve(vinylPath);
+    if (realPath.indexOf('/mnt/') !== 0 && realPath.indexOf('/mnt') !== 0) {
+      defer.resolve({ success: false, error: 'path outside music library' });
+      return defer.promise;
+    }
+    if (realPath.indexOf('..') !== -1) {
+      defer.resolve({ success: false, error: 'path traversal not allowed' });
+      return defer.promise;
+    }
+    if (!fs.existsSync(realPath)) {
+      defer.resolve({ success: false, error: 'not found' });
+      return defer.promise;
+    }
+    var buf = fs.readFileSync(realPath, { encoding: null });
+    defer.resolve({ success: true, data: buf.toString('base64') });
+  } catch (err) {
+    self.logger.error(id + 'getVinylImage: ' + err.message);
     defer.resolve({ success: false, error: err.message });
   }
   return defer.promise;
