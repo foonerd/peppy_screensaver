@@ -71,7 +71,7 @@ from volumio_configfileparser import (
 # Vinyl configuration constants
 try:
     from volumio_configfileparser import (
-        VINYL_FILE, VINYL_POS, VINYL_CENTER, VINYL_DIRECTION,
+        VINYL_FILE, VINYL_POS, VINYL_CENTER, VINYL_DIRECTION, VINYL_DIM,
         VINYL_SOURCE_FALLBACKS
     )
 except ImportError:
@@ -79,6 +79,7 @@ except ImportError:
     VINYL_POS = "vinyl.pos"
     VINYL_CENTER = "vinyl.center"
     VINYL_DIRECTION = "vinyl.direction"
+    VINYL_DIM = "vinyl.dimension"
     VINYL_SOURCE_FALLBACKS = (
         'vinyl_disc.png', 'vinyl_disc.jpg', 'vinyl.png', 'vinyl.jpg',
         'Vinyl_disc.png', 'Vinyl_disc.jpg', 'Vinyl.png', 'Vinyl.jpg',
@@ -984,6 +985,7 @@ class VinylRenderer:
     """
 
     def __init__(self, base_path, meter_folder, filename, pos, center,
+                 dimension=None,
                  rotate_rpm=0.0, rotation_fps=8, rotation_step=6,
                  speed_multiplier=1.0, direction="cw", smooth_rotation=False):  # SMOOTH_ROTATION: rollback remove param
         self.base_path = base_path
@@ -991,6 +993,7 @@ class VinylRenderer:
         self.filename = filename
         self.pos = pos
         self.center = center
+        self.dimension = dimension
         self.rotate_rpm = abs(float(rotate_rpm) * float(speed_multiplier))
         self.rotation_fps = int(rotation_fps)
         self.rotation_step = int(rotation_step)
@@ -1011,6 +1014,24 @@ class VinylRenderer:
         self._smooth_rotation = str(smooth_rotation).strip().lower() in ('1', 'true', 'yes') if isinstance(smooth_rotation, str) else bool(smooth_rotation)
         
         self._load_image()
+
+    def _apply_dimension(self, surf):
+        """Apply optional vinyl.dimension scaling while preserving legacy default behavior."""
+        if surf is None:
+            return surf
+        if not self.dimension:
+            return surf
+        try:
+            w = int(self.dimension[0])
+            h = int(self.dimension[1])
+            if w <= 0 or h <= 0:
+                return surf
+            if surf.get_width() == w and surf.get_height() == h:
+                return surf
+            return pg.transform.smoothscale(surf, (w, h))
+        except Exception as e:
+            log_debug(f"[VinylRenderer] vinyl.dimension scaling failed: {e}", "basic")
+            return surf
     
     def _load_image(self):
         """Load the vinyl PNG file and pre-compute rotation frames."""
@@ -1020,7 +1041,7 @@ class VinylRenderer:
         try:
             img_path = os.path.join(self.base_path, self.meter_folder, self.filename)
             if os.path.exists(img_path):
-                self._base_surf = pg.image.load(img_path).convert_alpha()
+                self._base_surf = self._apply_dimension(pg.image.load(img_path).convert_alpha())
                 self._original_surf = self._base_surf.copy()  # Start with copy of base
                 self._loaded = True
                 self._need_first_blit = True
@@ -1040,7 +1061,7 @@ class VinylRenderer:
         if not filepath or not os.path.isfile(filepath):
             return False
         try:
-            self._base_surf = pg.image.load(filepath).convert_alpha()
+            self._base_surf = self._apply_dimension(pg.image.load(filepath).convert_alpha())
             self._original_surf = self._base_surf.copy()
             self._loaded = True
             self._need_first_blit = True
@@ -1060,7 +1081,7 @@ class VinylRenderer:
             return False
         try:
             buf = img_bytes if isinstance(img_bytes, io.BytesIO) else io.BytesIO(img_bytes)
-            self._base_surf = pg.image.load(buf).convert_alpha()
+            self._base_surf = self._apply_dimension(pg.image.load(buf).convert_alpha())
             self._original_surf = self._base_surf.copy()
             self._loaded = True
             self._need_first_blit = True
@@ -2096,6 +2117,7 @@ class TurntableHandler:
         vinyl_file = mc_vol.get(VINYL_FILE)
         vinyl_pos = mc_vol.get(VINYL_POS)
         vinyl_center = mc_vol.get(VINYL_CENTER)
+        vinyl_dim = mc_vol.get(VINYL_DIM)
         vinyl_direction = mc_vol.get(VINYL_DIRECTION) or self.global_config.get(REEL_DIRECTION, "cw")
         vinyl_rpm = as_float(mc_vol.get(ALBUMART_ROT_SPEED), 0.0)
         
@@ -2155,6 +2177,7 @@ class TurntableHandler:
                 filename=theme_filename,
                 pos=vinyl_pos,
                 center=vinyl_center,
+                dimension=vinyl_dim,
                 rotate_rpm=vinyl_rpm,
                 rotation_fps=rot_fps,
                 rotation_step=rot_step,
