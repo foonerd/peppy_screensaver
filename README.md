@@ -501,7 +501,7 @@ albumart.rotation.speed = 1.5
 
 | Option | Description |
 |--------|-------------|
-| `vinyl.filename` | PNG file for vinyl disc graphic (transparent background) |
+| `vinyl.filename` | PNG file for vinyl disc graphic (transparent background). Also supports `albumFile,themeFile` to try album folder first, then theme fallback (local and remote). |
 | `vinyl.pos` | Top-left position (x,y) for drawing |
 | `vinyl.center` | Center point (x,y) for rotation pivot |
 | `vinyl.direction` | Rotation direction: `cw` or `ccw` (optional, defaults to global reel.direction) |
