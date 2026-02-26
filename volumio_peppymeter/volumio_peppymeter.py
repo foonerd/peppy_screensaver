@@ -1577,10 +1577,10 @@ class DiscoveryAnnouncer:
             self._active_meter = meter_name
             if old_meter:
                 log_debug(f"[REMOTE:DISCOVERY] Active meter changed: {old_meter} -> {meter_name}", "verbose")
-                # Send immediate notification to clients (don't wait for next interval)
-                self._send_immediate_broadcast()
             else:
                 log_debug(f"[REMOTE:DISCOVERY] Active meter: {meter_name}", "verbose")
+            # Always notify immediately on a real meter change, including first meter after restart.
+            self._send_immediate_broadcast()
     
     def _send_immediate_broadcast(self):
         """Send an immediate broadcast outside the normal interval.
