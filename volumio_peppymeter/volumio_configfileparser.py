@@ -112,6 +112,14 @@ VINYL_FILE = "vinyl.filename"
 VINYL_POS = "vinyl.pos"
 VINYL_CENTER = "vinyl.center"
 VINYL_DIRECTION = "vinyl.direction"
+VINYL_DIM = "vinyl.dimension"
+VINYL_SOURCE_FALLBACKS = (
+    'vinyl_disc.png', 'vinyl_disc.jpg', 'vinyl.png', 'vinyl.jpg',
+    'Vinyl_disc.png', 'Vinyl_disc.jpg', 'Vinyl.png', 'Vinyl.jpg',
+    'disc.png', 'disc.jpg', 'Disc.png', 'Disc.jpg',
+    'cdart.png', 'cdart.jpg', 'Cdart.png', 'Cdart.jpg', 'CDart.png', 'CDart.jpg',
+    'back.png', 'back.jpg', 'Back.png', 'Back.jpg',
+)
 
 # Tonearm configuration constants (for turntable skins)
 TONEARM_FILE = "tonearm.filename"
@@ -633,6 +641,11 @@ class Volumio_ConfigFileParser(object):
             d[VINYL_DIRECTION] = config_file.get(section, VINYL_DIRECTION)
         except:
             d[VINYL_DIRECTION] = None  # None = use global config (reel.direction)
+        try:
+            spl = config_file.get(section, VINYL_DIM).split(',')
+            d[VINYL_DIM] = (int(spl[0]), int(spl[1]))
+        except:
+            d[VINYL_DIM] = None
 
         # --- Tonearm configuration (for turntable skins) ---
         try:

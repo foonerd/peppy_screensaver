@@ -490,6 +490,7 @@ config.extend = True
 vinyl.filename = vinyl_disc.png
 vinyl.pos = 100,50
 vinyl.center = 300,250
+vinyl.dimension = 420,420
 vinyl.direction = cw
 
 # Album art positioned as record label on the vinyl
@@ -501,9 +502,10 @@ albumart.rotation.speed = 1.5
 
 | Option | Description |
 |--------|-------------|
-| `vinyl.filename` | PNG file for vinyl disc graphic (transparent background) |
+| `vinyl.filename` | PNG file for vinyl disc graphic (transparent background). Also supports `albumFile,themeFile` to try album folder first, then theme fallback (local and remote). |
 | `vinyl.pos` | Top-left position (x,y) for drawing |
 | `vinyl.center` | Center point (x,y) for rotation pivot |
+| `vinyl.dimension` | Optional width,height for vinyl image scaling before album-art compositing. If not set, native vinyl image size is used (backward compatible). |
 | `vinyl.direction` | Rotation direction: `cw` or `ccw` (optional, defaults to global reel.direction) |
 
 **Rotation coupling:**

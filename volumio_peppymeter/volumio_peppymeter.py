@@ -628,7 +628,7 @@ class MetadataWatcher:
     def _run(self):
         # DEBUG: Track previous values for change detection
         _prev_status = ""
-        _prev_volatile = False
+        _prev_volatile = None  # None = unset, to distinguish from False
         _prev_title = ""
         _prev_seek = 0
         _pushstate_count = 0
@@ -641,7 +641,8 @@ class MetadataWatcher:
             
             # Extract ALL key values
             status = data.get("status", "") or ""
-            volatile = data.get("volatile", False) or False
+            # Preserve raw volatile: True=transitional, False=genuine stop, None=unset (getEmptyState, treat as transitional)
+            volatile = data.get("volatile") if "volatile" in data else None
             title = data.get("title", "") or ""
             seek = data.get("seek", 0) or 0
             duration = data.get("duration", 0) or 0
@@ -683,6 +684,8 @@ class MetadataWatcher:
             self.metadata["service"] = data.get("service", "") or ""
             self.metadata["status"] = status
             self.metadata["volatile"] = volatile
+            self.metadata["uri"] = data.get("uri", "") or ""
+            self.metadata["_volumio_url"] = self.volumio_url
             
             # Update queue position if available
             position = data.get("position")
@@ -1574,10 +1577,10 @@ class DiscoveryAnnouncer:
             self._active_meter = meter_name
             if old_meter:
                 log_debug(f"[REMOTE:DISCOVERY] Active meter changed: {old_meter} -> {meter_name}", "verbose")
-                # Send immediate notification to clients (don't wait for next interval)
-                self._send_immediate_broadcast()
             else:
                 log_debug(f"[REMOTE:DISCOVERY] Active meter: {meter_name}", "verbose")
+            # Always notify immediately on a real meter change, including first meter after restart.
+            self._send_immediate_broadcast()
     
     def _send_immediate_broadcast(self):
         """Send an immediate broadcast outside the normal interval.
