@@ -272,8 +272,8 @@ Stream visualization data to remote displays on your network.
 | Discovery Port | 1024-65535 | 5579 | UDP port for server discovery broadcasts |
 
 **Server modes:**
-- **Server Only**: Headless mode - streams data but shows no local display (for dedicated servers)
-- **Server + Local**: Streams data AND shows visualization locally (default)
+- **Server Only**: Headless mode - runs a dedicated non-rendering runtime (no local window/render callbacks) and streams level/spectrum/discovery data only (for dedicated servers)
+- **Server + Local**: Streams data AND shows visualization locally using the standard display/render pipeline (default)
 
 **How it works:**
 1. Server broadcasts discovery packets on UDP (default port 5579)
@@ -281,6 +281,8 @@ Stream visualization data to remote displays on your network.
 3. Audio level data streams via UDP (default port 5580)
 4. Clients fetch configuration and templates from server
 5. Metadata comes from Volumio's socket.io interface
+
+In headless mode, server shutdown closes network sockets/pipes as part of the headless loop cleanup so the next start can bind the same UDP ports cleanly.
 
 See [Remote Client](#remote-display-client) section for client installation.
 
