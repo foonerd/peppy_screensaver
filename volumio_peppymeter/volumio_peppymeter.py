@@ -28,6 +28,7 @@ import io
 import math
 import json
 import hashlib
+from random import choice
 import requests
 import socket
 import struct
@@ -3701,6 +3702,200 @@ def stop_watcher():
 
 
 # =============================================================================
+# Headless Helpers
+# =============================================================================
+def _resolve_headless_meter_candidates(cfg):
+    """Resolve meter candidate list from [current] meter settings."""
+    meter_names = cfg.get(METER_NAMES) or []
+    meter_value = (cfg.get(METER) or "").strip()
+
+    if not meter_names:
+        return [], meter_value
+
+    if meter_value.lower() == "random":
+        return list(meter_names), meter_value
+
+    if "," in meter_value:
+        requested = [m.strip() for m in meter_value.split(",") if m.strip()]
+        candidates = [m for m in requested if m in meter_names]
+        return (candidates or list(meter_names)), meter_value
+
+    if meter_value in meter_names:
+        return [meter_value], meter_value
+
+    return list(meter_names), meter_value
+
+
+def _pick_headless_meter(candidates, current_meter=None):
+    """Pick next meter; avoid repeating when possible."""
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    pool = [m for m in candidates if m != current_meter]
+    return choice(pool or candidates)
+
+
+class HeadlessCallBack(CallBack):
+    """Headless-safe callback that forbids render-side callback entry points."""
+
+    def peppy_meter_start(self, meter):
+        raise RuntimeError("peppy_meter_start must not run in headless mode")
+
+    def peppy_meter_stop(self, meter):
+        raise RuntimeError("peppy_meter_stop must not run in headless mode")
+
+    def peppy_meter_update(self):
+        return []
+
+
+# =============================================================================
+# Headless Output
+# =============================================================================
+def start_headless_output(pm, callback, meter_config_volumio, volumio_host='localhost', volumio_port=3000):
+    """
+    Headless server loop:
+    - No local display rendering
+    - Broadcast level/spectrum/discovery only
+    - Track active meter for random sync via discovery packets
+    """
+    cfg = pm.util.meter_config
+    frame_rate = max(1, int(meter_config_volumio.get(FRAME_RATE_VOLUMIO, 30)))
+    frame_delay = 1.0 / frame_rate
+
+    # Shared metadata dict - updated by MetadataWatcher via socket.io
+    last_metadata = {
+        "artist": "", "title": "", "album": "", "albumart": "",
+        "samplerate": "", "bitdepth": "", "trackType": "", "bitrate": "",
+        "service": "", "status": "", "_time_remain": -1, "_time_update": 0
+    }
+
+    random_mode = meter_config_volumio.get(METER_BKP, "random") == "random" or "," in meter_config_volumio.get(METER_BKP, "")
+    random_title = random_mode and meter_config_volumio.get(RANDOM_TITLE, False)
+    random_interval_mode = random_mode and not random_title
+    random_interval = cfg.get(RANDOM_METER_INTERVAL, 60)
+    random_timer = 0.0
+    title_changed_flag = [False]
+
+    def on_title_change():
+        title_changed_flag[0] = True
+
+    metadata_watcher = MetadataWatcher(
+        last_metadata,
+        title_changed_callback=on_title_change if random_title else None,
+        volumio_host=volumio_host,
+        volumio_port=volumio_port
+    )
+    metadata_watcher.start()
+
+    level_port = meter_config_volumio.get(REMOTE_SERVER_PORT, 5580)
+    discovery_port = meter_config_volumio.get(REMOTE_DISCOVERY_PORT, 5579)
+    spectrum_port = meter_config_volumio.get(REMOTE_SPECTRUM_PORT, 5581)
+    config_sync_interval = meter_config_volumio.get("remote.config.sync.interval", 1)
+
+    level_server = NetworkLevelServer(port=level_port, enabled=True)
+    spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=True)
+
+    config_path = os.path.join(PeppyPath, 'config.txt')
+    discovery_announcer = DiscoveryAnnouncer(
+        discovery_port=discovery_port,
+        level_port=level_port,
+        spectrum_port=spectrum_port,
+        volumio_port=3000,
+        interval=5.0,
+        enabled=True,
+        config_path=config_path,
+        config_check_interval=float(config_sync_interval)
+    )
+    discovery_announcer.start()
+    callback.discovery_announcer = discovery_announcer
+
+    meter_candidates, _ = _resolve_headless_meter_candidates(cfg)
+    active_meter = _pick_headless_meter(meter_candidates, None)
+    if active_meter:
+        cfg[METER] = active_meter
+        discovery_announcer.set_active_meter(active_meter)
+        log_debug(f"[HEADLESS] Initial active meter: {active_meter}", "basic")
+
+    running = True
+    while running:
+        loop_started = time.time()
+
+        if not os.path.exists(PeppyRunning):
+            log_debug("[HEADLESS] runFlag removed - initiating shutdown", "basic")
+            break
+
+        # Broadcast level data
+        try:
+            ds = pm.data_source
+            if ds:
+                left = ds.get_current_left_channel_data()
+                right = ds.get_current_right_channel_data()
+                mono = ds.get_current_mono_channel_data()
+                level_server.broadcast(left, right, mono)
+        except Exception as e:
+            log_debug(f"[HEADLESS] Level broadcast error: {e}", "basic")
+
+        # Broadcast spectrum data (pipe mode only in headless)
+        spectrum_server.broadcast()
+
+        # Handle title-change random restart
+        meter_changed = False
+        if title_changed_flag[0]:
+            title_changed_flag[0] = False
+            if random_title and len(meter_candidates) > 1:
+                next_meter = _pick_headless_meter(meter_candidates, active_meter)
+                if next_meter and next_meter != active_meter:
+                    active_meter = next_meter
+                    meter_changed = True
+
+        # Handle interval-based random restart
+        if random_interval_mode and len(meter_candidates) > 1:
+            random_timer += frame_delay
+            if random_timer >= random_interval:
+                random_timer = 0.0
+                next_meter = _pick_headless_meter(meter_candidates, active_meter)
+                if next_meter and next_meter != active_meter:
+                    active_meter = next_meter
+                    meter_changed = True
+
+        if meter_changed:
+            cfg[METER] = active_meter
+            discovery_announcer.set_active_meter(active_meter)
+            log_debug(f"[HEADLESS] Active meter changed: {active_meter}", "basic")
+
+        # Persist manager parity for remote client integration
+        if hasattr(callback, 'persist_manager') and callback.persist_manager:
+            callback.persist_manager.check_metadata_status(last_metadata)
+
+        elapsed = time.time() - loop_started
+        if elapsed < frame_delay:
+            time.sleep(frame_delay - elapsed)
+
+    # Cleanup
+    log_debug("[HEADLESS] Stopping services", "verbose")
+    try:
+        metadata_watcher.stop()
+    except Exception:
+        pass
+    try:
+        level_server.stop()
+    except Exception:
+        pass
+    try:
+        spectrum_server.stop()
+    except Exception:
+        pass
+    try:
+        discovery_announcer.stop()
+    except Exception:
+        pass
+    pm.exit()
+    log_debug("[HEADLESS] Shutdown complete", "basic")
+
+
+# =============================================================================
 # Main Display Output with Overlay - OPTIMIZED
 # =============================================================================
 def start_display_output(pm, callback, meter_config_volumio, volumio_host='localhost', volumio_port=3000, check_reload_callback=None):
@@ -4584,12 +4779,19 @@ if __name__ == "__main__":
     log_debug(f"  font.path = {meter_config_volumio.get(FONT_PATH, '')}", "verbose")
     log_debug("--- End Global Config ---", "verbose")
     
+    remote_enabled = meter_config_volumio.get(REMOTE_SERVER_ENABLED, False)
+    remote_mode = meter_config_volumio.get(REMOTE_SERVER_MODE, "server_local")
+    headless_mode = remote_enabled and remote_mode == "server"
+
     # Create callback handler
-    callback = CallBack(pm.util, meter_config_volumio, pm.meter)
-    pm.meter.callback_start = callback.peppy_meter_start
-    pm.meter.callback_stop = callback.peppy_meter_stop
-    pm.dependent = callback.peppy_meter_update
-    pm.meter.malloc_trim = callback.trim_memory
+    if headless_mode:
+        callback = HeadlessCallBack(pm.util, meter_config_volumio, pm.meter)
+    else:
+        callback = CallBack(pm.util, meter_config_volumio, pm.meter)
+        pm.meter.callback_start = callback.peppy_meter_start
+        pm.meter.callback_stop = callback.peppy_meter_stop
+        pm.dependent = callback.peppy_meter_update
+        pm.meter.malloc_trim = callback.trim_memory
     pm.malloc_trim = callback.exit_trim_memory
     
     # Initialize display
@@ -4604,51 +4806,55 @@ if __name__ == "__main__":
             Path(PeppyRunning).chmod(0o0777)
         except OSError:
             pass  # chmod not needed / not supported on Windows
-        # Start stop watcher
-        watcher = Thread(target=stop_watcher, daemon=True)
-        watcher.start()
-        
-        # Initialize display with SDL2 positioning support
-        if use_sdl2:
-            # Grab screenshot to get full display dimensions
-            try:
-                screenshot_img = pyscreenshot.grab()
-                display_w = screenshot_img.size[0]
-                display_h = screenshot_img.size[1]
-            except Exception as e:
-                log_debug(f"pyscreenshot failed: {e}, using meter size")
-                display_w = screen_w
-                display_h = screen_h
-            
-            # Calculate position
-            if meter_config_volumio.get(POSITION_TYPE) == "center":
-                screen_x = int((display_w - screen_w) / 2)
-                screen_y = int((display_h - screen_h) / 2)
-            else:
-                screen_x = meter_config_volumio.get(POS_X, 0)
-                screen_y = meter_config_volumio.get(POS_Y, 0)
-            
-            log_debug(f"SDL2 positioning: display={display_w}x{display_h}, meter={screen_w}x{screen_h}, pos=({screen_x},{screen_y})")
-            
-            # Initialize hidden display
-            pm.util.PYGAME_SCREEN = init_display(pm, meter_config_volumio, screen_w, screen_h, hide=True)
-            pm.util.screen_copy = pm.util.PYGAME_SCREEN
-            
-            # Position and show window
-            try:
-                win = Window.from_display_module()
-                win.position = (screen_x, screen_y)
-                Window.show(win)
-                log_debug("SDL2 window positioned and shown")
-            except Exception as e:
-                log_debug(f"Window positioning failed: {e}")
+        if headless_mode:
+            log_debug("Starting headless server mode", "basic")
+            start_headless_output(pm, callback, meter_config_volumio)
         else:
-            # Non-SDL2 fallback
-            pm.util.PYGAME_SCREEN = init_display(pm, meter_config_volumio, screen_w, screen_h)
-            pm.util.screen_copy = pm.util.PYGAME_SCREEN
-        
-        # Run main display loop
-        start_display_output(pm, callback, meter_config_volumio)
+            # Start stop watcher
+            watcher = Thread(target=stop_watcher, daemon=True)
+            watcher.start()
+            
+            # Initialize display with SDL2 positioning support
+            if use_sdl2:
+                # Grab screenshot to get full display dimensions
+                try:
+                    screenshot_img = pyscreenshot.grab()
+                    display_w = screenshot_img.size[0]
+                    display_h = screenshot_img.size[1]
+                except Exception as e:
+                    log_debug(f"pyscreenshot failed: {e}, using meter size")
+                    display_w = screen_w
+                    display_h = screen_h
+                
+                # Calculate position
+                if meter_config_volumio.get(POSITION_TYPE) == "center":
+                    screen_x = int((display_w - screen_w) / 2)
+                    screen_y = int((display_h - screen_h) / 2)
+                else:
+                    screen_x = meter_config_volumio.get(POS_X, 0)
+                    screen_y = meter_config_volumio.get(POS_Y, 0)
+                
+                log_debug(f"SDL2 positioning: display={display_w}x{display_h}, meter={screen_w}x{screen_h}, pos=({screen_x},{screen_y})")
+                
+                # Initialize hidden display
+                pm.util.PYGAME_SCREEN = init_display(pm, meter_config_volumio, screen_w, screen_h, hide=True)
+                pm.util.screen_copy = pm.util.PYGAME_SCREEN
+                
+                # Position and show window
+                try:
+                    win = Window.from_display_module()
+                    win.position = (screen_x, screen_y)
+                    Window.show(win)
+                    log_debug("SDL2 window positioned and shown")
+                except Exception as e:
+                    log_debug(f"Window positioning failed: {e}")
+            else:
+                # Non-SDL2 fallback
+                pm.util.PYGAME_SCREEN = init_display(pm, meter_config_volumio, screen_w, screen_h)
+                pm.util.screen_copy = pm.util.PYGAME_SCREEN
+            
+            # Run main display loop
+            start_display_output(pm, callback, meter_config_volumio)
         
     except MemoryError:
         print('ERROR: Memory Exception')
