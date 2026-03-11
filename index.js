@@ -250,7 +250,8 @@ peppyScreensaver.prototype.onStart = function() {
         // Detect if this is a transitional state (track change, seeking, etc.)
         // volatile=true indicates Volumio is in transition between states
         var isVolatile = state.volatile === true;
-        // getEmptyState (album change) has status=stop, uri='', title='' and NO volatile key
+        // Volumio's getEmptyState() — called only at end-of-queue or when trackBlock is
+        // missing — has status=stop, empty uri/title, and no volatile field (undefined).
         var isGetEmptyState = (status === 'stop' && (state.uri || '') === '' && (state.title || '') === '');
         
         // Detect track change within same service (next/previous)
@@ -262,6 +263,11 @@ peppyScreensaver.prototype.onStart = function() {
                 clearTimeout(self.persistTimer);
                 self.persistTimer = null;
                 self.logger.info('peppy_screensaver: Persist timer cancelled - playback resumed');
+            }
+            // Cancel any pending transition grace timer - playback resumed
+            if (self.transitionGraceTimer) {
+                clearTimeout(self.transitionGraceTimer);
+                self.transitionGraceTimer = null;
             }
             // Remove persist file
             try {
@@ -299,40 +305,49 @@ peppyScreensaver.prototype.onStart = function() {
                 }
             }
         } else if (lastStateIsPlaying) {
-            // Pause or stop detected
-            // Only act on genuine pause/stop, not during volatile track transitions.
-            // state.volatile===false (explicit) = real stop; undefined = getEmptyState (album change etc)
-            // isGetEmptyState: stop with empty uri/title = transitional (album change), never treat as genuine
-            var isGenuineStop = status === 'pause' || (status === 'stop' && state.volatile === false && !isGetEmptyState);
-            if (isGenuineStop) {
-
-                // Clear screensaver start timer
+            // Pause or stop detected.
+            //
+            // Classification:
+            //   volatile===true   → volatile service transition (Spotify/Airplay handoff) → ignore
+            //   status==='pause'  → always genuine
+            //   isGetEmptyState   → end-of-queue (Volumio pushEmptyState has no volatile field,
+            //                        empty title/uri). Deterministic — always genuine.
+            //   volatile===false + metadata → track-change fall-through OR user stop.
+            //                        Indistinguishable by payload; use grace timer so a
+            //                        following 'play' (track change) can cancel the stop.
+            
+            if (isVolatile) {
+                // volatile===true: service transition, ignore completely
+            } else if (status === 'pause' || isGetEmptyState) {
+                // Pause or end-of-queue: genuine stop, act immediately
+                self.logger.info('peppy_screensaver: Genuine stop — ' + (status === 'pause' ? 'paused' : 'end of queue'));
+                
+                if (self.transitionGraceTimer) {
+                    clearTimeout(self.transitionGraceTimer);
+                    self.transitionGraceTimer = null;
+                }
+                
                 if (self.Timeout) {
                     clearInterval(self.Timeout);
                     self.Timeout = null;
                 }
                 
                 if (persistDuration > 0 && fs.existsSync(runFlag)) {
-                    // Persist mode enabled - start countdown timer
-                    // Clear any existing persist timer first (reset on repeated pause/stop)
                     if (self.persistTimer) {
                         clearTimeout(self.persistTimer);
                     }
                     
                     self.logger.info('peppy_screensaver: Starting persist timer - ' + persistDuration + 's');
                     
-                    // Write persist info for Python (duration:timestamp_ms:display_mode)
                     try {
                         fs.writeFileSync(persistFile, persistDuration + ':' + Date.now() + ':' + persistDisplay);
                     } catch(e) {}
                     
                     self.persistTimer = setTimeout(function() {
                         self.persistTimer = null;
-                        // Remove persist file
                         try {
                             if (fs.existsSync(persistFile)) fs.removeSync(persistFile);
                         } catch(e) {}
-                        // Timer expired - stop PeppyMeter
                         if (fs.existsSync(runFlag)) {
                             fs.removeSync(runFlag);
                             self.logger.info('peppy_screensaver: Persist timer expired - stopping PeppyMeter');
@@ -341,19 +356,69 @@ peppyScreensaver.prototype.onStart = function() {
                     }, persistDuration * 1000);
                     
                 } else {
-                    // Persist disabled or PeppyMeter not running - immediate stop
                     if (fs.existsSync(runFlag)) {
                         fs.removeSync(runFlag);
                     }
                     lastStateIsPlaying = false;
                 }
-            } else {
-                // Transitional state: stop with volatile=true, undefined, or getEmptyState (empty uri/title). Do not persist.
-                // Defensive: remove any stale persist file from race or older bug.
+            } else if (status === 'stop') {
+                // Stop with metadata (volatile===false or undefined, not getEmptyState).
+                // Could be track-change (play follows) or user-stop (no play follows).
+                // Use a grace timer: if play arrives it cancels; otherwise treat as genuine.
+                if (self.transitionGraceTimer) {
+                    clearTimeout(self.transitionGraceTimer);
+                }
+                
+                var TRANSITION_GRACE_MS = 5000;
+                self.logger.info('peppy_screensaver: Stop with metadata — grace timer ' + TRANSITION_GRACE_MS + 'ms');
+                
+                self.transitionGraceTimer = setTimeout(function() {
+                    self.transitionGraceTimer = null;
+                    self.logger.info('peppy_screensaver: Grace timer expired — treating as genuine stop');
+                    
+                    if (self.Timeout) {
+                        clearInterval(self.Timeout);
+                        self.Timeout = null;
+                    }
+                    
+                    if (persistDuration > 0 && fs.existsSync(runFlag)) {
+                        if (self.persistTimer) {
+                            clearTimeout(self.persistTimer);
+                        }
+                        
+                        self.logger.info('peppy_screensaver: Starting persist timer - ' + persistDuration + 's');
+                        
+                        try {
+                            fs.writeFileSync(persistFile, persistDuration + ':' + Date.now() + ':' + persistDisplay);
+                        } catch(e) {}
+                        
+                        self.persistTimer = setTimeout(function() {
+                            self.persistTimer = null;
+                            try {
+                                if (fs.existsSync(persistFile)) fs.removeSync(persistFile);
+                            } catch(e) {}
+                            if (fs.existsSync(runFlag)) {
+                                fs.removeSync(runFlag);
+                                self.logger.info('peppy_screensaver: Persist timer expired - stopping PeppyMeter');
+                            }
+                            lastStateIsPlaying = false;
+                        }, persistDuration * 1000);
+                        
+                    } else {
+                        if (fs.existsSync(runFlag)) {
+                            fs.removeSync(runFlag);
+                        }
+                        lastStateIsPlaying = false;
+                    }
+                }, TRANSITION_GRACE_MS);
+            }
+            
+            // Defensive: clear stale persist file on any transitional/volatile stop
+            if (isVolatile) {
                 try {
                     if (fs.existsSync(persistFile)) {
                         fs.removeSync(persistFile);
-                        self.logger.info(id + 'pushState: transitional stop (volatile=' + state.volatile + (isGetEmptyState ? ', getEmptyState' : '') + '), cleared persist file');
+                        self.logger.info(id + 'pushState: volatile stop, cleared persist file');
                     }
                 } catch (e) {}
             }
@@ -440,6 +505,12 @@ peppyScreensaver.prototype.onStop = function() {
         if (self.persistTimer) {
             clearTimeout(self.persistTimer);
             self.persistTimer = null;
+        }
+        
+        // clear transition grace timer
+        if (self.transitionGraceTimer) {
+            clearTimeout(self.transitionGraceTimer);
+            self.transitionGraceTimer = null;
         }
         
         // remove old flag
