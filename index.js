@@ -719,6 +719,13 @@ peppyScreensaver.prototype.getUIConfig = function() {
             uiconf.sections[0].content[15].value.value = self.config.get('displayOutput');
             uiconf.sections[0].content[15].value.label = 'Display=' + self.config.get('displayOutput');
             uiconf.sections[0].content[16].value = self.config.get('doNotDeleteThemes') === true;
+
+            // use system fonts (from config.txt, default false = use PeppyFont)
+            var useSystemFonts = false;
+            try {
+                useSystemFonts = (peppy_config.current['use.system.fonts'] || '').toLowerCase() === 'true';
+            } catch (e) {}
+            uiconf.sections[0].content[17].value = useSystemFonts;
              
             // section 6 - Playback Behavior -----------------------------
             var persistVal = self.config.get('persist_duration');
@@ -1208,6 +1215,12 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
         var animation = confData.animation? 'True' : 'False';
         if (peppy_config.current['start.animation'] != animation) {
             peppy_config.current['start.animation'] = animation;
+            noChanges = false;
+        }
+        // write use system fonts
+        var useSystemFonts = confData.useSystemFonts ? 'True' : 'False';
+        if (peppy_config.current['use.system.fonts'] != useSystemFonts) {
+            peppy_config.current['use.system.fonts'] = useSystemFonts;
             noChanges = false;
         }
     }

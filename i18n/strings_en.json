@@ -70,6 +70,8 @@
     "DISPLAY_OUTPUT":"Displayport",
     "DO_NOT_DELETE_THEMES":"Do not delete themes",
     "DO_NOT_DELETE_THEMES_DOC":"When enabled: on uninstall the theme data folder is not removed; on install or update existing themes are not overwritten. Applies to all your custom themes (meters, spectrum, cassette, turntable, etc.).",
+    "USE_SYSTEM_FONTS":"Use system fonts",
+    "USE_SYSTEM_FONTS_DOC":"Use Volumio system fonts (Lato) instead of built-in PeppyFont. PeppyFont includes universal language support (CJK, Arabic, Cyrillic, Hebrew, Thai, etc). Enable this only if you prefer the original fonts or have configured custom fonts in config.txt.",
     "APPLY":"Apply",
     "INFO_MIN":"The value has been adjusted to the lowest possible because the value entered is too small.",
     "INFO_MAX":"The value has been adjusted to the highest possible because the value entered is too big.",

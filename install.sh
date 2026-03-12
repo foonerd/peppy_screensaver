@@ -287,6 +287,7 @@ font.path = /volumio/http/www3/app/themes/volumio3/assets/variants/volumio/fonts
 font.light = /Lato-Light.ttf\
 font.regular = /Lato-Regular.ttf\
 font.bold = /Lato-Bold.ttf\
+use.system.fonts = false\
 ' $CFG
   fi
 

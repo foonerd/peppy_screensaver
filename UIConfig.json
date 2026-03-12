@@ -30,7 +30,8 @@
                                       "cachesize",
                                       "mouseEnabled",
                                       "displayOutput",
-                                      "doNotDeleteThemes"
+                                      "doNotDeleteThemes",
+                                      "useSystemFonts"
                                       ]
                               },
                 "content": [
@@ -241,6 +242,13 @@
                              "element": "switch",
                              "doc": "TRANSLATE.PEPPY_SCREENSAVER.DO_NOT_DELETE_THEMES_DOC",
                              "label": "TRANSLATE.PEPPY_SCREENSAVER.DO_NOT_DELETE_THEMES",
+                             "value": false
+                            },
+                            {
+                             "id": "useSystemFonts",
+                             "element": "switch",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.USE_SYSTEM_FONTS_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.USE_SYSTEM_FONTS",
                              "value": false
                             }
                 ]
