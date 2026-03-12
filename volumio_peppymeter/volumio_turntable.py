@@ -3150,7 +3150,7 @@ class TurntableHandler:
                     self.screen.blit(self.bgr_surface, self.type_rect.topleft, self.type_rect)
                 
                 file_path = os.path.dirname(__file__)
-                local_icons = {'aac', 'aiff', 'airplay', 'alac', 'bt', 'cd', 'dab', 'dsd', 'dts', 'flac', 'fm', 'm4a', 'mp3', 'mp4', 'mqa', 'ogg', 'opus', 'qobuz', 'radio', 'rr', 'spotify', 'tidal', 'wav', 'wavpack', 'wma', 'youtube'}
+                local_icons = {'tidal', 'cd', 'qobuz', 'dab', 'fm', 'radio'}
                 if fmt in local_icons:
                     icon_path = os.path.join(file_path, 'format-icons', f"{fmt}.svg")
                 else:

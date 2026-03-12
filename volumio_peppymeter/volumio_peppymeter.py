@@ -4255,7 +4255,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             screen.blit(b, r.topleft)
         
         # Check local icons first
-        local_icons = {'aac', 'aiff', 'airplay', 'alac', 'bt', 'cd', 'dab', 'dsd', 'dts', 'flac', 'fm', 'm4a', 'mp3', 'mp4', 'mqa', 'ogg', 'opus', 'qobuz', 'radio', 'rr', 'spotify', 'tidal', 'wav', 'wavpack', 'wma', 'youtube'}
+        local_icons = {'tidal', 'cd', 'qobuz', 'dab', 'fm', 'radio'}
         if fmt in local_icons:
             icon_path = os.path.join(file_path, 'format-icons', f"{fmt}.svg")
         else:
