@@ -1136,33 +1136,37 @@ class BasicHandler:
         light_file = self.global_config.get(FONT_LIGHT)
         if light_file and os.path.exists(font_path + light_file):
             self.fontL = pg.font.Font(font_path + light_file, size_light)
-            log_debug(f"  Font light: loaded {font_path + light_file}", "verbose")
+            log_debug(f"  Font light: {font_path + light_file}", "basic")
         else:
             self.fontL = pg.font.SysFont("DejaVuSans", size_light)
+            log_debug(f"  Font light: SysFont DejaVuSans (fallback, file={light_file})", "basic")
         
         # Regular font
         regular_file = self.global_config.get(FONT_REGULAR)
         if regular_file and os.path.exists(font_path + regular_file):
             self.fontR = pg.font.Font(font_path + regular_file, size_regular)
-            log_debug(f"  Font regular: loaded {font_path + regular_file}", "verbose")
+            log_debug(f"  Font regular: {font_path + regular_file}", "basic")
         else:
             self.fontR = pg.font.SysFont("DejaVuSans", size_regular)
+            log_debug(f"  Font regular: SysFont DejaVuSans (fallback, file={regular_file})", "basic")
         
         # Bold font
         bold_file = self.global_config.get(FONT_BOLD)
         if bold_file and os.path.exists(font_path + bold_file):
             self.fontB = pg.font.Font(font_path + bold_file, size_bold)
-            log_debug(f"  Font bold: loaded {font_path + bold_file}", "verbose")
+            log_debug(f"  Font bold: {font_path + bold_file}", "basic")
         else:
             self.fontB = pg.font.SysFont("DejaVuSans", size_bold, bold=True)
+            log_debug(f"  Font bold: SysFont DejaVuSans (fallback, file={bold_file})", "basic")
         
         # Digital font for time (default; used when per-field font/size not set)
         default_digi_path = os.path.join(os.path.dirname(__file__), 'fonts', 'DSEG7Classic-Italic.ttf')
         if os.path.exists(default_digi_path):
             self.fontDigi = pg.font.Font(default_digi_path, size_digi)
-            log_debug(f"  Font digi: loaded {default_digi_path}", "verbose")
+            log_debug(f"  Font digi: {default_digi_path}", "basic")
         else:
             self.fontDigi = pg.font.SysFont("DejaVuSans", size_digi)
+            log_debug(f"  Font digi: SysFont DejaVuSans (fallback)", "basic")
 
         # Per-field time fonts (remaining, elapsed, total): optional font path + fontsize; fallback to fontDigi
         meter_path = os.path.join(self.config.get(BASE_PATH), self.config.get(SCREEN_INFO)[METER_FOLDER])
@@ -1564,7 +1568,7 @@ class BasicHandler:
                     self.screen.blit(self.bgr_surface, self.type_rect.topleft, self.type_rect)
                 
                 file_path = os.path.dirname(__file__)
-                local_icons = {'tidal', 'cd', 'qobuz', 'dab', 'fm', 'radio'}
+                local_icons = {'aac', 'aiff', 'airplay', 'alac', 'bt', 'cd', 'dab', 'dsd', 'dts', 'flac', 'fm', 'm4a', 'mp3', 'mp4', 'mqa', 'ogg', 'opus', 'qobuz', 'radio', 'rr', 'spotify', 'tidal', 'wav', 'wavpack', 'wma', 'youtube'}
                 if fmt in local_icons:
                     icon_path = os.path.join(file_path, 'format-icons', f"{fmt}.svg")
                 else:
