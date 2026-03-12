@@ -437,6 +437,10 @@ class ScrollingLabel:
         self._bgr_surface = None  # Layer composition: use bgr for clearing
         self._needs_redraw = True
         self._last_draw_offset = -1
+        # Pre-compute max line height including descenders (prevents ghost
+        # underline artifacts when font descenders exceed declared linesize)
+        _sample = self.font.render("gyj", True, (0, 0, 0))
+        self._font_height = max(self.font.get_linesize(), _sample.get_height())
     
     def set_background_surface(self, bgr_surface):
         """Set background surface for layer composition clearing."""
@@ -452,7 +456,7 @@ class ScrollingLabel:
         if not self.pos or self.box_width <= 0:
             return
         x, y = self.pos
-        height = self.font.get_linesize()
+        height = self._font_height
         self._backing_rect = pg.Rect(x, y, self.box_width, height)
         
         # Use bgr_surface if available (pure static bg), otherwise use passed surface
@@ -509,7 +513,7 @@ class ScrollingLabel:
         if self._backing_rect:
             return self._backing_rect
         if self.pos and self.box_width > 0 and self.font:
-            height = self.font.get_linesize()
+            height = self._font_height
             return pg.Rect(self.pos[0], self.pos[1], self.box_width, height)
         return None
 

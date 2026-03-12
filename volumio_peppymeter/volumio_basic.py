@@ -339,6 +339,10 @@ class ScrollingLabel:
         self._bgr_surface = None  # Layer composition: use bgr for clearing
         self._needs_redraw = True
         self._last_draw_offset = -1
+        # Pre-compute max line height including descenders (prevents ghost
+        # underline artifacts when font descenders exceed declared linesize)
+        _sample = self.font.render("gyj", True, (0, 0, 0))
+        self._font_height = max(self.font.get_linesize(), _sample.get_height())
 
     def capture_backing(self, surface):
         """Capture backing surface for this label's area."""
@@ -346,7 +350,7 @@ class ScrollingLabel:
             return
         x, y = self.pos
         # Use linesize for full height including descenders
-        height = self.font.get_linesize()
+        height = self._font_height
         self._backing_rect = pg.Rect(x, y, self.box_width, height)
         try:
             self._backing = surface.subsurface(self._backing_rect).copy()

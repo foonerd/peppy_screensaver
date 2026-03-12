@@ -1741,6 +1741,10 @@ class ScrollingLabel:
         # OPTIMIZATION: Track if redraw needed
         self._needs_redraw = True
         self._last_draw_offset = -1
+        # Pre-compute max line height including descenders (prevents ghost
+        # underline artifacts when font descenders exceed declared linesize)
+        _sample = self.font.render("gyj", True, (0, 0, 0))
+        self._font_height = max(self.font.get_linesize(), _sample.get_height())
 
     def capture_backing(self, surface):
         """Capture backing surface for this label's area."""
@@ -1748,7 +1752,7 @@ class ScrollingLabel:
             return
         x, y = self.pos
         # Use linesize for full height including descenders
-        height = self.font.get_linesize()
+        height = self._font_height
         self._backing_rect = pg.Rect(x, y, self.box_width, height)
         try:
             self._backing = surface.subsurface(self._backing_rect).copy()
@@ -4240,7 +4244,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             screen.blit(b, r.topleft)
         
         # Check local icons first
-        local_icons = {'tidal', 'cd', 'qobuz'}
+        local_icons = {'aac', 'aiff', 'airplay', 'alac', 'bt', 'cd', 'dab', 'dsd', 'dts', 'flac', 'fm', 'm4a', 'mp3', 'mp4', 'mqa', 'ogg', 'opus', 'qobuz', 'radio', 'rr', 'spotify', 'tidal', 'wav', 'wavpack', 'wma', 'youtube'}
         if fmt in local_icons:
             icon_path = os.path.join(file_path, 'format-icons', f"{fmt}.svg")
         else:
