@@ -3775,6 +3775,11 @@ def start_headless_output(pm, callback, meter_config_volumio, volumio_host='loca
         "service": "", "status": "", "_time_remain": -1, "_time_update": 0
     }
 
+    # FIX: Set queue mode BEFORE MetadataWatcher starts so first pushState
+    # uses correct mode. Without this, the socket thread's on_push_state
+    # reads _queue_mode before the main loop writes it, defaulting to "track".
+    last_metadata["_queue_mode"] = meter_config_volumio.get(QUEUE_MODE, "track")
+
     random_mode = meter_config_volumio.get(METER_BKP, "random") == "random" or "," in meter_config_volumio.get(METER_BKP, "")
     random_title = random_mode and meter_config_volumio.get(RANDOM_TITLE, False)
     random_interval_mode = random_mode and not random_title
@@ -3941,6 +3946,12 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
         "samplerate": "", "bitdepth": "", "trackType": "", "bitrate": "",
         "service": "", "status": "", "_time_remain": -1, "_time_update": 0
     }
+    
+    # FIX: Set queue mode BEFORE MetadataWatcher starts so first pushState
+    # uses correct mode. Without this, the socket thread's on_push_state
+    # reads _queue_mode before the main loop writes it, defaulting to "track".
+    # This caused queue indicator to flip to single-track on template change.
+    last_metadata["_queue_mode"] = meter_config_volumio.get(QUEUE_MODE, "track")
     
     # Random meter tracking
     random_mode = meter_config_volumio[METER_BKP] == "random" or "," in meter_config_volumio[METER_BKP]
@@ -4869,3 +4880,4 @@ if __name__ == "__main__":
         if os.path.exists(PeppyRunning):
             os.remove(PeppyRunning)
         os._exit(1)
+
