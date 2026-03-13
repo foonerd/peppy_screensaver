@@ -761,6 +761,10 @@ class MetadataWatcher:
                 self.metadata["queue_duration"] = None
                 self.metadata["queue_time_remaining"] = None
             
+            # Trace: log queue mode and whether progress bar uses queue or track
+            qpct = self.metadata.get("queue_progress_pct")
+            log_debug(f"[pushState] queue_mode={queue_mode}, progress_display={'queue' if qpct is not None else 'track'}", "trace", "metadata")
+            
             # Check for title change (for random meter mode)
             current_title = self.metadata["title"]
             if self.title_callback and current_title != self.last_title:
@@ -3779,6 +3783,7 @@ def start_headless_output(pm, callback, meter_config_volumio, volumio_host='loca
     # uses correct mode. Without this, the socket thread's on_push_state
     # reads _queue_mode before the main loop writes it, defaulting to "track".
     last_metadata["_queue_mode"] = meter_config_volumio.get(QUEUE_MODE, "track")
+    log_debug(f"Queue progress mode: {last_metadata['_queue_mode']} (before MetadataWatcher start)", "verbose")
 
     random_mode = meter_config_volumio.get(METER_BKP, "random") == "random" or "," in meter_config_volumio.get(METER_BKP, "")
     random_title = random_mode and meter_config_volumio.get(RANDOM_TITLE, False)
@@ -3952,6 +3957,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
     # reads _queue_mode before the main loop writes it, defaulting to "track".
     # This caused queue indicator to flip to single-track on template change.
     last_metadata["_queue_mode"] = meter_config_volumio.get(QUEUE_MODE, "track")
+    log_debug(f"Queue progress mode: {last_metadata['_queue_mode']} (before MetadataWatcher start)", "verbose")
     
     # Random meter tracking
     random_mode = meter_config_volumio[METER_BKP] == "random" or "," in meter_config_volumio[METER_BKP]
@@ -4791,6 +4797,7 @@ if __name__ == "__main__":
     log_debug(f"  transition.opacity = {meter_config_volumio.get(TRANSITION_OPACITY, 100)}", "verbose")
     log_debug(f"  start.animation = {meter_config_volumio.get(START_ANIMATION, False)}", "verbose")
     log_debug(f"  update.interval = {meter_config_volumio.get(UPDATE_INTERVAL, 2)}", "verbose")
+    log_debug(f"  queue.mode = {meter_config_volumio.get(QUEUE_MODE, 'track')}", "verbose")
     log_debug(f"  font.path = {meter_config_volumio.get(FONT_PATH, '')}", "verbose")
     log_debug("--- End Global Config ---", "verbose")
     
