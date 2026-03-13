@@ -622,6 +622,69 @@ class MetadataWatcher:
         # Initialize infinity state (separate from random/shuffle)
         self.metadata["infinity"] = False
     
+    def prime_from_http(self, timeout=2.5):
+        """Atomic bootstrap: GET queue and state from Volumio REST API with timeout.
+        Primes queue_array and queue_position so first pushState can compute queue progress.
+        Safe to call before start(); no effect if request fails or times out.
+        Logs at verbose. Used for local, server_local, and headless.
+        """
+        queue_ok = False
+        state_ok = False
+        try:
+            log_debug("Bootstrap: fetching queue and state from Volumio API", "verbose")
+            # getQueue first (required for queue progress)
+            rq = requests.get(
+                f"{self.volumio_url}/api/v1/getQueue",
+                timeout=timeout
+            )
+            if rq.status_code == 200 and rq.text:
+                data = rq.json()
+                queue_data = data.get("queue") if isinstance(data, dict) else None
+                if isinstance(queue_data, list):
+                    queue_str = json.dumps(queue_data, sort_keys=True)
+                    self._queue_hash = hashlib.md5(queue_str.encode()).hexdigest()
+                    self.queue_array = queue_data
+                    self.queue_duration = sum(
+                        float(track.get('duration', 0) or 0)
+                        for track in queue_data
+                    )
+                    queue_ok = True
+                    log_debug(f"Bootstrap: getQueue OK, {len(queue_data)} tracks, duration={self.queue_duration:.1f}s", "verbose")
+                else:
+                    log_debug("Bootstrap: getQueue returned no queue list", "verbose")
+            else:
+                log_debug(f"Bootstrap: getQueue failed (status={getattr(rq, 'status_code', None)})", "verbose")
+        except requests.exceptions.Timeout:
+            log_debug(f"Bootstrap: getQueue timeout ({timeout}s)", "verbose")
+        except Exception as e:
+            log_debug(f"Bootstrap: getQueue error: {e}", "verbose")
+        try:
+            # getState for queue_position (atomic with queue)
+            rs = requests.get(
+                f"{self.volumio_url}/api/v1/getState",
+                timeout=timeout
+            )
+            if rs.status_code == 200 and rs.text:
+                state = rs.json()
+                if isinstance(state, dict):
+                    pos = state.get("position")
+                    if pos is not None:
+                        self.queue_position = int(pos)
+                        state_ok = True
+                    log_debug("Bootstrap: getState OK" + (f", position={self.queue_position}" if state_ok else ""), "verbose")
+                else:
+                    log_debug("Bootstrap: getState returned no dict", "verbose")
+            else:
+                log_debug(f"Bootstrap: getState failed (status={getattr(rs, 'status_code', None)})", "verbose")
+        except requests.exceptions.Timeout:
+            log_debug(f"Bootstrap: getState timeout ({timeout}s)", "verbose")
+        except Exception as e:
+            log_debug(f"Bootstrap: getState error: {e}", "verbose")
+        if queue_ok:
+            log_debug("Bootstrap: primed queue (and position)" if state_ok else "Bootstrap: primed queue only", "verbose")
+        else:
+            log_debug("Bootstrap: skipped, using socket-only", "verbose")
+    
     def start(self):
         self.thread = Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -752,10 +815,11 @@ class MetadataWatcher:
                     self.metadata["queue_duration"] = queue_info['duration']
                     self.metadata["queue_time_remaining"] = queue_info['time_remaining']
                 else:
-                    # Fall back to track mode
-                    self.metadata["queue_progress_pct"] = None
-                    self.metadata["queue_duration"] = None
-                    self.metadata["queue_time_remaining"] = None
+                    # Queue not ready yet (pushQueue not received). Show queue at 0% so
+                    # display uses queue mode from start instead of track mode for 1–2 min.
+                    self.metadata["queue_progress_pct"] = 0.0
+                    self.metadata["queue_duration"] = 0.0
+                    self.metadata["queue_time_remaining"] = 0.0
             else:
                 self.metadata["queue_progress_pct"] = None
                 self.metadata["queue_duration"] = None
@@ -3801,6 +3865,7 @@ def start_headless_output(pm, callback, meter_config_volumio, volumio_host='loca
         volumio_host=volumio_host,
         volumio_port=volumio_port
     )
+    metadata_watcher.prime_from_http(timeout=2.5)
     metadata_watcher.start()
 
     level_port = meter_config_volumio.get(REMOTE_SERVER_PORT, 5580)
@@ -3979,6 +4044,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
         volumio_host=volumio_host,
         volumio_port=volumio_port
     )
+    metadata_watcher.prime_from_http(timeout=2.5)
     metadata_watcher.start()
     
     # -------------------------------------------------------------------------
