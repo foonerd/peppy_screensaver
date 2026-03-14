@@ -339,6 +339,10 @@ class ScrollingLabel:
         self._bgr_surface = None  # Layer composition: use bgr for clearing
         self._needs_redraw = True
         self._last_draw_offset = -1
+        # Pre-compute max line height including descenders (prevents ghost
+        # underline artifacts when font descenders exceed declared linesize)
+        _sample = self.font.render("gyj", True, (0, 0, 0))
+        self._font_height = max(self.font.get_linesize(), _sample.get_height())
 
     def capture_backing(self, surface):
         """Capture backing surface for this label's area."""
@@ -346,7 +350,7 @@ class ScrollingLabel:
             return
         x, y = self.pos
         # Use linesize for full height including descenders
-        height = self.font.get_linesize()
+        height = self._font_height
         self._backing_rect = pg.Rect(x, y, self.box_width, height)
         try:
             self._backing = surface.subsurface(self._backing_rect).copy()
@@ -1136,33 +1140,37 @@ class BasicHandler:
         light_file = self.global_config.get(FONT_LIGHT)
         if light_file and os.path.exists(font_path + light_file):
             self.fontL = pg.font.Font(font_path + light_file, size_light)
-            log_debug(f"  Font light: loaded {font_path + light_file}", "verbose")
+            log_debug(f"  Font light: {font_path + light_file}", "basic")
         else:
             self.fontL = pg.font.SysFont("DejaVuSans", size_light)
+            log_debug(f"  Font light: SysFont DejaVuSans (fallback, file={light_file})", "basic")
         
         # Regular font
         regular_file = self.global_config.get(FONT_REGULAR)
         if regular_file and os.path.exists(font_path + regular_file):
             self.fontR = pg.font.Font(font_path + regular_file, size_regular)
-            log_debug(f"  Font regular: loaded {font_path + regular_file}", "verbose")
+            log_debug(f"  Font regular: {font_path + regular_file}", "basic")
         else:
             self.fontR = pg.font.SysFont("DejaVuSans", size_regular)
+            log_debug(f"  Font regular: SysFont DejaVuSans (fallback, file={regular_file})", "basic")
         
         # Bold font
         bold_file = self.global_config.get(FONT_BOLD)
         if bold_file and os.path.exists(font_path + bold_file):
             self.fontB = pg.font.Font(font_path + bold_file, size_bold)
-            log_debug(f"  Font bold: loaded {font_path + bold_file}", "verbose")
+            log_debug(f"  Font bold: {font_path + bold_file}", "basic")
         else:
             self.fontB = pg.font.SysFont("DejaVuSans", size_bold, bold=True)
+            log_debug(f"  Font bold: SysFont DejaVuSans (fallback, file={bold_file})", "basic")
         
         # Digital font for time (default; used when per-field font/size not set)
         default_digi_path = os.path.join(os.path.dirname(__file__), 'fonts', 'DSEG7Classic-Italic.ttf')
         if os.path.exists(default_digi_path):
             self.fontDigi = pg.font.Font(default_digi_path, size_digi)
-            log_debug(f"  Font digi: loaded {default_digi_path}", "verbose")
+            log_debug(f"  Font digi: {default_digi_path}", "basic")
         else:
             self.fontDigi = pg.font.SysFont("DejaVuSans", size_digi)
+            log_debug(f"  Font digi: SysFont DejaVuSans (fallback)", "basic")
 
         # Per-field time fonts (remaining, elapsed, total): optional font path + fontsize; fallback to fontDigi
         meter_path = os.path.join(self.config.get(BASE_PATH), self.config.get(SCREEN_INFO)[METER_FOLDER])

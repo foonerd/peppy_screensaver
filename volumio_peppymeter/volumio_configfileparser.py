@@ -19,6 +19,7 @@ FONT_PATH = "font.path"
 FONT_LIGHT = "font.light"
 FONT_REGULAR = "font.regular"
 FONT_BOLD = "font.bold"
+USE_SYSTEM_FONTS = "use.system.fonts"
 
 POSITION_TYPE = "position.type"
 POS_X = "position.x"
@@ -523,6 +524,26 @@ class Volumio_ConfigFileParser(object):
             self.meter_config_volumio[FONT_BOLD] = c.get(CURRENT, FONT_BOLD)
         except:
             self.meter_config_volumio[FONT_BOLD] = None
+
+        # PeppyFont override: when use.system.fonts is False (default), replace
+        # font paths with built-in PeppyFont files for universal language coverage
+        # (Latin, CJK, Arabic, Cyrillic, Hebrew, Thai, Devanagari, Bengali, etc.)
+        # When True, keep whatever font.path/light/regular/bold are in config.txt.
+        try:
+            _use_sys = c.get(CURRENT, USE_SYSTEM_FONTS).strip().lower() == "true"
+        except:
+            _use_sys = False
+        self.meter_config_volumio[USE_SYSTEM_FONTS] = _use_sys
+
+        if not _use_sys:
+            _fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts')
+            _peppy_regular = os.path.join(_fonts_dir, 'PeppyFont-Regular.ttf')
+            if os.path.exists(_peppy_regular):
+                self.meter_config_volumio[FONT_PATH] = ""
+                self.meter_config_volumio[FONT_LIGHT] = os.path.join(_fonts_dir, 'PeppyFont-Light.ttf')
+                self.meter_config_volumio[FONT_REGULAR] = _peppy_regular
+                self.meter_config_volumio[FONT_BOLD] = os.path.join(_fonts_dir, 'PeppyFont-Bold.ttf')
+
         try:
             self.meter_config_volumio[METER_BKP] = self.meter_config[METER]
         except:

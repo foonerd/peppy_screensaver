@@ -70,6 +70,8 @@
     "DISPLAY_OUTPUT":"Displayport",
     "DO_NOT_DELETE_THEMES":"Themes nicht löschen",
     "DO_NOT_DELETE_THEMES_DOC":"Wenn aktiviert: Beim Deinstallieren wird der Theme-Ordner nicht gelöscht; beim Installieren oder Aktualisieren werden vorhandene Themes nicht überschrieben. Gilt für alle benutzerdefinierten Themes (Meter, Spektrum, Kassette, Plattenspieler usw.).",
+    "USE_SYSTEM_FONTS":"Systemschriften verwenden",
+    "USE_SYSTEM_FONTS_DOC":"Volumio-Systemschriften (Lato) anstelle der integrierten PeppyFont verwenden. PeppyFont bietet universelle Sprachunterstuetzung (CJK, Arabisch, Kyrillisch, Hebraeisch, Thai usw.). Aktivieren Sie dies nur, wenn Sie die Originalschriften bevorzugen oder benutzerdefinierte Schriften in config.txt konfiguriert haben.",
     "APPLY":"Anwenden",
     "INFO_MIN":"Der Wert wurde auf den kleinstmöglichen angepasst, weil der eingegebene Wert zu klein ist.",
     "INFO_MAX":"Der Wert wurde auf den größstmöglichen angepasst, weil der eingegebene Wert zu groß ist.",
