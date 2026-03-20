@@ -1015,12 +1015,19 @@ class NetworkLevelServer:
                     hostname = socket.gethostname()
                     self._local_ips.add('127.0.0.1')
                     self._local_ips.add(socket.gethostbyname(hostname))
-                    # Also try to get all interface IPs
-                    import subprocess
-                    result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
-                    if result.returncode == 0:
-                        for ip in result.stdout.strip().split():
-                            self._local_ips.add(ip)
+                    # Also try to get all interface IPs (Linux only;
+                    # hostname -I is not supported on Windows)
+                    if os.name != 'nt':
+                        import subprocess
+                        result = subprocess.run(
+                            ['hostname', '-I'],
+                            capture_output=True, text=True,
+                            encoding='utf-8', errors='replace',
+                            timeout=2
+                        )
+                        if result.returncode == 0:
+                            for ip in result.stdout.strip().split():
+                                self._local_ips.add(ip)
                 except Exception:
                     pass
                 
@@ -1287,11 +1294,19 @@ class NetworkSpectrumServer:
             self._local_ips.add('127.0.0.1')
             hostname = socket.gethostname()
             self._local_ips.add(socket.gethostbyname(hostname))
-            import subprocess
-            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
-            if result.returncode == 0:
-                for ip in result.stdout.strip().split():
-                    self._local_ips.add(ip)
+            # Also try to get all interface IPs (Linux only;
+            # hostname -I is not supported on Windows)
+            if os.name != 'nt':
+                import subprocess
+                result = subprocess.run(
+                    ['hostname', '-I'],
+                    capture_output=True, text=True,
+                    encoding='utf-8', errors='replace',
+                    timeout=2
+                )
+                if result.returncode == 0:
+                    for ip in result.stdout.strip().split():
+                        self._local_ips.add(ip)
         except Exception:
             pass
         
@@ -1585,11 +1600,19 @@ class DiscoveryAnnouncer:
         try:
             self._local_ips.add('127.0.0.1')
             self._local_ips.add(socket.gethostbyname(self.hostname))
-            import subprocess
-            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
-            if result.returncode == 0:
-                for ip in result.stdout.strip().split():
-                    self._local_ips.add(ip)
+            # Also try to get all interface IPs (Linux only;
+            # hostname -I is not supported on Windows)
+            if os.name != 'nt':
+                import subprocess
+                result = subprocess.run(
+                    ['hostname', '-I'],
+                    capture_output=True, text=True,
+                    encoding='utf-8', errors='replace',
+                    timeout=2
+                )
+                if result.returncode == 0:
+                    for ip in result.stdout.strip().split():
+                        self._local_ips.add(ip)
         except Exception:
             pass
         
