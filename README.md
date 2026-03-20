@@ -37,19 +37,6 @@ cd peppy_screensaver
 volumio plugin install
 ```
 
-## Manual Installation
-
-If the above method fails:
-
-```bash
-git clone --depth=1 https://github.com/foonerd/peppy_screensaver.git
-cd peppy_screensaver
-zip -r peppy_screensaver.zip .
-minidlna -d &
-```
-
-Then install via Volumio UI: Settings > Plugins > Install from local file
-
 ## Configuration
 
 After installation, enable and configure the plugin:
