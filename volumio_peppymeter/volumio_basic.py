@@ -14,6 +14,7 @@
 # to eliminate dead code paths and reduce CPU overhead.
 
 import os
+import tempfile
 import io
 import time
 import requests
@@ -955,18 +956,18 @@ class BasicHandler:
         
         # Store rects for layer composition clearing (use effective time font per field for size)
         if self.time_pos and self.font_time_remaining:
-            time_w = self.font_time_remaining.size('00:00')[0] + 10
+            time_w = self.font_time_remaining.render('00:00', True, (255,255,255)).get_width() + 4  # render() includes italic overhang; size() does not
             time_h = self.font_time_remaining.get_linesize()
             self.time_rect = pg.Rect(self.time_pos[0], self.time_pos[1], time_w, time_h)
             log_debug(f"  time_rect: x={self.time_rect.x}, y={self.time_rect.y}, w={self.time_rect.width}, h={self.time_rect.height}", "verbose")
         if self.time_elapsed_pos and self.font_time_elapsed:
-            time_w = self.font_time_elapsed.size('00:00')[0] + 10
+            time_w = self.font_time_elapsed.render('00:00', True, (255,255,255)).get_width() + 4  # render() includes italic overhang; size() does not
             time_h = self.font_time_elapsed.get_linesize()
             self.time_elapsed_rect = pg.Rect(self.time_elapsed_pos[0], self.time_elapsed_pos[1], time_w, time_h)
         else:
             self.time_elapsed_rect = None
         if self.time_total_pos and self.font_time_total:
-            time_w = self.font_time_total.size('00:00')[0] + 10
+            time_w = self.font_time_total.render('00:00', True, (255,255,255)).get_width() + 4  # render() includes italic overhang; size() does not
             time_h = self.font_time_total.get_linesize()
             self.time_total_rect = pg.Rect(self.time_total_pos[0], self.time_total_pos[1], time_w, time_h)
         else:
@@ -1430,7 +1431,7 @@ class BasicHandler:
             # Check for persist countdown
             persist_countdown_sec = None
             persist_display_mode = "freeze"
-            persist_file = '/tmp/peppy_persist'
+            persist_file = os.path.join(tempfile.gettempdir(), 'peppy_persist')
             if not is_playing and os.path.exists(persist_file):
                 try:
                     with open(persist_file, 'r') as f:
