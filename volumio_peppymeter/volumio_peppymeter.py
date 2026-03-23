@@ -996,7 +996,10 @@ class NetworkLevelServer:
         self._bytes_sent = 0
         
         # Client tracking for v2+ clients that send registration
-        # Format: {ip: {"client_id": str, "subscriptions": list, "last_seen": float, "version": int}}
+        # Key (ip, src_port): multiple clients can share one IP (same host) with different UDP ports.
+        # Optional discovery_client_port / spectrum_client_port for unicast when client bound ephemeral ports.
+        # Format: {(ip, port): {"client_id", "subscriptions", "last_seen", "version",
+        #                      "discovery_client_port", "spectrum_client_port"}}
         self._clients = {}
         self._unknown_traffic = {}  # {ip: {"count": int, "last_seen": float}}
         self._local_ips = set()  # Our own IPs to filter out self-received broadcasts
@@ -1067,56 +1070,73 @@ class NetworkLevelServer:
             msg_type = msg.get('type', '')
             
             if msg_type == 'register':
-                self._handle_registration(ip, msg)
+                self._handle_registration(addr, msg)
             elif msg_type == 'heartbeat':
-                self._handle_heartbeat(ip, msg)
+                self._handle_heartbeat(addr, msg)
             elif msg_type == 'unregister':
-                self._handle_unregister(ip, msg)
+                self._handle_unregister(addr, msg)
             else:
                 self._log_unknown(ip, addr[1], data, "unknown message type")
         except (json.JSONDecodeError, UnicodeDecodeError):
             self._log_unknown(ip, addr[1], data, "not valid JSON")
     
-    def _handle_registration(self, ip, msg):
+    def _parse_optional_port(self, msg, key):
+        v = msg.get(key)
+        if v is None:
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _handle_registration(self, addr, msg):
         """Register a new client."""
+        ip, src_port = addr[0], addr[1]
+        key = (ip, src_port)
         client_id = msg.get('client_id', f'unknown_{ip}')
         subscriptions = msg.get('subscribe', ['meters'])
         version = msg.get('version', 1)
-        
-        is_new = ip not in self._clients
-        self._clients[ip] = {
+        discovery_client_port = self._parse_optional_port(msg, 'discovery_port')
+        spectrum_client_port = self._parse_optional_port(msg, 'spectrum_listen_port')
+
+        is_new = key not in self._clients
+        self._clients[key] = {
             'client_id': client_id,
             'subscriptions': subscriptions,
             'last_seen': time.time(),
-            'version': version
+            'version': version,
+            'discovery_client_port': discovery_client_port,
+            'spectrum_client_port': spectrum_client_port,
         }
-        
+
         # Remove from unknown traffic if previously seen
         if ip in self._unknown_traffic:
             del self._unknown_traffic[ip]
-        
+
         subs_str = '+'.join(subscriptions)
         if is_new:
-            log_debug(f"[REMOTE:METERS] Client registered: {ip} \"{client_id}\" ({subs_str}) v{version}", "basic")
+            log_debug(f"[REMOTE:METERS] Client registered: {ip}:{src_port} \"{client_id}\" ({subs_str}) v{version}", "basic")
         else:
-            log_debug(f"[REMOTE:METERS] Client re-registered: {ip} \"{client_id}\" ({subs_str})", "trace", "remote")
-    
-    def _handle_heartbeat(self, ip, msg):
+            log_debug(f"[REMOTE:METERS] Client re-registered: {ip}:{src_port} \"{client_id}\" ({subs_str})", "trace", "remote")
+
+    def _handle_heartbeat(self, addr, msg):
         """Update client last-seen timestamp."""
-        if ip in self._clients:
-            self._clients[ip]['last_seen'] = time.time()
-            client_id = self._clients[ip]['client_id']
-            log_debug(f"[REMOTE:METERS] Heartbeat from {ip} \"{client_id}\"", "trace", "remote")
+        key = (addr[0], addr[1])
+        if key in self._clients:
+            self._clients[key]['last_seen'] = time.time()
+            client_id = self._clients[key]['client_id']
+            log_debug(f"[REMOTE:METERS] Heartbeat from {addr[0]}:{addr[1]} \"{client_id}\"", "trace", "remote")
         else:
             # Heartbeat from unregistered client - treat as registration
-            self._handle_registration(ip, msg)
-    
-    def _handle_unregister(self, ip, msg):
+            self._handle_registration(addr, msg)
+
+    def _handle_unregister(self, addr, msg):
         """Remove a client cleanly."""
-        if ip in self._clients:
-            client_id = self._clients[ip]['client_id']
-            del self._clients[ip]
-            log_debug(f"[REMOTE:METERS] Client unregistered: {ip} \"{client_id}\"", "basic")
+        key = (addr[0], addr[1])
+        if key in self._clients:
+            client_id = self._clients[key]['client_id']
+            del self._clients[key]
+            log_debug(f"[REMOTE:METERS] Client unregistered: {addr[0]}:{addr[1]} \"{client_id}\"", "basic")
     
     def _log_unknown(self, ip, port, data, reason):
         """Log unknown traffic for debugging."""
@@ -1136,14 +1156,44 @@ class NetworkLevelServer:
         """Remove clients that haven't sent heartbeat within timeout."""
         now = time.time()
         stale = []
-        for ip, info in self._clients.items():
+        for key, info in self._clients.items():
             if now - info['last_seen'] > self.HEARTBEAT_TIMEOUT:
-                stale.append(ip)
-        
-        for ip in stale:
-            client_id = self._clients[ip]['client_id']
-            del self._clients[ip]
-            log_debug(f"[REMOTE:METERS] Client timeout: {ip} \"{client_id}\" (no heartbeat for {self.HEARTBEAT_TIMEOUT}s)", "basic")
+                stale.append(key)
+
+        for key in stale:
+            client_id = self._clients[key]['client_id']
+            ip, sport = key[0], key[1]
+            del self._clients[key]
+            log_debug(f"[REMOTE:METERS] Client timeout: {ip}:{sport} \"{client_id}\" (no heartbeat for {self.HEARTBEAT_TIMEOUT}s)", "basic")
+
+    def iter_discovery_unicast_addrs(self, default_discovery_port):
+        """Clients that listen for discovery on a port other than the default (ephemeral bind)."""
+        try:
+            dp = int(default_discovery_port)
+        except (TypeError, ValueError):
+            dp = 5579
+        for key, info in self._clients.items():
+            dcp = info.get('discovery_client_port')
+            if dcp is not None and int(dcp) != dp:
+                yield (key[0], int(dcp))
+
+    def iter_level_unicast_addrs(self):
+        """Clients that bound a non-default local port for level packets (multiple clients on one host)."""
+        for key in self._clients:
+            ip, src_port = key[0], key[1]
+            if src_port != self.port:
+                yield (ip, src_port)
+
+    def iter_spectrum_unicast_addrs(self, default_spectrum_port):
+        """Clients that listen for spectrum on a port other than the default."""
+        try:
+            sp = int(default_spectrum_port)
+        except (TypeError, ValueError):
+            sp = 5581
+        for key, info in self._clients.items():
+            scp = info.get('spectrum_client_port')
+            if scp is not None and int(scp) != sp:
+                yield (key[0], int(scp))
     
     def _log_stats(self):
         """Log periodic statistics at verbose level."""
@@ -1198,7 +1248,13 @@ class NetworkLevelServer:
             # Pack as: sequence (uint32) + 3 floats (left, right, mono)
             data = struct.pack('<Ifff', self.seq, float(left), float(right), float(mono))
             self.sock.sendto(data, ('<broadcast>', self.port))
-            
+            # Unicast to clients that could not bind the default port (multiple remotes on one host)
+            for uip, uport in self.iter_level_unicast_addrs():
+                try:
+                    self.sock.sendto(data, (uip, uport))
+                except OSError:
+                    pass
+
             # Update stats
             self._packets_sent += 1
             self._bytes_sent += len(data)
@@ -1262,16 +1318,18 @@ class NetworkSpectrumServer:
     SPECTRUM_PIPE_PATH = '/tmp/myfifosa'
     STATS_INTERVAL = 10  # Seconds between verbose stats logging
     
-    def __init__(self, port=5581, enabled=True, spectrum_size=20, read_pipe=True):
+    def __init__(self, port=5581, enabled=True, spectrum_size=20, read_pipe=True, level_server=None):
         """Initialize the spectrum server.
         
         :param port: UDP port to broadcast on (default 5581)
         :param enabled: Whether broadcasting is enabled
         :param spectrum_size: Number of frequency bins (default 20)
         :param read_pipe: If True, read from pipe directly; if False, use set_bins()
+        :param level_server: Optional NetworkLevelServer — used to unicast to clients on ephemeral spectrum ports
         """
         self.port = port
         self.enabled = enabled
+        self.level_server = level_server
         self.spectrum_size = spectrum_size
         self.read_pipe = read_pipe
         self.seq = 0
@@ -1489,7 +1547,13 @@ class NetworkSpectrumServer:
             fmt = '<IH' + str(num_bins) + 'f'
             data = struct.pack(fmt, self.seq, num_bins, *bins)
             self.sock.sendto(data, ('<broadcast>', self.port))
-            
+            if self.level_server:
+                for uip, uport in self.level_server.iter_spectrum_unicast_addrs(self.port):
+                    try:
+                        self.sock.sendto(data, (uip, uport))
+                    except OSError:
+                        pass
+
             # Update stats
             self._packets_sent += 1
             self._bytes_sent += len(data)
@@ -1559,7 +1623,7 @@ class DiscoveryAnnouncer:
     
     def __init__(self, discovery_port=5579, level_port=5580, spectrum_port=5581,
                  volumio_port=3000, interval=5.0, enabled=True, config_path=None,
-                 config_check_interval=1.0):
+                 config_check_interval=1.0, level_server=None):
         """Initialize the discovery announcer.
         
         :param discovery_port: UDP port for discovery broadcasts (default 5579)
@@ -1570,8 +1634,10 @@ class DiscoveryAnnouncer:
         :param enabled: Whether announcements are enabled
         :param config_path: Path to config.txt for version hashing
         :param config_check_interval: Seconds between config file checks (default 1.0)
+        :param level_server: Optional NetworkLevelServer — unicast discovery to clients on ephemeral ports
         """
         self.discovery_port = discovery_port
+        self.level_server = level_server
         self.level_port = level_port
         self.spectrum_port = spectrum_port
         self.volumio_port = volumio_port
@@ -1674,6 +1740,16 @@ class DiscoveryAnnouncer:
             # Always notify immediately on a real meter change, including first meter after restart.
             self._send_immediate_broadcast()
     
+    def _send_discovery_datagram(self, announcement):
+        """Broadcast and optionally unicast to remotes that bound a non-default discovery port."""
+        self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
+        if self.level_server:
+            for addr in self.level_server.iter_discovery_unicast_addrs(self.discovery_port):
+                try:
+                    self.sock.sendto(announcement, addr)
+                except OSError:
+                    pass
+
     def _send_immediate_broadcast(self):
         """Send an immediate broadcast outside the normal interval.
         
@@ -1685,7 +1761,7 @@ class DiscoveryAnnouncer:
         
         try:
             announcement = self._build_announcement()
-            self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
+            self._send_discovery_datagram(announcement)
             self._broadcast_count += 1
             log_debug(f"[REMOTE:DISCOVERY] Immediate broadcast for meter change", "verbose")
             log_debug(f"[REMOTE:DISCOVERY] Payload: {announcement.decode()}", "trace", "remote.packets")
@@ -1774,7 +1850,7 @@ class DiscoveryAnnouncer:
             
             try:
                 announcement = self._build_announcement()
-                self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
+                self._send_discovery_datagram(announcement)
                 self._broadcast_count += 1
                 
                 # Log at trace level (but not every packet unless remote.packets enabled)
@@ -3897,7 +3973,7 @@ def start_headless_output(pm, callback, meter_config_volumio, volumio_host='loca
     config_sync_interval = meter_config_volumio.get("remote.config.sync.interval", 1)
 
     level_server = NetworkLevelServer(port=level_port, enabled=True)
-    spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=True)
+    spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=True, level_server=level_server)
 
     config_path = os.path.join(PeppyPath, 'config.txt')
     discovery_announcer = DiscoveryAnnouncer(
@@ -3908,7 +3984,8 @@ def start_headless_output(pm, callback, meter_config_volumio, volumio_host='loca
         interval=5.0,
         enabled=True,
         config_path=config_path,
-        config_check_interval=float(config_sync_interval)
+        config_check_interval=float(config_sync_interval),
+        level_server=level_server,
     )
     discovery_announcer.start()
     callback.discovery_announcer = discovery_announcer
@@ -4096,7 +4173,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
         #                       because that causes pipe contention and display flickering.
         #                       During meter transitions, we simply skip spectrum broadcast.
         read_pipe_mode = (remote_mode == "server")
-        spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=read_pipe_mode)
+        spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=read_pipe_mode, level_server=level_server)
         
         # Start discovery announcer (includes config version for change detection)
         config_path = os.path.join(PeppyPath, 'config.txt')
@@ -4108,7 +4185,8 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             interval=5.0,
             enabled=True,
             config_path=config_path,
-            config_check_interval=float(config_sync_interval)
+            config_check_interval=float(config_sync_interval),
+            level_server=level_server,
         )
         discovery_announcer.start()
         
