@@ -1,6 +1,6 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.3.1",
+  "version": "3.3.2",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.3.1 - peppy_fonts as defaults with system fonts fallback and config toggle."
+    "changelog": "3.3.2 - Multi-client remote (unicast discovery/level/spectrum); theme-follow reload fix; 3.3.1 peppy_fonts defaults and config toggle."
   },
   "engines": {
     "node": ">=20",
