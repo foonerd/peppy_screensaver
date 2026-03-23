@@ -1587,8 +1587,20 @@ class BasicHandler:
                     dirty_rects.append(self.type_rect.copy())
                 else:
                     try:
-                        if pg.version.ver.startswith("2"):
-                            # Pygame 2 native SVG
+                        img = None
+                        # Prefer cairosvg: rasterizes at exact target dimensions,
+                        # consistent across platforms (Linux/Windows/Mac).
+                        # pg.image.load() uses SDL_image nanosvg which produces
+                        # platform-dependent default raster sizes for the same SVG.
+                        if CAIROSVG_AVAILABLE and PIL_AVAILABLE:
+                            png_bytes = cairosvg.svg2png(url=icon_path,
+                                                          output_width=self.type_rect.width,
+                                                          output_height=self.type_rect.height)
+                            pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                            img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
+                            img = img.convert_alpha()
+                        elif pg.version.ver.startswith("2"):
+                            # Fallback: Pygame 2 native SVG (platform-dependent size)
                             img = pg.image.load(icon_path)
                             w, h = img.get_width(), img.get_height()
                             sc = min(self.type_rect.width / float(w), self.type_rect.height / float(h))
@@ -1597,21 +1609,8 @@ class BasicHandler:
                                 img = pg.transform.smoothscale(img, new_size)
                             except Exception:
                                 img = pg.transform.scale(img, new_size)
-                            # Convert to format suitable for pixel manipulation
                             img = img.convert_alpha()
-                            set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
-                            dx = self.type_rect.x + (self.type_rect.width - img.get_width()) // 2
-                            dy = self.type_rect.y + (self.type_rect.height - img.get_height()) // 2
-                            self.screen.blit(img, (dx, dy))
-                            self.last_format_icon_surf = img
-                        elif CAIROSVG_AVAILABLE and PIL_AVAILABLE:
-                            # Pygame 1.x with cairosvg
-                            png_bytes = cairosvg.svg2png(url=icon_path,
-                                                          output_width=self.type_rect.width,
-                                                          output_height=self.type_rect.height)
-                            pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-                            img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
-                            img = img.convert_alpha()
+                        if img:
                             set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
                             dx = self.type_rect.x + (self.type_rect.width - img.get_width()) // 2
                             dy = self.type_rect.y + (self.type_rect.height - img.get_height()) // 2

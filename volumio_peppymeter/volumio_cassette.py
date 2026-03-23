@@ -2169,8 +2169,20 @@ class CassetteHandler:
                         self.last_format_icon_surf = self.sample_font.render(fmt[:4], True, self.type_color)
                 else:
                     try:
-                        if pg.version.ver.startswith("2"):
-                            # Pygame 2 native SVG
+                        img = None
+                        # Prefer cairosvg: rasterizes at exact target dimensions,
+                        # consistent across platforms (Linux/Windows/Mac).
+                        # pg.image.load() uses SDL_image nanosvg which produces
+                        # platform-dependent default raster sizes for the same SVG.
+                        if CAIROSVG_AVAILABLE and PIL_AVAILABLE:
+                            png_bytes = cairosvg.svg2png(url=icon_path, 
+                                                          output_width=self.type_rect.width,
+                                                          output_height=self.type_rect.height)
+                            pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                            img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
+                            img = img.convert_alpha()
+                        elif pg.version.ver.startswith("2"):
+                            # Fallback: Pygame 2 native SVG (platform-dependent size)
                             img = pg.image.load(icon_path)
                             w, h = img.get_width(), img.get_height()
                             sc = min(self.type_rect.width / float(w), self.type_rect.height / float(h))
@@ -2180,15 +2192,7 @@ class CassetteHandler:
                             except Exception:
                                 img = pg.transform.scale(img, new_size)
                             img = img.convert_alpha()
-                            set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
-                            self.last_format_icon_surf = img
-                        elif CAIROSVG_AVAILABLE and PIL_AVAILABLE:
-                            png_bytes = cairosvg.svg2png(url=icon_path, 
-                                                          output_width=self.type_rect.width,
-                                                          output_height=self.type_rect.height)
-                            pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-                            img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
-                            img = img.convert_alpha()
+                        if img:
                             set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
                             self.last_format_icon_surf = img
                     except Exception as e:
