@@ -402,6 +402,46 @@ def log_debug(msg, level="basic", component=None):
         pass
 
 
+def _parse_semver_tuple(s):
+    """Parse 'major.minor.patch' style string to a 3-tuple for comparison. Returns None if invalid."""
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    parts = s.split('.')
+    if len(parts) < 2:
+        return None
+    nums = []
+    for p in parts[:3]:
+        n = ''
+        for c in p:
+            if c.isdigit():
+                n += c
+            else:
+                break
+        if not n:
+            return None
+        nums.append(int(n))
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums[:3])
+
+
+def _compare_remote_release_versions(client_ver, server_ver):
+    """
+    Compare PeppyMeter Screensaver release strings (footlocked semver).
+    Returns -1 if client < server, 0 if equal, +1 if client > server, None if unparsable.
+    """
+    tc = _parse_semver_tuple(client_ver)
+    ts = _parse_semver_tuple(server_ver)
+    if tc is None or ts is None:
+        return None
+    if tc < ts:
+        return -1
+    if tc > ts:
+        return 1
+    return 0
+
+
 def init_debug_config(meter_config_volumio):
     """Initialize debug settings from config. Called after config is parsed."""
     global DEBUG_LEVEL_CURRENT, DEBUG_TRACE
@@ -1003,6 +1043,7 @@ class NetworkLevelServer:
         self._clients = {}
         self._unknown_traffic = {}  # {ip: {"count": int, "last_seen": float}}
         self._local_ips = set()  # Our own IPs to filter out self-received broadcasts
+        self._plugin_version = os.environ.get('PEPPY_PLUGIN_VERSION', '').strip()
         
         if self.enabled:
             try:
@@ -1093,6 +1134,10 @@ class NetworkLevelServer:
         """Register a new client."""
         ip, src_port = addr[0], addr[1]
         key = (ip, src_port)
+        is_heartbeat = msg.get('type') == 'heartbeat'
+        prev_info = self._clients.get(key, {})
+        was_pending = prev_info.get('pending_register_only', False)
+
         client_id = msg.get('client_id', f'unknown_{ip}')
         subscriptions = msg.get('subscribe', ['meters'])
         version = msg.get('version', 1)
@@ -1100,6 +1145,13 @@ class NetworkLevelServer:
         spectrum_client_port = self._parse_optional_port(msg, 'spectrum_listen_port')
 
         is_new = key not in self._clients
+        if is_new:
+            pending_register_only = is_heartbeat
+        elif msg.get('type') == 'register':
+            pending_register_only = False
+        else:
+            pending_register_only = prev_info.get('pending_register_only', False)
+
         self._clients[key] = {
             'client_id': client_id,
             'subscriptions': subscriptions,
@@ -1107,6 +1159,7 @@ class NetworkLevelServer:
             'version': version,
             'discovery_client_port': discovery_client_port,
             'spectrum_client_port': spectrum_client_port,
+            'pending_register_only': pending_register_only,
         }
 
         # Remove from unknown traffic if previously seen
@@ -1115,9 +1168,51 @@ class NetworkLevelServer:
 
         subs_str = '+'.join(subscriptions)
         if is_new:
-            log_debug(f"[REMOTE:METERS] Client registered: {ip}:{src_port} \"{client_id}\" ({subs_str}) v{version}", "basic")
+            if is_heartbeat:
+                log_debug(
+                    f"[REMOTE:METERS] Heartbeat before register (UDP register may be lost): {ip}:{src_port} "
+                    f"\"{client_id}\" — provisional until full register",
+                    "basic",
+                )
+            else:
+                log_debug(
+                    f"[REMOTE:METERS] Client registered: {ip}:{src_port} \"{client_id}\" ({subs_str}) v{version}",
+                    "basic",
+                )
         else:
-            log_debug(f"[REMOTE:METERS] Client re-registered: {ip}:{src_port} \"{client_id}\" ({subs_str})", "trace", "remote")
+            if msg.get('type') == 'register' and was_pending:
+                log_debug(
+                    f"[REMOTE:METERS] Full register received (was provisional): {ip}:{src_port} "
+                    f"\"{client_id}\" ({subs_str}) v{version}",
+                    "basic",
+                )
+            else:
+                log_debug(
+                    f"[REMOTE:METERS] Client re-registered: {ip}:{src_port} \"{client_id}\" ({subs_str})",
+                    "trace",
+                    "remote",
+                )
+
+        client_pv = msg.get('client_version')
+        if isinstance(client_pv, str):
+            client_pv = client_pv.strip()
+        else:
+            client_pv = None
+        if self._plugin_version and client_pv and not is_heartbeat:
+            cmp = _compare_remote_release_versions(client_pv, self._plugin_version)
+            if cmp is not None and cmp != 0:
+                reason = 'client_too_old' if cmp < 0 else 'server_too_old'
+                log_debug(
+                    f"[REMOTE:METERS] Version mismatch ({reason}): client_release={client_pv} "
+                    f"server_release={self._plugin_version} udp_protocol={version} id={client_id}",
+                    "verbose",
+                )
+        elif self._plugin_version and not client_pv and is_new and not is_heartbeat:
+            log_debug(
+                f"[REMOTE:METERS] Client registered without client_version (legacy remote): "
+                f"{ip}:{src_port} id={client_id}",
+                "verbose",
+            )
 
     def _handle_heartbeat(self, addr, msg):
         """Update client last-seen timestamp."""
@@ -1607,14 +1702,16 @@ class DiscoveryAnnouncer:
     Announcement format (JSON):
         {
             "service": "peppy_level_server",
-            "version": 2,
+            "version": 3,
             "level_port": 5580,
             "spectrum_port": 5581,
             "volumio_port": 3000,
             "hostname": "volumio",
-            "config_version": "a1b2c3d4"
+            "config_version": "a1b2c3d4",
+            "plugin_version": "3.3.2"
         }
     
+    plugin_version is the PeppyMeter Screensaver release (package.json); omitted if unset.
     Clients can listen on the discovery port to find available servers
     without needing to know the IP address in advance. The config_version
     field changes when server configuration changes, allowing clients to
@@ -1655,6 +1752,7 @@ class DiscoveryAnnouncer:
         self._local_ips = set()
         self._last_stats_time = 0
         self._active_meter = ""  # Currently active meter name for remote sync
+        self._plugin_version = os.environ.get('PEPPY_PLUGIN_VERSION', '').strip()
         
         # Get hostname
         try:
@@ -1714,7 +1812,7 @@ class DiscoveryAnnouncer:
     
     def _build_announcement(self):
         """Build the announcement payload with current config version and active meter."""
-        return json.dumps({
+        payload = {
             "service": "peppy_level_server",
             "version": 3,  # Protocol version 3 with active_meter for remote sync
             "level_port": self.level_port,
@@ -1722,8 +1820,11 @@ class DiscoveryAnnouncer:
             "volumio_port": self.volumio_port,
             "hostname": self.hostname,
             "config_version": self._config_version,
-            "active_meter": self._active_meter
-        }).encode('utf-8')
+            "active_meter": self._active_meter,
+        }
+        if self._plugin_version:
+            payload["plugin_version"] = self._plugin_version
+        return json.dumps(payload).encode('utf-8')
     
     def set_active_meter(self, meter_name):
         """Update the currently active meter name for remote client sync.

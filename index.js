@@ -24,6 +24,7 @@ const io = require('socket.io-client');
 const socket = io.connect('http://localhost:3000');
 const path = require('path');
 const ini = require('ini');
+const peppyPluginVersion = require('./package.json').version;
 //---
 const id = 'peppy_screensaver: ';      // for logging
 const PluginPath = '/data/plugins/user_interface/peppy_screensaver';
@@ -2011,6 +2012,7 @@ peppyScreensaver.prototype.getRemoteConfig = function () {
     defer.resolve({
       success: true,
       version: configVersion,
+      plugin_version: peppyPluginVersion,
       config: configContent,
       persist_duration: persistDuration,
       persist_display: persistDisplay

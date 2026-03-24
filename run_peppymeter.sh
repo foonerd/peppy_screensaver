@@ -3,6 +3,12 @@
 
 PLUGIN_DIR="/data/plugins/user_interface/peppy_screensaver"
 
+# PeppyMeter Screensaver release (must match package.json) — used for remote client compatibility
+if [ -f "$PLUGIN_DIR/package.json" ]; then
+  PEPPY_PLUGIN_VERSION=$(grep -m1 '"version"' "$PLUGIN_DIR/package.json" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+  export PEPPY_PLUGIN_VERSION
+fi
+
 # Get Volumio architecture
 ARCH=$(cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d 'VOLUMIO_ARCH="')
 
