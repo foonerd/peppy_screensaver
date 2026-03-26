@@ -2781,8 +2781,10 @@ class TurntableHandler:
         # =================================================================
         # PHASE 1: LAYER COMPOSITION - Clear dirty regions from bgr_surface
         # =================================================================
-        # ANTI-COLLISION: Use visual_rect (actual image bounds) not backing_rect
-        # (diagonal-extended). This prevents wiping meter areas.
+        # ANTI-COLLISION: Use visual_rect (actual image bounds) inflated by 4px
+        # per side to catch anti-aliased fringe pixels from rotation, without
+        # extending to the full backing_rect (sqrt(2) diagonal) which overlaps
+        # meter areas and causes needle flicker.
         
         clear_regions = []
         
@@ -2790,13 +2792,13 @@ class TurntableHandler:
         if (vinyl_will_blit or force_flag) and self.vinyl_renderer:
             rect = self.vinyl_renderer.get_visual_rect()
             if rect:
-                clear_regions.append(rect)
+                clear_regions.append(rect.inflate(8, 8))
         
-        # Art region - use visual_rect
+        # Art region - inflated visual_rect for rotation-safe clearing
         if (album_will_render or album_url_changed or force_flag) and self.album_renderer:
             rect = self.album_renderer.get_visual_rect()
             if rect:
-                clear_regions.append(rect)
+                clear_regions.append(rect.inflate(8, 8))
         
         # Tonearm region - clear LAST position from bgr_surface (not restore_backing)
         # This clears to pure static background, then overlapping components redraw

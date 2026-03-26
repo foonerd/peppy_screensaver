@@ -1827,18 +1827,18 @@ class CassetteHandler:
         clear_regions = []
         
         # Reel regions need clearing when they animate
-        # Use visual_rect (actual image bounds) instead of backing_rect (rotation-extended)
-        # visual_rect is smaller and likely doesn't overlap meter area in center
-        # Trade-off: minor rotation artifacts at corners vs meter flicker
+        # Use visual_rect inflated by 4px per side to catch anti-aliased fringe
+        # pixels from rotation, without extending to the full backing_rect
+        # (sqrt(2) diagonal) which overlaps meter area in center
         if left_will_blit and self.reel_left:
             rect = self.reel_left.get_visual_rect()
             if rect:
-                clear_regions.append(rect)
+                clear_regions.append(rect.inflate(8, 8))
         
         if right_will_blit and self.reel_right:
             rect = self.reel_right.get_visual_rect()
             if rect:
-                clear_regions.append(rect)
+                clear_regions.append(rect.inflate(8, 8))
         
         # Art region needs clearing when URL changes or reels force redraw
         if (force_flag or album_url_changed) and self.album_renderer:
