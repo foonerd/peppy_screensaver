@@ -13,6 +13,7 @@
 # to eliminate dead code paths and reduce CPU overhead.
 
 import os
+import tempfile
 import io
 import math
 import time
@@ -1466,19 +1467,19 @@ class CassetteHandler:
         
         # Time rect (for clearing from bgr_surface; use effective time font per field)
         if self.time_pos and self.font_time_remaining:
-            time_width = self.font_time_remaining.size('00:00')[0] + 10
+            time_width = self.font_time_remaining.render('00:00', True, (255,255,255)).get_width() + 4  # render() includes italic overhang; size() does not
             time_height = self.font_time_remaining.get_linesize()
             self.time_rect = pg.Rect(self.time_pos[0], self.time_pos[1], time_width, time_height)
         else:
             self.time_rect = None
         if self.time_elapsed_pos and self.font_time_elapsed:
-            time_width = self.font_time_elapsed.size('00:00')[0] + 10
+            time_width = self.font_time_elapsed.render('00:00', True, (255,255,255)).get_width() + 4  # render() includes italic overhang; size() does not
             time_height = self.font_time_elapsed.get_linesize()
             self.time_elapsed_rect = pg.Rect(self.time_elapsed_pos[0], self.time_elapsed_pos[1], time_width, time_height)
         else:
             self.time_elapsed_rect = None
         if self.time_total_pos and self.font_time_total:
-            time_width = self.font_time_total.size('00:00')[0] + 10
+            time_width = self.font_time_total.render('00:00', True, (255,255,255)).get_width() + 4  # render() includes italic overhang; size() does not
             time_height = self.font_time_total.get_linesize()
             self.time_total_rect = pg.Rect(self.time_total_pos[0], self.time_total_pos[1], time_width, time_height)
         else:
@@ -1826,18 +1827,18 @@ class CassetteHandler:
         clear_regions = []
         
         # Reel regions need clearing when they animate
-        # Use visual_rect (actual image bounds) instead of backing_rect (rotation-extended)
-        # visual_rect is smaller and likely doesn't overlap meter area in center
-        # Trade-off: minor rotation artifacts at corners vs meter flicker
+        # Use visual_rect inflated by 4px per side to catch anti-aliased fringe
+        # pixels from rotation, without extending to the full backing_rect
+        # (sqrt(2) diagonal) which overlaps meter area in center
         if left_will_blit and self.reel_left:
             rect = self.reel_left.get_visual_rect()
             if rect:
-                clear_regions.append(rect)
+                clear_regions.append(rect.inflate(8, 8))
         
         if right_will_blit and self.reel_right:
             rect = self.reel_right.get_visual_rect()
             if rect:
-                clear_regions.append(rect)
+                clear_regions.append(rect.inflate(8, 8))
         
         # Art region needs clearing when URL changes or reels force redraw
         if (force_flag or album_url_changed) and self.album_renderer:
@@ -2001,7 +2002,7 @@ class CassetteHandler:
             # Check for persist file (countdown mode for external control)
             persist_countdown_sec = None
             persist_display_mode = "freeze"
-            persist_file = '/tmp/peppy_persist'
+            persist_file = os.path.join(tempfile.gettempdir(), 'peppy_persist')
             if not is_playing and os.path.exists(persist_file):
                 try:
                     with open(persist_file, 'r') as f:
@@ -2169,8 +2170,20 @@ class CassetteHandler:
                         self.last_format_icon_surf = self.sample_font.render(fmt[:4], True, self.type_color)
                 else:
                     try:
-                        if pg.version.ver.startswith("2"):
-                            # Pygame 2 native SVG
+                        img = None
+                        # Prefer cairosvg: rasterizes at exact target dimensions,
+                        # consistent across platforms (Linux/Windows/Mac).
+                        # pg.image.load() uses SDL_image nanosvg which produces
+                        # platform-dependent default raster sizes for the same SVG.
+                        if CAIROSVG_AVAILABLE and PIL_AVAILABLE:
+                            png_bytes = cairosvg.svg2png(url=icon_path, 
+                                                          output_width=self.type_rect.width,
+                                                          output_height=self.type_rect.height)
+                            pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                            img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
+                            img = img.convert_alpha()
+                        elif pg.version.ver.startswith("2"):
+                            # Fallback: Pygame 2 native SVG (platform-dependent size)
                             img = pg.image.load(icon_path)
                             w, h = img.get_width(), img.get_height()
                             sc = min(self.type_rect.width / float(w), self.type_rect.height / float(h))
@@ -2180,15 +2193,7 @@ class CassetteHandler:
                             except Exception:
                                 img = pg.transform.scale(img, new_size)
                             img = img.convert_alpha()
-                            set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
-                            self.last_format_icon_surf = img
-                        elif CAIROSVG_AVAILABLE and PIL_AVAILABLE:
-                            png_bytes = cairosvg.svg2png(url=icon_path, 
-                                                          output_width=self.type_rect.width,
-                                                          output_height=self.type_rect.height)
-                            pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-                            img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
-                            img = img.convert_alpha()
+                        if img:
                             set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
                             self.last_format_icon_surf = img
                     except Exception as e:

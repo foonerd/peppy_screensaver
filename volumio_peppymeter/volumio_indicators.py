@@ -953,7 +953,12 @@ class SliderIndicator:
                 tip_y = y + self.slider_tip_offset[1] + (h - tip_h) // 2  # Center vertically
             
             screen.blit(self._slider_tip_image, (tip_x, tip_y))
-            return pg.Rect(x, y, w, h)
+            # Return full travel bounding box as dirty rect (not just dim rect).
+            # get_rect() computes the same rect used by capture/restore_backing.
+            # Returning only pg.Rect(x, y, w, h) undersizes the dirty rect -
+            # display.update() then skips tip pixels outside dim on platforms
+            # that strictly honour the rect list (Windows DirectX/OpenGL).
+            return self.get_rect()
         
         # Procedural slider (fallback)
         # Background

@@ -256,6 +256,7 @@ Stream visualization data to remote displays on your network.
 | Enable Remote Server | On/Off | Off | Enable network streaming of visualization data |
 | Server Mode | Server Only / Server + Local | Server + Local | Display mode when server is enabled |
 | Level Port | 1024-65535 | 5580 | UDP port for audio level data |
+| Spectrum Data Port | 1024-65535 | 5581 | UDP port for spectrum FFT data |
 | Discovery Port | 1024-65535 | 5579 | UDP port for server discovery broadcasts |
 
 **Server modes:**
@@ -263,11 +264,13 @@ Stream visualization data to remote displays on your network.
 - **Server + Local**: Streams data AND shows visualization locally using the standard display/render pipeline (default)
 
 **How it works:**
-1. Server broadcasts discovery packets on UDP (default port 5579)
-2. Clients discover server automatically or connect by hostname/IP
-3. Audio level data streams via UDP (default port 5580)
-4. Clients fetch configuration and templates from server
-5. Metadata comes from Volumio's socket.io interface
+1. Server broadcasts discovery packets on UDP (default port 5579), including **`plugin_version`** (PeppyMeter Screensaver release from `package.json`) when available. The [peppy_remote](https://github.com/foonerd/peppy_remote) client uses **HTTP** `getRemoteConfig` as the authoritative compatibility check; discovery `plugin_version` is informational.
+2. Clients discover the server automatically or connect by hostname/IP, then send control traffic including **`client_version`** so the server can log mismatches when **Debug Level** is **Verbose** or higher.
+3. Audio level data streams via UDP (default port 5580); spectrum FFT data via UDP (default port 5581).
+4. Clients fetch configuration and templates from the server (HTTP + SMB/UNC as documented in peppy_remote).
+5. Metadata comes from Volumio's socket.io interface (TCP port 3000).
+
+For development or custom installs, the plugin version exposed to Python can be overridden with environment variable **`PEPPY_PLUGIN_VERSION`** (must match the running code).
 
 In headless mode, server shutdown closes network sockets/pipes as part of the headless loop cleanup so the next start can bind the same UDP ports cleanly.
 
@@ -798,9 +801,9 @@ If CPU usage is higher than expected:
 
 ## Remote Display Client
 
-Display PeppyMeter visualizations on any Debian-based system (Ubuntu, Raspberry Pi OS, etc.) by connecting to a Volumio server running PeppyMeter with Remote Display Server enabled.
+Display PeppyMeter visualizations on any Debian-based system (Ubuntu, Raspberry Pi OS, etc.) or on Windows by connecting to a Volumio server running PeppyMeter with Remote Display Server enabled.
 
-The remote client uses the **same rendering code** as the Volumio plugin - all skins work identically.
+The remote client uses the **same rendering code** as the Volumio plugin—all skins work identically. Use a **peppy_remote** release that matches your **PeppyMeter Screensaver** semver (see `peppy_remote --version` and the plugin version in Volumio). The client waits for Volumio HTTP and compares versions before starting; see the [peppy_remote README](https://github.com/foonerd/peppy_remote/blob/main/README.md#version-compatibility-and-startup) for **`--server-wait-timeout`** and **`--skip-version-check`**. On the server, enable **Verbose** debug to log remote **`client_version`** lines when clients connect.
 
 ### Quick Install
 

@@ -17,6 +17,7 @@
 
 import json
 import os
+import tempfile
 import io
 import math
 import time
@@ -30,6 +31,12 @@ try:
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
+
+try:
+    import cairosvg
+    CAIROSVG_AVAILABLE = True
+except ImportError:
+    CAIROSVG_AVAILABLE = False
 
 # =============================================================================
 # Configuration Constants (turntable-specific subset)
@@ -2362,19 +2369,19 @@ class TurntableHandler:
         
         # Time rect (for clearing from bgr_surface; use effective time font per field)
         if self.time_pos and self.font_time_remaining:
-            time_width = self.font_time_remaining.size('00:00')[0] + 10
+            time_width = self.font_time_remaining.render('00:00', True, (255,255,255)).get_width() + 4  # render() includes italic overhang; size() does not
             time_height = self.font_time_remaining.get_linesize()
             self.time_rect = pg.Rect(self.time_pos[0], self.time_pos[1], time_width, time_height)
         else:
             self.time_rect = None
         if self.time_elapsed_pos and self.font_time_elapsed:
-            time_width = self.font_time_elapsed.size('00:00')[0] + 10
+            time_width = self.font_time_elapsed.render('00:00', True, (255,255,255)).get_width() + 4  # render() includes italic overhang; size() does not
             time_height = self.font_time_elapsed.get_linesize()
             self.time_elapsed_rect = pg.Rect(self.time_elapsed_pos[0], self.time_elapsed_pos[1], time_width, time_height)
         else:
             self.time_elapsed_rect = None
         if self.time_total_pos and self.font_time_total:
-            time_width = self.font_time_total.size('00:00')[0] + 10
+            time_width = self.font_time_total.render('00:00', True, (255,255,255)).get_width() + 4  # render() includes italic overhang; size() does not
             time_height = self.font_time_total.get_linesize()
             self.time_total_rect = pg.Rect(self.time_total_pos[0], self.time_total_pos[1], time_width, time_height)
         else:
@@ -2774,8 +2781,10 @@ class TurntableHandler:
         # =================================================================
         # PHASE 1: LAYER COMPOSITION - Clear dirty regions from bgr_surface
         # =================================================================
-        # ANTI-COLLISION: Use visual_rect (actual image bounds) not backing_rect
-        # (diagonal-extended). This prevents wiping meter areas.
+        # ANTI-COLLISION: Use visual_rect (actual image bounds) inflated by 4px
+        # per side to catch anti-aliased fringe pixels from rotation, without
+        # extending to the full backing_rect (sqrt(2) diagonal) which overlaps
+        # meter areas and causes needle flicker.
         
         clear_regions = []
         
@@ -2783,13 +2792,13 @@ class TurntableHandler:
         if (vinyl_will_blit or force_flag) and self.vinyl_renderer:
             rect = self.vinyl_renderer.get_visual_rect()
             if rect:
-                clear_regions.append(rect)
+                clear_regions.append(rect.inflate(8, 8))
         
-        # Art region - use visual_rect
+        # Art region - inflated visual_rect for rotation-safe clearing
         if (album_will_render or album_url_changed or force_flag) and self.album_renderer:
             rect = self.album_renderer.get_visual_rect()
             if rect:
-                clear_regions.append(rect)
+                clear_regions.append(rect.inflate(8, 8))
         
         # Tonearm region - clear LAST position from bgr_surface (not restore_backing)
         # This clears to pure static background, then overlapping components redraw
@@ -2994,7 +3003,7 @@ class TurntableHandler:
             # Defensive: only show countdown when NOT transitional (volatile explicitly False)
             persist_countdown_sec = None
             persist_display_mode = "freeze"
-            persist_file = '/tmp/peppy_persist'
+            persist_file = os.path.join(tempfile.gettempdir(), 'peppy_persist')
             if not is_playing and not is_transitional and os.path.exists(persist_file):
                 try:
                     with open(persist_file, 'r') as f:
@@ -3163,44 +3172,35 @@ class TurntableHandler:
                         self.last_format_icon_surf = txt_surf
                 else:
                     try:
-                        if pg.version.ver.startswith("2"):
-                            # Pygame 2 native SVG
+                        img = None
+                        # Prefer cairosvg: rasterizes at exact target dimensions,
+                        # consistent across platforms (Linux/Windows/Mac).
+                        # pg.image.load() uses SDL_image nanosvg which produces
+                        # platform-dependent default raster sizes for the same SVG.
+                        if CAIROSVG_AVAILABLE and PIL_AVAILABLE:
+                            png_bytes = cairosvg.svg2png(url=icon_path,
+                                                        output_width=self.type_rect.width,
+                                                        output_height=self.type_rect.height)
+                            pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                            img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
+                            img = img.convert_alpha()
+                        elif pg.version.ver.startswith("2"):
+                            # Fallback: Pygame 2 native SVG (platform-dependent size)
                             img = pg.image.load(icon_path)
                             w, h = img.get_width(), img.get_height()
-                            # Preserve aspect ratio
                             sc = min(self.type_rect.width / float(w), self.type_rect.height / float(h))
                             new_size = (max(1, int(w * sc)), max(1, int(h * sc)))
                             try:
                                 img = pg.transform.smoothscale(img, new_size)
                             except Exception:
                                 img = pg.transform.scale(img, new_size)
-                            # Convert to format suitable for pixel manipulation
                             img = img.convert_alpha()
-                            # Colorize to match skin color
+                        if img:
                             set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
-                            # Center in type_rect
                             dx = self.type_rect.x + (self.type_rect.width - img.get_width()) // 2
                             dy = self.type_rect.y + (self.type_rect.height - img.get_height()) // 2
                             self.screen.blit(img, (dx, dy))
                             self.last_format_icon_surf = img
-                        else:
-                            try:
-                                import cairosvg
-                                png_bytes = cairosvg.svg2png(url=icon_path,
-                                                            output_width=self.type_rect.width,
-                                                            output_height=self.type_rect.height)
-                                pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-                                img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
-                                img = img.convert_alpha()
-                                # Colorize to match skin color
-                                set_color(img, pg.Color(self.type_color[0], self.type_color[1], self.type_color[2]))
-                                # Center in type_rect
-                                dx = self.type_rect.x + (self.type_rect.width - img.get_width()) // 2
-                                dy = self.type_rect.y + (self.type_rect.height - img.get_height()) // 2
-                                self.screen.blit(img, (dx, dy))
-                                self.last_format_icon_surf = img
-                            except Exception:
-                                pass
                     except Exception as e:
                         print(f"[FormatIcon] error: {e}")
                 

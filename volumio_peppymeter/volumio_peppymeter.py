@@ -402,6 +402,46 @@ def log_debug(msg, level="basic", component=None):
         pass
 
 
+def _parse_semver_tuple(s):
+    """Parse 'major.minor.patch' style string to a 3-tuple for comparison. Returns None if invalid."""
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    parts = s.split('.')
+    if len(parts) < 2:
+        return None
+    nums = []
+    for p in parts[:3]:
+        n = ''
+        for c in p:
+            if c.isdigit():
+                n += c
+            else:
+                break
+        if not n:
+            return None
+        nums.append(int(n))
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums[:3])
+
+
+def _compare_remote_release_versions(client_ver, server_ver):
+    """
+    Compare PeppyMeter Screensaver release strings (footlocked semver).
+    Returns -1 if client < server, 0 if equal, +1 if client > server, None if unparsable.
+    """
+    tc = _parse_semver_tuple(client_ver)
+    ts = _parse_semver_tuple(server_ver)
+    if tc is None or ts is None:
+        return None
+    if tc < ts:
+        return -1
+    if tc > ts:
+        return 1
+    return 0
+
+
 def init_debug_config(meter_config_volumio):
     """Initialize debug settings from config. Called after config is parsed."""
     global DEBUG_LEVEL_CURRENT, DEBUG_TRACE
@@ -996,10 +1036,14 @@ class NetworkLevelServer:
         self._bytes_sent = 0
         
         # Client tracking for v2+ clients that send registration
-        # Format: {ip: {"client_id": str, "subscriptions": list, "last_seen": float, "version": int}}
+        # Key (ip, src_port): multiple clients can share one IP (same host) with different UDP ports.
+        # Optional discovery_client_port / spectrum_client_port for unicast when client bound ephemeral ports.
+        # Format: {(ip, port): {"client_id", "subscriptions", "last_seen", "version",
+        #                      "discovery_client_port", "spectrum_client_port"}}
         self._clients = {}
         self._unknown_traffic = {}  # {ip: {"count": int, "last_seen": float}}
         self._local_ips = set()  # Our own IPs to filter out self-received broadcasts
+        self._plugin_version = os.environ.get('PEPPY_PLUGIN_VERSION', '').strip()
         
         if self.enabled:
             try:
@@ -1067,56 +1111,127 @@ class NetworkLevelServer:
             msg_type = msg.get('type', '')
             
             if msg_type == 'register':
-                self._handle_registration(ip, msg)
+                self._handle_registration(addr, msg)
             elif msg_type == 'heartbeat':
-                self._handle_heartbeat(ip, msg)
+                self._handle_heartbeat(addr, msg)
             elif msg_type == 'unregister':
-                self._handle_unregister(ip, msg)
+                self._handle_unregister(addr, msg)
             else:
                 self._log_unknown(ip, addr[1], data, "unknown message type")
         except (json.JSONDecodeError, UnicodeDecodeError):
             self._log_unknown(ip, addr[1], data, "not valid JSON")
     
-    def _handle_registration(self, ip, msg):
+    def _parse_optional_port(self, msg, key):
+        v = msg.get(key)
+        if v is None:
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _handle_registration(self, addr, msg):
         """Register a new client."""
+        ip, src_port = addr[0], addr[1]
+        key = (ip, src_port)
+        is_heartbeat = msg.get('type') == 'heartbeat'
+        prev_info = self._clients.get(key, {})
+        was_pending = prev_info.get('pending_register_only', False)
+
         client_id = msg.get('client_id', f'unknown_{ip}')
         subscriptions = msg.get('subscribe', ['meters'])
         version = msg.get('version', 1)
-        
-        is_new = ip not in self._clients
-        self._clients[ip] = {
+        discovery_client_port = self._parse_optional_port(msg, 'discovery_port')
+        spectrum_client_port = self._parse_optional_port(msg, 'spectrum_listen_port')
+
+        is_new = key not in self._clients
+        if is_new:
+            pending_register_only = is_heartbeat
+        elif msg.get('type') == 'register':
+            pending_register_only = False
+        else:
+            pending_register_only = prev_info.get('pending_register_only', False)
+
+        self._clients[key] = {
             'client_id': client_id,
             'subscriptions': subscriptions,
             'last_seen': time.time(),
-            'version': version
+            'version': version,
+            'discovery_client_port': discovery_client_port,
+            'spectrum_client_port': spectrum_client_port,
+            'pending_register_only': pending_register_only,
         }
-        
+
         # Remove from unknown traffic if previously seen
         if ip in self._unknown_traffic:
             del self._unknown_traffic[ip]
-        
+
         subs_str = '+'.join(subscriptions)
         if is_new:
-            log_debug(f"[REMOTE:METERS] Client registered: {ip} \"{client_id}\" ({subs_str}) v{version}", "basic")
+            if is_heartbeat:
+                log_debug(
+                    f"[REMOTE:METERS] Heartbeat before register (UDP register may be lost): {ip}:{src_port} "
+                    f"\"{client_id}\" — provisional until full register",
+                    "basic",
+                )
+            else:
+                log_debug(
+                    f"[REMOTE:METERS] Client registered: {ip}:{src_port} \"{client_id}\" ({subs_str}) v{version}",
+                    "basic",
+                )
         else:
-            log_debug(f"[REMOTE:METERS] Client re-registered: {ip} \"{client_id}\" ({subs_str})", "trace", "remote")
-    
-    def _handle_heartbeat(self, ip, msg):
+            if msg.get('type') == 'register' and was_pending:
+                log_debug(
+                    f"[REMOTE:METERS] Full register received (was provisional): {ip}:{src_port} "
+                    f"\"{client_id}\" ({subs_str}) v{version}",
+                    "basic",
+                )
+            else:
+                log_debug(
+                    f"[REMOTE:METERS] Client re-registered: {ip}:{src_port} \"{client_id}\" ({subs_str})",
+                    "trace",
+                    "remote",
+                )
+
+        client_pv = msg.get('client_version')
+        if isinstance(client_pv, str):
+            client_pv = client_pv.strip()
+        else:
+            client_pv = None
+        if self._plugin_version and client_pv and not is_heartbeat:
+            cmp = _compare_remote_release_versions(client_pv, self._plugin_version)
+            if cmp is not None and cmp != 0:
+                reason = 'client_too_old' if cmp < 0 else 'server_too_old'
+                log_debug(
+                    f"[REMOTE:METERS] Version mismatch ({reason}): client_release={client_pv} "
+                    f"server_release={self._plugin_version} udp_protocol={version} id={client_id}",
+                    "verbose",
+                )
+        elif self._plugin_version and not client_pv and is_new and not is_heartbeat:
+            log_debug(
+                f"[REMOTE:METERS] Client registered without client_version (legacy remote): "
+                f"{ip}:{src_port} id={client_id}",
+                "verbose",
+            )
+
+    def _handle_heartbeat(self, addr, msg):
         """Update client last-seen timestamp."""
-        if ip in self._clients:
-            self._clients[ip]['last_seen'] = time.time()
-            client_id = self._clients[ip]['client_id']
-            log_debug(f"[REMOTE:METERS] Heartbeat from {ip} \"{client_id}\"", "trace", "remote")
+        key = (addr[0], addr[1])
+        if key in self._clients:
+            self._clients[key]['last_seen'] = time.time()
+            client_id = self._clients[key]['client_id']
+            log_debug(f"[REMOTE:METERS] Heartbeat from {addr[0]}:{addr[1]} \"{client_id}\"", "trace", "remote")
         else:
             # Heartbeat from unregistered client - treat as registration
-            self._handle_registration(ip, msg)
-    
-    def _handle_unregister(self, ip, msg):
+            self._handle_registration(addr, msg)
+
+    def _handle_unregister(self, addr, msg):
         """Remove a client cleanly."""
-        if ip in self._clients:
-            client_id = self._clients[ip]['client_id']
-            del self._clients[ip]
-            log_debug(f"[REMOTE:METERS] Client unregistered: {ip} \"{client_id}\"", "basic")
+        key = (addr[0], addr[1])
+        if key in self._clients:
+            client_id = self._clients[key]['client_id']
+            del self._clients[key]
+            log_debug(f"[REMOTE:METERS] Client unregistered: {addr[0]}:{addr[1]} \"{client_id}\"", "basic")
     
     def _log_unknown(self, ip, port, data, reason):
         """Log unknown traffic for debugging."""
@@ -1136,14 +1251,44 @@ class NetworkLevelServer:
         """Remove clients that haven't sent heartbeat within timeout."""
         now = time.time()
         stale = []
-        for ip, info in self._clients.items():
+        for key, info in self._clients.items():
             if now - info['last_seen'] > self.HEARTBEAT_TIMEOUT:
-                stale.append(ip)
-        
-        for ip in stale:
-            client_id = self._clients[ip]['client_id']
-            del self._clients[ip]
-            log_debug(f"[REMOTE:METERS] Client timeout: {ip} \"{client_id}\" (no heartbeat for {self.HEARTBEAT_TIMEOUT}s)", "basic")
+                stale.append(key)
+
+        for key in stale:
+            client_id = self._clients[key]['client_id']
+            ip, sport = key[0], key[1]
+            del self._clients[key]
+            log_debug(f"[REMOTE:METERS] Client timeout: {ip}:{sport} \"{client_id}\" (no heartbeat for {self.HEARTBEAT_TIMEOUT}s)", "basic")
+
+    def iter_discovery_unicast_addrs(self, default_discovery_port):
+        """Clients that listen for discovery on a port other than the default (ephemeral bind)."""
+        try:
+            dp = int(default_discovery_port)
+        except (TypeError, ValueError):
+            dp = 5579
+        for key, info in self._clients.items():
+            dcp = info.get('discovery_client_port')
+            if dcp is not None and int(dcp) != dp:
+                yield (key[0], int(dcp))
+
+    def iter_level_unicast_addrs(self):
+        """Clients that bound a non-default local port for level packets (multiple clients on one host)."""
+        for key in self._clients:
+            ip, src_port = key[0], key[1]
+            if src_port != self.port:
+                yield (ip, src_port)
+
+    def iter_spectrum_unicast_addrs(self, default_spectrum_port):
+        """Clients that listen for spectrum on a port other than the default."""
+        try:
+            sp = int(default_spectrum_port)
+        except (TypeError, ValueError):
+            sp = 5581
+        for key, info in self._clients.items():
+            scp = info.get('spectrum_client_port')
+            if scp is not None and int(scp) != sp:
+                yield (key[0], int(scp))
     
     def _log_stats(self):
         """Log periodic statistics at verbose level."""
@@ -1198,7 +1343,13 @@ class NetworkLevelServer:
             # Pack as: sequence (uint32) + 3 floats (left, right, mono)
             data = struct.pack('<Ifff', self.seq, float(left), float(right), float(mono))
             self.sock.sendto(data, ('<broadcast>', self.port))
-            
+            # Unicast to clients that could not bind the default port (multiple remotes on one host)
+            for uip, uport in self.iter_level_unicast_addrs():
+                try:
+                    self.sock.sendto(data, (uip, uport))
+                except OSError:
+                    pass
+
             # Update stats
             self._packets_sent += 1
             self._bytes_sent += len(data)
@@ -1262,16 +1413,18 @@ class NetworkSpectrumServer:
     SPECTRUM_PIPE_PATH = '/tmp/myfifosa'
     STATS_INTERVAL = 10  # Seconds between verbose stats logging
     
-    def __init__(self, port=5581, enabled=True, spectrum_size=20, read_pipe=True):
+    def __init__(self, port=5581, enabled=True, spectrum_size=20, read_pipe=True, level_server=None):
         """Initialize the spectrum server.
         
         :param port: UDP port to broadcast on (default 5581)
         :param enabled: Whether broadcasting is enabled
         :param spectrum_size: Number of frequency bins (default 20)
         :param read_pipe: If True, read from pipe directly; if False, use set_bins()
+        :param level_server: Optional NetworkLevelServer — used to unicast to clients on ephemeral spectrum ports
         """
         self.port = port
         self.enabled = enabled
+        self.level_server = level_server
         self.spectrum_size = spectrum_size
         self.read_pipe = read_pipe
         self.seq = 0
@@ -1489,7 +1642,13 @@ class NetworkSpectrumServer:
             fmt = '<IH' + str(num_bins) + 'f'
             data = struct.pack(fmt, self.seq, num_bins, *bins)
             self.sock.sendto(data, ('<broadcast>', self.port))
-            
+            if self.level_server:
+                for uip, uport in self.level_server.iter_spectrum_unicast_addrs(self.port):
+                    try:
+                        self.sock.sendto(data, (uip, uport))
+                    except OSError:
+                        pass
+
             # Update stats
             self._packets_sent += 1
             self._bytes_sent += len(data)
@@ -1543,14 +1702,16 @@ class DiscoveryAnnouncer:
     Announcement format (JSON):
         {
             "service": "peppy_level_server",
-            "version": 2,
+            "version": 3,
             "level_port": 5580,
             "spectrum_port": 5581,
             "volumio_port": 3000,
             "hostname": "volumio",
-            "config_version": "a1b2c3d4"
+            "config_version": "a1b2c3d4",
+            "plugin_version": "3.3.2"
         }
     
+    plugin_version is the PeppyMeter Screensaver release (package.json); omitted if unset.
     Clients can listen on the discovery port to find available servers
     without needing to know the IP address in advance. The config_version
     field changes when server configuration changes, allowing clients to
@@ -1559,7 +1720,7 @@ class DiscoveryAnnouncer:
     
     def __init__(self, discovery_port=5579, level_port=5580, spectrum_port=5581,
                  volumio_port=3000, interval=5.0, enabled=True, config_path=None,
-                 config_check_interval=1.0):
+                 config_check_interval=1.0, level_server=None):
         """Initialize the discovery announcer.
         
         :param discovery_port: UDP port for discovery broadcasts (default 5579)
@@ -1570,8 +1731,10 @@ class DiscoveryAnnouncer:
         :param enabled: Whether announcements are enabled
         :param config_path: Path to config.txt for version hashing
         :param config_check_interval: Seconds between config file checks (default 1.0)
+        :param level_server: Optional NetworkLevelServer — unicast discovery to clients on ephemeral ports
         """
         self.discovery_port = discovery_port
+        self.level_server = level_server
         self.level_port = level_port
         self.spectrum_port = spectrum_port
         self.volumio_port = volumio_port
@@ -1589,6 +1752,7 @@ class DiscoveryAnnouncer:
         self._local_ips = set()
         self._last_stats_time = 0
         self._active_meter = ""  # Currently active meter name for remote sync
+        self._plugin_version = os.environ.get('PEPPY_PLUGIN_VERSION', '').strip()
         
         # Get hostname
         try:
@@ -1648,7 +1812,7 @@ class DiscoveryAnnouncer:
     
     def _build_announcement(self):
         """Build the announcement payload with current config version and active meter."""
-        return json.dumps({
+        payload = {
             "service": "peppy_level_server",
             "version": 3,  # Protocol version 3 with active_meter for remote sync
             "level_port": self.level_port,
@@ -1656,8 +1820,11 @@ class DiscoveryAnnouncer:
             "volumio_port": self.volumio_port,
             "hostname": self.hostname,
             "config_version": self._config_version,
-            "active_meter": self._active_meter
-        }).encode('utf-8')
+            "active_meter": self._active_meter,
+        }
+        if self._plugin_version:
+            payload["plugin_version"] = self._plugin_version
+        return json.dumps(payload).encode('utf-8')
     
     def set_active_meter(self, meter_name):
         """Update the currently active meter name for remote client sync.
@@ -1674,6 +1841,16 @@ class DiscoveryAnnouncer:
             # Always notify immediately on a real meter change, including first meter after restart.
             self._send_immediate_broadcast()
     
+    def _send_discovery_datagram(self, announcement):
+        """Broadcast and optionally unicast to remotes that bound a non-default discovery port."""
+        self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
+        if self.level_server:
+            for addr in self.level_server.iter_discovery_unicast_addrs(self.discovery_port):
+                try:
+                    self.sock.sendto(announcement, addr)
+                except OSError:
+                    pass
+
     def _send_immediate_broadcast(self):
         """Send an immediate broadcast outside the normal interval.
         
@@ -1685,7 +1862,7 @@ class DiscoveryAnnouncer:
         
         try:
             announcement = self._build_announcement()
-            self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
+            self._send_discovery_datagram(announcement)
             self._broadcast_count += 1
             log_debug(f"[REMOTE:DISCOVERY] Immediate broadcast for meter change", "verbose")
             log_debug(f"[REMOTE:DISCOVERY] Payload: {announcement.decode()}", "trace", "remote.packets")
@@ -1774,7 +1951,7 @@ class DiscoveryAnnouncer:
             
             try:
                 announcement = self._build_announcement()
-                self.sock.sendto(announcement, ('<broadcast>', self.discovery_port))
+                self._send_discovery_datagram(announcement)
                 self._broadcast_count += 1
                 
                 # Log at trace level (but not every packet unless remote.packets enabled)
@@ -3897,7 +4074,7 @@ def start_headless_output(pm, callback, meter_config_volumio, volumio_host='loca
     config_sync_interval = meter_config_volumio.get("remote.config.sync.interval", 1)
 
     level_server = NetworkLevelServer(port=level_port, enabled=True)
-    spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=True)
+    spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=True, level_server=level_server)
 
     config_path = os.path.join(PeppyPath, 'config.txt')
     discovery_announcer = DiscoveryAnnouncer(
@@ -3908,7 +4085,8 @@ def start_headless_output(pm, callback, meter_config_volumio, volumio_host='loca
         interval=5.0,
         enabled=True,
         config_path=config_path,
-        config_check_interval=float(config_sync_interval)
+        config_check_interval=float(config_sync_interval),
+        level_server=level_server,
     )
     discovery_announcer.start()
     callback.discovery_announcer = discovery_announcer
@@ -4096,7 +4274,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
         #                       because that causes pipe contention and display flickering.
         #                       During meter transitions, we simply skip spectrum broadcast.
         read_pipe_mode = (remote_mode == "server")
-        spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=read_pipe_mode)
+        spectrum_server = NetworkSpectrumServer(port=spectrum_port, enabled=True, read_pipe=read_pipe_mode, level_server=level_server)
         
         # Start discovery announcer (includes config version for change detection)
         config_path = os.path.join(PeppyPath, 'config.txt')
@@ -4108,7 +4286,8 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             interval=5.0,
             enabled=True,
             config_path=config_path,
-            config_check_interval=float(config_sync_interval)
+            config_check_interval=float(config_sync_interval),
+            level_server=level_server,
         )
         discovery_announcer.start()
         
@@ -4365,8 +4544,20 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             return type_rect.copy()
         
         try:
-            if pg.version.ver.startswith("2"):
-                # Pygame 2 native SVG
+            img = None
+            # Prefer cairosvg: rasterizes at exact target dimensions,
+            # consistent across platforms (Linux/Windows/Mac).
+            # pg.image.load() uses SDL_image nanosvg which produces
+            # platform-dependent default raster sizes for the same SVG.
+            if CAIROSVG_AVAILABLE and PIL_AVAILABLE:
+                png_bytes = cairosvg.svg2png(url=icon_path, 
+                                              output_width=type_rect.width,
+                                              output_height=type_rect.height)
+                pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
+                img = img.convert_alpha()
+            elif pg.version.ver.startswith("2"):
+                # Fallback: Pygame 2 native SVG (platform-dependent size)
                 img = pg.image.load(icon_path)
                 w, h = img.get_width(), img.get_height()
                 sc = min(type_rect.width / float(w), type_rect.height / float(h))
@@ -4375,21 +4566,8 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                     img = pg.transform.smoothscale(img, new_size)
                 except Exception:
                     img = pg.transform.scale(img, new_size)
-                # Convert to format suitable for pixel manipulation
                 img = img.convert_alpha()
-                set_color(img, pg.Color(type_color[0], type_color[1], type_color[2]))
-                dx = type_rect.x + (type_rect.width - img.get_width()) // 2
-                dy = type_rect.y + (type_rect.height - img.get_height()) // 2
-                screen.blit(img, (dx, dy))
-                last_format_icon_surf = img
-            elif CAIROSVG_AVAILABLE and PIL_AVAILABLE:
-                # Pygame 1.x with cairosvg
-                png_bytes = cairosvg.svg2png(url=icon_path, 
-                                              output_width=type_rect.width,
-                                              output_height=type_rect.height)
-                pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-                img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
-                img = img.convert_alpha()
+            if img:
                 set_color(img, pg.Color(type_color[0], type_color[1], type_color[2]))
                 dx = type_rect.x + (type_rect.width - img.get_width()) // 2
                 dy = type_rect.y + (type_rect.height - img.get_height()) // 2
