@@ -31,7 +31,8 @@
                                       "mouseEnabled",
                                       "displayOutput",
                                       "doNotDeleteThemes",
-                                      "useSystemFonts"
+                                      "useSystemFonts",
+                                      "smbShareAccess"
                                       ]
                               },
                 "content": [
@@ -249,6 +250,13 @@
                              "element": "switch",
                              "doc": "TRANSLATE.PEPPY_SCREENSAVER.USE_SYSTEM_FONTS_DOC",
                              "label": "TRANSLATE.PEPPY_SCREENSAVER.USE_SYSTEM_FONTS",
+                             "value": false
+                            },
+                            {
+                             "id": "smbShareAccess",
+                             "element": "switch",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.SMB_SHARE_ACCESS_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.SMB_SHARE_ACCESS",
                              "value": false
                             }
                 ]

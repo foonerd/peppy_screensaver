@@ -72,6 +72,8 @@
     "DO_NOT_DELETE_THEMES_DOC":"Si activé : lors de la désinstallation, le dossier des thèmes n'est pas supprimé ; lors de l'installation ou de la mise à jour, les thèmes existants ne sont pas écrasés. S'applique à tous vos thèmes personnalisés (meters, spectre, cassette, tourne-disque, etc.).",
     "USE_SYSTEM_FONTS":"Utiliser les polices systeme",
     "USE_SYSTEM_FONTS_DOC":"Utiliser les polices systeme Volumio (Lato) au lieu de PeppyFont integree. PeppyFont offre une prise en charge linguistique universelle (CJK, arabe, cyrillique, hebreu, thai, etc.). Activez uniquement si vous preferez les polices originales ou avez configure des polices personnalisees dans config.txt.",
+    "SMB_SHARE_ACCESS":"Autoriser les mises à jour de templates via le partage réseau",
+    "SMB_SHARE_ACCESS_DOC":"Ouvrir les permissions des dossiers de templates pour permettre les mises à jour via le partage réseau Volumio (SMB/CIFS).<br /><br />Lorsqu'activé, les templates et les templates de spectre dans le stockage interne peuvent être synchronisés depuis d'autres appareils à l'aide de gestionnaires de fichiers comme Beyond Compare, WinSCP ou tout client SMB.<br /><br />Les permissions sont normalisées à chaque démarrage du plugin et à chaque sauvegarde des paramètres pour prendre en compte les fichiers nouvellement téléchargés.",
     "APPLY":"Appliquer",
     "INFO_MIN":"La valeur a été ajustée au minimum possible.",
     "INFO_MAX":"La valeur a été ajustée au maximum possible.",

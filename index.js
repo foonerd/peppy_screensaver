@@ -462,6 +462,11 @@ peppyScreensaver.prototype.onStart = function() {
     // Initialize config version on startup
     self.updateConfigVersion();
     
+    // Normalize template folder permissions for SMB share access on startup
+    if (self.config.get('smbShareAccess') === true) {
+        self.normalizeTemplatePermissions(true);
+    }
+    
     // Once the Plugin has successfull started resolve the promise
 	defer.resolve();       
  
@@ -727,6 +732,16 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 useSystemFonts = (peppy_config.current['use.system.fonts'] || '').toLowerCase() === 'true';
             } catch (e) {}
             uiconf.sections[0].content[17].value = useSystemFonts;
+
+            // SMB share access (from config.json, default false)
+            var smbEnabled = self.config.get('smbShareAccess') === true;
+            uiconf.sections[0].content[18].value = smbEnabled;
+            
+            // Normalize template permissions on settings page access
+            // Reclaims ownership from SMB-created files (nobody:nogroup -> volumio:volumio)
+            if (smbEnabled) {
+                self.normalizeTemplatePermissions(true);
+            }
              
             // section 6 - Playback Behavior -----------------------------
             var persistVal = self.config.get('persist_duration');
@@ -1224,6 +1239,14 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
             peppy_config.current['use.system.fonts'] = useSystemFonts;
             noChanges = false;
         }
+    }
+    
+    // SMB share access (stored in config.json only, not config.txt)
+    var smbShareAccess = confData.smbShareAccess === true;
+    if (self.config.get('smbShareAccess') !== smbShareAccess) {
+        self.config.set('smbShareAccess', smbShareAccess);
+        self.normalizeTemplatePermissions(smbShareAccess);
+        noChanges = false;
     }
     
     // write screen width/height
@@ -2139,6 +2162,47 @@ peppyScreensaver.prototype.updateUIConfig = function () {
     });
   self.commandRouter.broadcastMessage('pushUiConfig');
   uiNeedsUpdate = false;
+  return defer.promise;
+};
+
+// Normalize template folder permissions for SMB share access
+// When enabled: dirs 777, files 666 (writable by SMB nobody:nogroup)
+// When disabled: dirs 755, files 644 (standard permissions)
+peppyScreensaver.prototype.normalizeTemplatePermissions = function (enable) {
+  var self = this;
+  var defer = libQ.defer();
+  var templateDirs = [
+      DATA_DIR + '/templates',
+      DATA_DIR + '/templates_spectrum'
+  ];
+  
+  var dirMode = enable ? '777' : '755';
+  var fileMode = enable ? '666' : '644';
+  var processed = 0;
+  var total = templateDirs.length;
+  
+  templateDirs.forEach(function(dir) {
+      if (fs.existsSync(dir)) {
+          // chmod directories first, then files
+          // chown to volumio:volumio first (reclaims SMB nobody:nogroup files),
+          // then chmod dirs, then fix file permissions
+          var cmd = '/usr/bin/sudo /bin/chown -R volumio:volumio ' + dir + ' && /usr/bin/sudo /bin/chmod -R ' + dirMode + ' ' + dir + ' && /usr/bin/sudo /usr/bin/find ' + dir + ' -type f -exec /bin/chmod ' + fileMode + ' {} +';
+          exec(cmd, function(error, stdout, stderr) {
+              if (error) {
+                  self.logger.error(id + 'normalizeTemplatePermissions: error on ' + dir + ': ' + error);
+              } else {
+                  self.logger.info(id + 'normalizeTemplatePermissions: ' + dir + ' set to dirs=' + dirMode + ' files=' + fileMode);
+              }
+              processed++;
+              if (processed >= total) { defer.resolve(); }
+          });
+      } else {
+          processed++;
+          if (processed >= total) { defer.resolve(); }
+      }
+  });
+  
+  if (total === 0) { defer.resolve(); }
   return defer.promise;
 };
 

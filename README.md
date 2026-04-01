@@ -84,6 +84,36 @@ The plugin settings are organized into sections:
 | Start/Stop Animation | Enable fade animation on start/stop |
 | Smooth Buffer | Audio smoothing buffer size |
 | Needle Cache | Cache rotated needle images (reduces CPU, uses more RAM) |
+| Do Not Delete Themes | Preserve custom themes during install/uninstall |
+| Use System Fonts | Use Volumio system fonts (Lato) instead of PeppyFont |
+| Allow Template Updates via Network Share | Open template folder permissions for SMB access |
+
+#### Network Share Access for Templates
+
+When enabled, template folders in Internal Storage (`/data/INTERNAL/peppy_screensaver/templates` and `templates_spectrum`) are opened for write access via the Volumio network share (SMB/CIFS). This allows syncing templates from other devices using tools like Beyond Compare, WinSCP, or any SMB client.
+
+**How it works:**
+
+The plugin normalizes file ownership and permissions at three points:
+
+1. On plugin start (if enabled)
+2. On settings save (if the toggle changes)
+3. Every time the plugin settings page is opened (if enabled)
+
+Normalization reclaims file ownership from SMB-created files (`nobody:nogroup` → `volumio:volumio`) and sets permissions to allow both SMB and SSH/SFTP access.
+
+**Important restriction:**
+
+After editing a file via SMB, that file becomes owned by `nobody:nogroup`. Until the next normalization runs, SSH/SFTP access to that specific file will be read-only. To restore full SSH/SFTP write access after an SMB sync, simply open the PeppyMeter plugin settings page — the normalization runs automatically on page load.
+
+**Workflow:**
+
+1. Enable "Allow template updates via network share" in Global Settings
+2. Sync templates via SMB from your file manager
+3. Open PeppyMeter settings in Volumio (triggers permission normalization)
+4. SSH/SFTP access is now fully restored for all template files
+
+When disabled, template folders revert to standard permissions (`755` directories, `644` files) — writable only by the `volumio` user via SSH/SFTP.
 
 ### VU-Meter Settings
 
