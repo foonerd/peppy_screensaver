@@ -583,7 +583,7 @@ class SliderIndicator:
                  arc_width=6, arc_angle_start=225.0, arc_angle_end=-45.0,
                  slider_track=None, slider_tip=None, slider_orientation="vertical",
                  slider_travel=None, slider_tip_offset=None, name="Slider", markers=None,
-                 head_image=None, head_offset=(0, 0)):
+                 head_image=None, head_offset=(0, 0), font_path=None):
         """Initialize slider indicator.
         
         :param pos: (x, y) screen position
@@ -672,19 +672,29 @@ class SliderIndicator:
         self._backing = None
         self._backing_rect = None
 
-        # Progress bar markers (visual only): list of {"pos": 0-100, "image": filename, "label": str, "_surface": pg.Surface or None}
+        # Progress bar markers (visual only): list of {"pos": 0-100, "image": filename, "label": str, "_surface": pg.Surface or None, "_font": pg.font.Font or None}
         self._markers = []
         if markers and base_path and meter_folder:
             for m in markers:
                 pos_pct = max(0.0, min(100.0, float(m.get("pos", 0))))
                 img_fn = m.get("image")
                 lbl = m.get("label")
-                entry = {"pos": pos_pct, "image": img_fn, "label": lbl, "_surface": None}
+                entry = {"pos": pos_pct, "image": img_fn, "label": lbl, "_surface": None, "_font": None}
                 if img_fn:
                     path = os.path.join(base_path, meter_folder, img_fn)
                     try:
                         if os.path.exists(path):
                             entry["_surface"] = pg.image.load(path).convert_alpha()
+                    except Exception:
+                        pass
+                # Per-marker font size: create a dedicated font object if fontsize is set
+                fs = m.get("fontsize")
+                if fs and int(fs) > 0:
+                    try:
+                        if font_path and os.path.exists(font_path):
+                            entry["_font"] = pg.font.Font(font_path, int(fs))
+                        else:
+                            entry["_font"] = pg.font.Font(None, int(fs))
                     except Exception:
                         pass
                 self._markers.append(entry)
@@ -1063,7 +1073,8 @@ class SliderIndicator:
                 sw, sh = surf.get_size()
                 screen.blit(surf, (px - sw // 2, py - sh // 2))
             elif m.get("label"):
-                text_surf = self.font.render(m["label"], True, self.color)
+                marker_font = m.get("_font") or self.font
+                text_surf = marker_font.render(m["label"], True, self.color)
                 tw, th = text_surf.get_size()
                 screen.blit(text_surf, (px - tw // 2, py - th // 2))
 
@@ -1474,6 +1485,12 @@ class IndicatorRenderer:
         markers = self.config.get("progress.markers") or []
         head_image = self.config.get("progress.head.image")
         head_offset = self.config.get("progress.head.offset", (0, 0))
+
+        # Resolve font file path for per-marker font sizing
+        _font_path = None
+        if self.meter_config:
+            _font_path = self.meter_config.get("font.regular")
+
         self._progress = SliderIndicator(
             pos=pos,
             dim=dim,
@@ -1498,7 +1515,8 @@ class IndicatorRenderer:
             name="Progress",
             markers=markers,
             head_image=head_image,
-            head_offset=head_offset
+            head_offset=head_offset,
+            font_path=_font_path
         )
     
     def has_indicators(self):

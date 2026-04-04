@@ -231,6 +231,7 @@ PROGRESS_FONT_SIZE = "progress.font.size"
 PROGRESS_MARKER_POS = "progress.marker.%s.pos"
 PROGRESS_MARKER_IMAGE = "progress.marker.%s.image"
 PROGRESS_MARKER_LABEL = "progress.marker.%s.label"
+PROGRESS_MARKER_FONTSIZE = "progress.marker.%s.fontsize"
 # Progress bar head icon (moves with current progress; respects horizontal/vertical orientation)
 PROGRESS_HEAD_IMAGE = "progress.head.image"
 PROGRESS_HEAD_OFFSET = "progress.head.offset"
@@ -1139,8 +1140,13 @@ class Volumio_ConfigFileParser(object):
                 lbl_val = config_file.get(section, lbl_key).strip() or None
             except Exception:
                 lbl_val = None
+            fs_key = PROGRESS_MARKER_FONTSIZE % n
+            try:
+                fs_val = config_file.getint(section, fs_key)
+            except Exception:
+                fs_val = None
             if img_val is not None or lbl_val is not None:
-                d["progress.markers"].append({"pos": pos_val, "image": img_val, "label": lbl_val})
+                d["progress.markers"].append({"pos": pos_val, "image": img_val, "label": lbl_val, "fontsize": fs_val})
 
         # Optional progress bar head icon (moves with current progress; matches bar orientation)
         try:
