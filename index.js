@@ -1035,32 +1035,43 @@ peppyScreensaver.prototype.getUIConfig = function() {
             }
             uiconf.sections[7].content[5].value = configSyncInterval;
             
-            // section 8 - Backup and Restore (Continuity Engine) -------
-            // Populate the backup list dropdown from disk. If no backups
-            // exist the UIConfig.json placeholder option remains in place.
+            // sections 8-10 - Backup and Restore (Continuity Engine) -------
+            // Section 8 (Create Backup) has nothing to populate - only the
+            // input field and its saveButton. Sections 9 (Restore) and 10
+            // (Delete) share the same backup list dropdown.
             var backupList = self.listSettingsBackups();
             if (backupList.length > 0) {
-                uiconf.sections[8].content[3].options = [];
+                var firstLabel = backupList[0].name + ' (' + backupList[0].createdLabel + ', v' + backupList[0].pluginVersion + ')';
+                var firstValue = { value: backupList[0].name, label: firstLabel };
+                
+                // Section 9 - Restore Backup dropdown
+                uiconf.sections[9].content[0].options = [];
                 backupList.forEach(function (b) {
-                    var label = b.name + ' (' + b.createdLabel + ', v' + b.pluginVersion + ')';
-                    self.configManager.pushUIConfigParam(uiconf, 'sections[8].content[3].options', {
+                    self.configManager.pushUIConfigParam(uiconf, 'sections[9].content[0].options', {
                         value: b.name,
-                        label: label
+                        label: b.name + ' (' + b.createdLabel + ', v' + b.pluginVersion + ')'
                     });
                 });
-                uiconf.sections[8].content[3].value = {
-                    value: backupList[0].name,
-                    label: backupList[0].name + ' (' + backupList[0].createdLabel + ', v' + backupList[0].pluginVersion + ')'
-                };
+                uiconf.sections[9].content[0].value = firstValue;
+                
+                // Section 10 - Delete Backup dropdown (same list)
+                uiconf.sections[10].content[0].options = [];
+                backupList.forEach(function (b) {
+                    self.configManager.pushUIConfigParam(uiconf, 'sections[10].content[0].options', {
+                        value: b.name,
+                        label: b.name + ' (' + b.createdLabel + ', v' + b.pluginVersion + ')'
+                    });
+                });
+                uiconf.sections[10].content[0].value = firstValue;
             }
             
-            // section 9 - Debug settings -----------------------------
+            // section 11 - Debug settings -----------------------------
             // debug level
             var debugLevel = peppy_config.current['debug.level'] || 'off';
-            var debugLevelOptions = uiconf.sections[9].content[0].options;
+            var debugLevelOptions = uiconf.sections[11].content[0].options;
             for (var i = 0; i < debugLevelOptions.length; i++) {
                 if (debugLevelOptions[i].value === debugLevel) {
-                    uiconf.sections[9].content[0].value = debugLevelOptions[i];
+                    uiconf.sections[11].content[0].value = debugLevelOptions[i];
                     break;
                 }
             }
@@ -1077,25 +1088,25 @@ peppyScreensaver.prototype.getUIConfig = function() {
             ];
             for (var i = 0; i < traceKeys.length; i++) {
                 var traceValue = peppy_config.current[traceKeys[i]] === 'true' || peppy_config.current[traceKeys[i]] === true;
-                uiconf.sections[9].content[i + 1].value = traceValue;
+                uiconf.sections[11].content[i + 1].value = traceValue;
             }
             
-            // section 10 - Profiling settings -----------------------------
+            // section 12 - Profiling settings -----------------------------
             // per-frame timing
             var profilingTiming = peppy_config.current['profiling.timing'] === 'true' || peppy_config.current['profiling.timing'] === true;
-            uiconf.sections[10].content[0].value = profilingTiming;
+            uiconf.sections[12].content[0].value = profilingTiming;
             
             // timing interval
             var profilingInterval = parseInt(peppy_config.current['profiling.interval'], 10) || 30;
-            uiconf.sections[10].content[1].value = profilingInterval;
+            uiconf.sections[12].content[1].value = profilingInterval;
             
             // cProfile enabled
             var profilingCprofile = peppy_config.current['profiling.cprofile'] === 'true' || peppy_config.current['profiling.cprofile'] === true;
-            uiconf.sections[10].content[2].value = profilingCprofile;
+            uiconf.sections[12].content[2].value = profilingCprofile;
             
             // profile duration
             var profilingDuration = parseInt(peppy_config.current['profiling.duration'], 10) || 60;
-            uiconf.sections[10].content[3].value = profilingDuration;
+            uiconf.sections[12].content[3].value = profilingDuration;
             
         } else {
             self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));            
