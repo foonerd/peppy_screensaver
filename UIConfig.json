@@ -850,6 +850,82 @@
                             ]
                 },
                 {
+                "id": "backup_conf",
+                "element": "section",
+                "label": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_CONF",
+                "description": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_DESC",
+                "icon": "fa-archive",
+                "hidden": false,
+                "content": [
+                            {
+                             "id": "backupInfo",
+                             "element": "section",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_DESC",
+                             "description": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_INFO"
+                            },
+                            {
+                             "id": "backupName",
+                             "element": "input",
+                             "type": "string",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_NAME_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_NAME",
+                             "value": ""
+                            },
+                            {
+                             "id": "createBackup",
+                             "element": "button",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_CREATE",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_CREATE_DOC",
+                             "onClick": {
+                                 "type": "emit",
+                                 "message": "callMethod",
+                                 "data": {
+                                     "endpoint": "user_interface/peppy_screensaver",
+                                     "method": "createSettingsBackup"
+                                 }
+                             }
+                            },
+                            {
+                             "id": "selectedBackup",
+                             "element": "select",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_SELECTED_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_SELECTED",
+                             "value": {"value": "", "label": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_NONE_YET"},
+                             "options": [
+                                 {"value": "", "label": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_NONE_YET"}
+                             ]
+                            },
+                            {
+                             "id": "restoreBackup",
+                             "element": "button",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_RESTORE",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_RESTORE_DOC",
+                             "onClick": {
+                                 "type": "emit",
+                                 "message": "callMethod",
+                                 "data": {
+                                     "endpoint": "user_interface/peppy_screensaver",
+                                     "method": "restoreSettingsBackup"
+                                 }
+                             }
+                            },
+                            {
+                             "id": "deleteBackup",
+                             "element": "button",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_DELETE",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.BACKUP_DELETE_DOC",
+                             "onClick": {
+                                 "type": "emit",
+                                 "message": "callMethod",
+                                 "data": {
+                                     "endpoint": "user_interface/peppy_screensaver",
+                                     "method": "deleteSettingsBackup"
+                                 }
+                             }
+                            }
+                           ]
+                },
+                {
                 "id": "debug_conf",
                 "element": "section",
                 "label": "TRANSLATE.PEPPY_SCREENSAVER.DEBUG_CONF",

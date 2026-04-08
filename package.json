@@ -1,6 +1,6 @@
 {
   "name": "peppy_screensaver",
-  "version": "3.3.3",
+  "version": "3.4.0",
   "description": "PeppyMeter screensaver for Volumio",
   "main": "index.js",
   "scripts": {
@@ -26,7 +26,7 @@
       "amd64"
     ],
     "details": "VU meter screensaver using PeppyMeter",
-    "changelog": "3.3.2 - Multi-client remote (unicast discovery/level/spectrum); theme-follow reload fix; 3.3.1 peppy_fonts defaults and config toggle."
+    "changelog": "3.4.0 Continuity Engine - backup and restore plugin settings across reinstalls; 3.3.2 - Multi-client remote (unicast discovery/level/spectrum); theme-follow reload fix; 3.3.1 peppy_fonts defaults and config toggle."
   },
   "engines": {
     "node": ">=20",
