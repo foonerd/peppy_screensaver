@@ -1778,7 +1778,7 @@ class IndicatorRenderer:
                 # Always restore progress backing before draw so previous head position is cleared.
                 # Required when skip_restore=True (e.g. BasicHandler 1920x550) where we don't
                 # restore other indicators; progress head would otherwise leave a ghost.
-                self._progress.restore_backing(screen)
+                self._progress.capture_backing(screen)
                 # SliderIndicator expects 0-100 integer
                 rect = self._progress.render(screen, int(progress_pct))
                 if rect:
