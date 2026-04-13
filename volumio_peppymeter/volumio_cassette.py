@@ -1992,8 +1992,19 @@ class CassetteHandler:
         # NOTE: skip_restore=False to properly clear transparent icons
         # - bgr_surface provides clean background for transparent icon restore
         # - Without this, transparent areas show previous icon state (ghosting)
+        indicator_dirty_rects = []
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
+            indicator_dirty_start = len(dirty_rects)
             self.indicator_renderer.render(self.screen, meta, dirty_rects, force=force_flag, skip_restore=False)
+            indicator_dirty_rects = dirty_rects[indicator_dirty_start:]
+
+        def overlaps_indicator_dirty(rect):
+            if not rect or not indicator_dirty_rects:
+                return False
+            for dirty in indicator_dirty_rects:
+                if dirty and rect.colliderect(dirty):
+                    return True
+            return False
         
         # LAYER 7: Time remaining (FORCE when reels animate)
         if self.time_pos:
@@ -2047,7 +2058,7 @@ class CassetteHandler:
                 secs = display_sec % 60
                 time_str = f"{mins:02d}:{secs:02d}"
                 
-                needs_redraw = time_str != self.last_time_str or force_flag
+                needs_redraw = time_str != self.last_time_str or force_flag or overlaps_indicator_dirty(self.time_rect)
                 
                 if needs_redraw:
                     self.last_time_str = time_str
@@ -2078,7 +2089,8 @@ class CassetteHandler:
             elapsed_str = f"{elapsed_sec // 60:02d}:{elapsed_sec % 60:02d}"
             needs_redraw = (
                 elapsed_str != self.last_elapsed_str or force_flag or
-                (self.time_elapsed_rect and overlaps_cleared(self.time_elapsed_rect))
+                (self.time_elapsed_rect and overlaps_cleared(self.time_elapsed_rect)) or
+                overlaps_indicator_dirty(self.time_elapsed_rect)
             )
             if needs_redraw:
                 self.last_elapsed_str = elapsed_str
@@ -2094,7 +2106,8 @@ class CassetteHandler:
             total_str = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}"
             needs_redraw = (
                 total_str != self.last_total_str or force_flag or
-                (self.time_total_rect and overlaps_cleared(self.time_total_rect))
+                (self.time_total_rect and overlaps_cleared(self.time_total_rect)) or
+                overlaps_indicator_dirty(self.time_total_rect)
             )
             if needs_redraw:
                 self.last_total_str = total_str

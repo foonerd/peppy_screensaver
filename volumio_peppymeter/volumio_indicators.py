@@ -671,6 +671,7 @@ class SliderIndicator:
         # Backing
         self._backing = None
         self._backing_rect = None
+        self._bgr_surface = None
 
         # Progress bar markers (visual only): list of {"pos": 0-100, "image": filename, "label": str, "_surface": pg.Surface or None, "_font": pg.font.Font or None}
         self._markers = []
@@ -870,9 +871,26 @@ class SliderIndicator:
         except Exception:
             self._backing = pg.Surface((rect.width, rect.height))
             self._backing.fill((0, 0, 0))
+
+    def set_background_surface(self, bgr_surface):
+        """Set clean meter background for restore path.
+        
+        :param bgr_surface: clean background surface (before dynamic overlays)
+        """
+        self._bgr_surface = bgr_surface
     
     def restore_backing(self, screen):
-        """Restore backing surface to screen."""
+        """Restore backing surface to screen.
+
+        Uses bgr_surface if available; otherwise falls back to captured backing
+        for backward compatibility.
+        """
+        rect = self._backing_rect if self._backing_rect else self.get_rect()
+        if not rect:
+            return None
+        if self._bgr_surface:
+            screen.blit(self._bgr_surface, rect.topleft, rect)
+            return rect.copy()
         if self._backing and self._backing_rect:
             screen.blit(self._backing, self._backing_rect.topleft)
             return self._backing_rect.copy()
@@ -1555,6 +1573,8 @@ class IndicatorRenderer:
             self._repeat.set_background_surface(bgr_surface)
         if self._playstate and isinstance(self._playstate, IconIndicator):
             self._playstate.set_background_surface(bgr_surface)
+        if self._progress and isinstance(self._progress, SliderIndicator):
+            self._progress.set_background_surface(bgr_surface)
     
     def force_redraw_all(self):
         """Force redraw of all indicators."""
@@ -1775,10 +1795,7 @@ class IndicatorRenderer:
                 _log_debug(f"[Progress] INPUT: mode={mode}, pct={progress_pct:.1f}%, will_render={will_render}", "trace", "progress")
             
             if will_render:
-                # Always restore progress backing before draw so previous head position is cleared.
-                # Required when skip_restore=True (e.g. BasicHandler 1920x550) where we don't
-                # restore other indicators; progress head would otherwise leave a ghost.
-                self._progress.capture_backing(screen)
+                self._progress.restore_backing(screen)
                 # SliderIndicator expects 0-100 integer
                 rect = self._progress.render(screen, int(progress_pct))
                 if rect:
