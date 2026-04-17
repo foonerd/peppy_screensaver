@@ -1421,8 +1421,19 @@ class BasicHandler:
                 dirty_rects.append(rect)
 
         # LAYER: Indicators (skip_restore=True - meters redraw every frame, procedural indicators self-clear)
+        indicator_dirty_rects = []
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
+            indicator_dirty_start = len(dirty_rects)
             self.indicator_renderer.render(self.screen, meta, dirty_rects, force=False, skip_restore=True)
+            indicator_dirty_rects = dirty_rects[indicator_dirty_start:]
+
+        def overlaps_indicator_dirty(rect):
+            if not rect or not indicator_dirty_rects:
+                return False
+            for dirty in indicator_dirty_rects:
+                if dirty and rect.colliderect(dirty):
+                    return True
+            return False
         
         # LAYER: Time remaining (with persist countdown support)
         if self.time_pos:
@@ -1476,7 +1487,7 @@ class BasicHandler:
                 secs = display_sec % 60
                 time_str = f"{mins:02d}:{secs:02d}"
                 
-                if time_str != self.last_time_str:
+                if time_str != self.last_time_str or overlaps_indicator_dirty(self.time_rect):
                     self.last_time_str = time_str
                     
                     # LAYER COMPOSITION: Clear from bgr_surface
@@ -1502,7 +1513,7 @@ class BasicHandler:
             seek_ms = meta.get("seek") or 0
             elapsed_sec = max(0, int(seek_ms) // 1000)
             elapsed_str = f"{elapsed_sec // 60:02d}:{elapsed_sec % 60:02d}"
-            if elapsed_str != self.last_elapsed_str:
+            if elapsed_str != self.last_elapsed_str or overlaps_indicator_dirty(self.time_elapsed_rect):
                 self.last_elapsed_str = elapsed_str
                 if self.bgr_surface and self.time_elapsed_rect:
                     self.screen.blit(self.bgr_surface, self.time_elapsed_rect.topleft, self.time_elapsed_rect)
@@ -1514,7 +1525,7 @@ class BasicHandler:
         if self.time_total_pos and self.font_time_total:
             duration_sec = max(0, int(meta.get("duration") or 0))
             total_str = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}"
-            if total_str != self.last_total_str:
+            if total_str != self.last_total_str or overlaps_indicator_dirty(self.time_total_rect):
                 self.last_total_str = total_str
                 if self.bgr_surface and self.time_total_rect:
                     self.screen.blit(self.bgr_surface, self.time_total_rect.topleft, self.time_total_rect)

@@ -2986,13 +2986,24 @@ class TurntableHandler:
                 dirty_rects.append(rect)
         
         # Z6: Indicators - only force if they overlap cleared regions
+        indicator_dirty_rects = []
         if self.indicator_renderer and self.indicator_renderer.has_indicators():
             indicator_force = False
             for ind_rect in self.indicator_renderer.get_all_rects():
                 if overlaps_cleared(ind_rect):
                     indicator_force = True
                     break
+            indicator_dirty_start = len(dirty_rects)
             self.indicator_renderer.render(self.screen, meta, dirty_rects, force=indicator_force, skip_restore=False)
+            indicator_dirty_rects = dirty_rects[indicator_dirty_start:]
+
+        def overlaps_indicator_dirty(rect):
+            if not rect or not indicator_dirty_rects:
+                return False
+            for dirty in indicator_dirty_rects:
+                if dirty and rect.colliderect(dirty):
+                    return True
+            return False
         
         # Z7: Time remaining (FORCE when animated elements change)
         if self.time_pos:
@@ -3051,7 +3062,7 @@ class TurntableHandler:
                 # Force redraw when animated elements overlap time area
                 # or if time string changed
                 time_overlaps = overlaps_cleared(self.time_rect) if self.time_rect else False
-                needs_redraw = time_str != self.last_time_str or time_overlaps
+                needs_redraw = time_str != self.last_time_str or time_overlaps or overlaps_indicator_dirty(self.time_rect)
                 
                 if needs_redraw:
                     self.last_time_str = time_str
@@ -3081,7 +3092,7 @@ class TurntableHandler:
             elapsed_sec = max(0, int(seek_ms) // 1000)
             elapsed_str = f"{elapsed_sec // 60:02d}:{elapsed_sec % 60:02d}"
             elapsed_overlaps = overlaps_cleared(self.time_elapsed_rect) if self.time_elapsed_rect else False
-            needs_redraw = elapsed_str != self.last_elapsed_str or elapsed_overlaps
+            needs_redraw = elapsed_str != self.last_elapsed_str or elapsed_overlaps or overlaps_indicator_dirty(self.time_elapsed_rect)
             if needs_redraw:
                 self.last_elapsed_str = elapsed_str
                 if self.bgr_surface and self.time_elapsed_rect:
@@ -3095,7 +3106,7 @@ class TurntableHandler:
             duration_sec = max(0, int(meta.get("duration") or 0))
             total_str = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}"
             total_overlaps = overlaps_cleared(self.time_total_rect) if self.time_total_rect else False
-            needs_redraw = total_str != self.last_total_str or total_overlaps
+            needs_redraw = total_str != self.last_total_str or total_overlaps or overlaps_indicator_dirty(self.time_total_rect)
             if needs_redraw:
                 self.last_total_str = total_str
                 if self.bgr_surface and self.time_total_rect:

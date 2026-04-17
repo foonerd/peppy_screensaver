@@ -37,6 +37,17 @@ var RunPeppyFile = PluginPath + '/run_peppymeter.sh';
 var PeppyConf = PeppyPath + '/config.txt';
 const meterFolderStr = 'meter.folder'; // entry in config.txt to detect template folder
 
+// Continuity Engine - backup and restore of plugin settings
+// Named backups live under DATA_DIR and survive uninstall/reinstall.
+const BackupsPath = DATA_DIR + '/backups';
+const BackupSchemaVersion = 1;
+const BackupNameRegex = /^[A-Za-z0-9 _.\-]{1,64}$/;
+const BackupMinFreeBytes = 10 * 1024 * 1024; // 10 MB safety margin
+const BackupWarnCount = 20; // warn (not block) beyond this many backups
+const BackupManifestName = 'manifest.json';
+const PeppyConfBackupName = 'peppymeter_config.txt';
+const SpectrumConfBackupName = 'spectrum_config.txt';
+
 var minmax = new Array(14);
 var last_outputdevice, last_softmixer;
 var peppy_config, base_folder_P;
@@ -462,6 +473,11 @@ peppyScreensaver.prototype.onStart = function() {
     // Initialize config version on startup
     self.updateConfigVersion();
     
+    // Normalize template folder permissions for SMB share access on startup
+    if (self.config.get('smbShareAccess') === true) {
+        self.normalizeTemplatePermissions(true);
+    }
+    
     // Once the Plugin has successfull started resolve the promise
 	defer.resolve();       
  
@@ -727,6 +743,16 @@ peppyScreensaver.prototype.getUIConfig = function() {
                 useSystemFonts = (peppy_config.current['use.system.fonts'] || '').toLowerCase() === 'true';
             } catch (e) {}
             uiconf.sections[0].content[17].value = useSystemFonts;
+
+            // SMB share access (from config.json, default false)
+            var smbEnabled = self.config.get('smbShareAccess') === true;
+            uiconf.sections[0].content[18].value = smbEnabled;
+            
+            // Normalize template permissions on settings page access
+            // Reclaims ownership from SMB-created files (nobody:nogroup -> volumio:volumio)
+            if (smbEnabled) {
+                self.normalizeTemplatePermissions(true);
+            }
              
             // section 6 - Playback Behavior -----------------------------
             var persistVal = self.config.get('persist_duration');
@@ -1009,13 +1035,43 @@ peppyScreensaver.prototype.getUIConfig = function() {
             }
             uiconf.sections[7].content[5].value = configSyncInterval;
             
-            // section 8 - Debug settings -----------------------------
+            // sections 8-10 - Backup and Restore (Continuity Engine) -------
+            // Section 8 (Create Backup) has nothing to populate - only the
+            // input field and its saveButton. Sections 9 (Restore) and 10
+            // (Delete) share the same backup list dropdown.
+            var backupList = self.listSettingsBackups();
+            if (backupList.length > 0) {
+                var firstLabel = backupList[0].name + ' (' + backupList[0].createdLabel + ', v' + backupList[0].pluginVersion + ')';
+                var firstValue = { value: backupList[0].name, label: firstLabel };
+                
+                // Section 9 - Restore Backup dropdown
+                uiconf.sections[9].content[0].options = [];
+                backupList.forEach(function (b) {
+                    self.configManager.pushUIConfigParam(uiconf, 'sections[9].content[0].options', {
+                        value: b.name,
+                        label: b.name + ' (' + b.createdLabel + ', v' + b.pluginVersion + ')'
+                    });
+                });
+                uiconf.sections[9].content[0].value = firstValue;
+                
+                // Section 10 - Delete Backup dropdown (same list)
+                uiconf.sections[10].content[0].options = [];
+                backupList.forEach(function (b) {
+                    self.configManager.pushUIConfigParam(uiconf, 'sections[10].content[0].options', {
+                        value: b.name,
+                        label: b.name + ' (' + b.createdLabel + ', v' + b.pluginVersion + ')'
+                    });
+                });
+                uiconf.sections[10].content[0].value = firstValue;
+            }
+            
+            // section 11 - Debug settings -----------------------------
             // debug level
             var debugLevel = peppy_config.current['debug.level'] || 'off';
-            var debugLevelOptions = uiconf.sections[8].content[0].options;
+            var debugLevelOptions = uiconf.sections[11].content[0].options;
             for (var i = 0; i < debugLevelOptions.length; i++) {
                 if (debugLevelOptions[i].value === debugLevel) {
-                    uiconf.sections[8].content[0].value = debugLevelOptions[i];
+                    uiconf.sections[11].content[0].value = debugLevelOptions[i];
                     break;
                 }
             }
@@ -1032,25 +1088,25 @@ peppyScreensaver.prototype.getUIConfig = function() {
             ];
             for (var i = 0; i < traceKeys.length; i++) {
                 var traceValue = peppy_config.current[traceKeys[i]] === 'true' || peppy_config.current[traceKeys[i]] === true;
-                uiconf.sections[8].content[i + 1].value = traceValue;
+                uiconf.sections[11].content[i + 1].value = traceValue;
             }
             
-            // section 9 - Profiling settings -----------------------------
+            // section 12 - Profiling settings -----------------------------
             // per-frame timing
             var profilingTiming = peppy_config.current['profiling.timing'] === 'true' || peppy_config.current['profiling.timing'] === true;
-            uiconf.sections[9].content[0].value = profilingTiming;
+            uiconf.sections[12].content[0].value = profilingTiming;
             
             // timing interval
             var profilingInterval = parseInt(peppy_config.current['profiling.interval'], 10) || 30;
-            uiconf.sections[9].content[1].value = profilingInterval;
+            uiconf.sections[12].content[1].value = profilingInterval;
             
             // cProfile enabled
             var profilingCprofile = peppy_config.current['profiling.cprofile'] === 'true' || peppy_config.current['profiling.cprofile'] === true;
-            uiconf.sections[9].content[2].value = profilingCprofile;
+            uiconf.sections[12].content[2].value = profilingCprofile;
             
             // profile duration
             var profilingDuration = parseInt(peppy_config.current['profiling.duration'], 10) || 60;
-            uiconf.sections[9].content[3].value = profilingDuration;
+            uiconf.sections[12].content[3].value = profilingDuration;
             
         } else {
             self.commandRouter.pushToastMessage('error', self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'), self.commandRouter.getI18nString('PEPPY_SCREENSAVER.NO_PEPPYCONFIG'));            
@@ -1224,6 +1280,14 @@ peppyScreensaver.prototype.savePeppyMeterConf = function (confData) {
             peppy_config.current['use.system.fonts'] = useSystemFonts;
             noChanges = false;
         }
+    }
+    
+    // SMB share access (stored in config.json only, not config.txt)
+    var smbShareAccess = confData.smbShareAccess === true;
+    if (self.config.get('smbShareAccess') !== smbShareAccess) {
+        self.config.set('smbShareAccess', smbShareAccess);
+        self.normalizeTemplatePermissions(smbShareAccess);
+        noChanges = false;
     }
     
     // write screen width/height
@@ -2142,6 +2206,47 @@ peppyScreensaver.prototype.updateUIConfig = function () {
   return defer.promise;
 };
 
+// Normalize template folder permissions for SMB share access
+// When enabled: dirs 777, files 666 (writable by SMB nobody:nogroup)
+// When disabled: dirs 755, files 644 (standard permissions)
+peppyScreensaver.prototype.normalizeTemplatePermissions = function (enable) {
+  var self = this;
+  var defer = libQ.defer();
+  var templateDirs = [
+      DATA_DIR + '/templates',
+      DATA_DIR + '/templates_spectrum'
+  ];
+  
+  var dirMode = enable ? '777' : '755';
+  var fileMode = enable ? '666' : '644';
+  var processed = 0;
+  var total = templateDirs.length;
+  
+  templateDirs.forEach(function(dir) {
+      if (fs.existsSync(dir)) {
+          // chmod directories first, then files
+          // chown to volumio:volumio first (reclaims SMB nobody:nogroup files),
+          // then chmod dirs, then fix file permissions
+          var cmd = '/usr/bin/sudo /bin/chown -R volumio:volumio ' + dir + ' && /usr/bin/sudo /bin/chmod -R ' + dirMode + ' ' + dir + ' && /usr/bin/sudo /usr/bin/find ' + dir + ' -type f -exec /bin/chmod ' + fileMode + ' {} +';
+          exec(cmd, function(error, stdout, stderr) {
+              if (error) {
+                  self.logger.error(id + 'normalizeTemplatePermissions: error on ' + dir + ': ' + error);
+              } else {
+                  self.logger.info(id + 'normalizeTemplatePermissions: ' + dir + ' set to dirs=' + dirMode + ' files=' + fileMode);
+              }
+              processed++;
+              if (processed >= total) { defer.resolve(); }
+          });
+      } else {
+          processed++;
+          if (processed >= total) { defer.resolve(); }
+      }
+  });
+  
+  if (total === 0) { defer.resolve(); }
+  return defer.promise;
+};
+
 peppyScreensaver.prototype.checkDSPactive = function (DSD){
   const self = this;
   const defer = libQ.defer();
@@ -2817,6 +2922,441 @@ peppyScreensaver.prototype.getPluginStatus = function (category, name) {
   return retStr;  
 };
 //-------------------------------------------------------------
+
+// Continuity Engine - backup and restore helper methods
+// -------------------------------------------------------------
+
+// List all valid backups under BackupsPath.
+// Returns array of {name, createdMs, createdLabel, pluginVersion, path}
+// sorted newest first. Entries without a valid manifest.json are skipped.
+peppyScreensaver.prototype.listSettingsBackups = function () {
+    var self = this;
+    var results = [];
+    
+    try {
+        if (!fs.existsSync(BackupsPath)) {
+            return results;
+        }
+        
+        var entries = fs.readdirSync(BackupsPath);
+        entries.forEach(function (entry) {
+            var entryPath = BackupsPath + '/' + entry;
+            var manifestPath = entryPath + '/' + BackupManifestName;
+            
+            try {
+                if (!fs.statSync(entryPath).isDirectory()) return;
+                if (!fs.existsSync(manifestPath)) return;
+                
+                var manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+                if (!manifest || typeof manifest !== 'object') return;
+                if (manifest.schema_version === undefined) return;
+                
+                var createdMs = 0;
+                var createdLabel = '';
+                if (manifest.created) {
+                    var d = new Date(manifest.created);
+                    createdMs = d.getTime();
+                    if (!isNaN(createdMs)) {
+                        var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+                        createdLabel = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+                    }
+                }
+                
+                results.push({
+                    name: entry,
+                    createdMs: createdMs,
+                    createdLabel: createdLabel || '?',
+                    pluginVersion: manifest.plugin_version || '?',
+                    path: entryPath
+                });
+            } catch (e) {
+                self.logger.warn(id + 'listSettingsBackups: skipping invalid entry ' + entry + ': ' + e.message);
+            }
+        });
+    } catch (e) {
+        self.logger.error(id + 'listSettingsBackups: ' + e.message);
+    }
+    
+    results.sort(function (a, b) { return b.createdMs - a.createdMs; });
+    return results;
+};
+
+// Create a new backup with the name typed in the UI.
+// Copies config.json, peppymeter config.txt and spectrum config.txt into
+// a named subdirectory of BackupsPath and writes a manifest.json.
+peppyScreensaver.prototype.createSettingsBackup = function (data) {
+    var self = this;
+    var defer = libQ.defer();
+    
+    try {
+        var rawName = (data && data.backupName !== undefined) ? String(data.backupName) : '';
+        var backupName = rawName.trim();
+        
+        if (!backupName) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_NAME_REQUIRED'));
+            defer.resolve();
+            return defer.promise;
+        }
+        if (!BackupNameRegex.test(backupName) || backupName.indexOf('..') !== -1) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_NAME_INVALID'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        if (!fs.existsSync(BackupsPath)) {
+            fs.mkdirSync(BackupsPath, { recursive: true });
+        }
+        
+        var targetDir = BackupsPath + '/' + backupName;
+        
+        // Collision: reject with toast, do not overwrite
+        if (fs.existsSync(targetDir)) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_NAME_EXISTS'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        // Disk-space guard. Skipped silently if statfsSync is unavailable
+        // for any reason (older filesystems, mount quirks, etc).
+        try {
+            if (typeof fs.statfsSync === 'function') {
+                var stats = fs.statfsSync(BackupsPath);
+                var freeBytes = stats.bavail * stats.bsize;
+                if (freeBytes < BackupMinFreeBytes) {
+                    self.commandRouter.pushToastMessage('error',
+                        self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                        self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_DISK_FULL'));
+                    defer.resolve();
+                    return defer.promise;
+                }
+            }
+        } catch (e) {
+            self.logger.warn(id + 'createSettingsBackup: statfsSync failed, skipping disk check: ' + e.message);
+        }
+        
+        // Non-blocking warning for clutter. Create still proceeds.
+        var existingList = self.listSettingsBackups();
+        if (existingList.length >= BackupWarnCount) {
+            self.commandRouter.pushToastMessage('warning',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_COUNT_WARN'));
+        }
+        
+        // Verify source files exist before we create any destination files
+        var configFile = self.commandRouter.pluginManager.getConfigurationFile(self.context, 'config.json');
+        if (!fs.existsSync(configFile)) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_SOURCE_MISSING') + ': config.json');
+            defer.resolve();
+            return defer.promise;
+        }
+        if (!fs.existsSync(PeppyConf)) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_SOURCE_MISSING') + ': peppymeter config.txt');
+            defer.resolve();
+            return defer.promise;
+        }
+        if (!fs.existsSync(SpectrumConf)) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_SOURCE_MISSING') + ': spectrum config.txt');
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        fs.mkdirSync(targetDir, { recursive: true });
+        fs.copySync(configFile, targetDir + '/config.json');
+        fs.copySync(PeppyConf, targetDir + '/' + PeppyConfBackupName);
+        fs.copySync(SpectrumConf, targetDir + '/' + SpectrumConfBackupName);
+        
+        var manifest = {
+            schema_version: BackupSchemaVersion,
+            plugin_version: peppyPluginVersion,
+            created: new Date().toISOString(),
+            name: backupName,
+            files: ['config.json', PeppyConfBackupName, SpectrumConfBackupName]
+        };
+        fs.writeFileSync(targetDir + '/' + BackupManifestName, JSON.stringify(manifest, null, 2));
+        
+        self.logger.info(id + 'createSettingsBackup: created backup "' + backupName + '"');
+        self.commandRouter.pushToastMessage('success',
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_CREATED'));
+        
+        self.updateUIConfig();
+        defer.resolve();
+    } catch (e) {
+        self.logger.error(id + 'createSettingsBackup: ' + e.message);
+        self.commandRouter.pushToastMessage('error',
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_CREATE_FAILED'));
+        defer.resolve();
+    }
+    
+    return defer.promise;
+};
+
+// Restore a backup by name. Validates manifest and parses all files
+// before overwriting anything, so a corrupt backup cannot damage the
+// current live config.
+peppyScreensaver.prototype.restoreSettingsBackup = function (data) {
+    var self = this;
+    var defer = libQ.defer();
+    
+    try {
+        var backupName = '';
+        if (data && data.selectedBackup) {
+            backupName = (typeof data.selectedBackup === 'object') ? data.selectedBackup.value : String(data.selectedBackup);
+        }
+        backupName = (backupName || '').trim();
+        
+        if (!backupName) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_NOT_SELECTED'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        // Path-traversal guard
+        if (!BackupNameRegex.test(backupName) || backupName.indexOf('..') !== -1 || backupName.indexOf('/') !== -1 || backupName.indexOf('\\') !== -1) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_NAME_INVALID'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        var sourceDir = BackupsPath + '/' + backupName;
+        var manifestPath = sourceDir + '/' + BackupManifestName;
+        
+        if (!fs.existsSync(sourceDir) || !fs.existsSync(manifestPath)) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_NOT_FOUND'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        var manifest;
+        try {
+            manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        } catch (e) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_MANIFEST_INVALID'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        if (!manifest || typeof manifest !== 'object' || manifest.schema_version === undefined) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_MANIFEST_INVALID'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        if (manifest.schema_version > BackupSchemaVersion) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_SCHEMA_UNSUPPORTED'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        var srcConfigJson = sourceDir + '/config.json';
+        var srcPeppyConf = sourceDir + '/' + PeppyConfBackupName;
+        var srcSpectrumConf = sourceDir + '/' + SpectrumConfBackupName;
+        
+        if (!fs.existsSync(srcConfigJson) || !fs.existsSync(srcPeppyConf) || !fs.existsSync(srcSpectrumConf)) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_FILES_MISSING'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        // Parse everything in the backup before touching live files, so a
+        // corrupt backup is detected and rejected without any damage.
+        try {
+            JSON.parse(fs.readFileSync(srcConfigJson, 'utf8'));
+        } catch (e) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_CONFIG_CORRUPT'));
+            defer.resolve();
+            return defer.promise;
+        }
+        try {
+            ini.parse(fs.readFileSync(srcPeppyConf, 'utf8'));
+        } catch (e) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_PEPPYCONF_CORRUPT'));
+            defer.resolve();
+            return defer.promise;
+        }
+        try {
+            ini.parse(fs.readFileSync(srcSpectrumConf, 'utf8'));
+        } catch (e) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_SPECTRUMCONF_CORRUPT'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        // All checks passed: perform the restore
+        var configFile = self.commandRouter.pluginManager.getConfigurationFile(self.context, 'config.json');
+        
+        fs.copySync(srcConfigJson, configFile);
+        fs.copySync(srcPeppyConf, PeppyConf);
+        fs.copySync(srcSpectrumConf, SpectrumConf);
+        
+        // Reload in-memory caches so subsequent saves do not stomp the restored values
+        self.config.loadFile(configFile);
+        peppy_config = ini.parse(fs.readFileSync(PeppyConf, 'utf-8'));
+        base_folder_P = peppy_config.current['base.folder'] + '/';
+        if (base_folder_P == '/') { base_folder_P = PeppyPath + '/'; }
+        spectrum_config = ini.parse(fs.readFileSync(SpectrumConf, 'utf-8'));
+        base_folder_S = spectrum_config.current['base.folder'] + '/';
+        if (base_folder_S == '/') { base_folder_S = SpectrumPath + '/'; }
+        
+        // Re-apply derived state from the restored config.json. Order matters:
+        // alsa config first (rebuilds asound.conf), then display port (edits
+        // run_peppymeter.sh), then spotify/airplay/SMB permissions.
+        var alsaconf = parseInt(self.config.get('alsaSelection'), 10);
+        self.switch_alsaConfig(alsaconf);
+        
+        var dispOut = parseInt(self.config.get('displayOutput'), 10);
+        self.switch_DisplayPort(dispOut);
+        
+        if (fs.existsSync(spotify_config) && self.getPluginStatus('music_service', 'spop') === 'STARTED') {
+            var useSpot = self.config.get('useSpotify');
+            self.switch_Spotify(useSpot);
+        }
+        if (fs.existsSync(AIRtmpl) && self.getPluginStatus('music_service', 'airplay_emulation') === 'STARTED') {
+            var useAir = self.config.get('useAirplay');
+            self.switch_Airplay(useAir);
+        }
+        
+        var smbEnabled = self.config.get('smbShareAccess') === true;
+        self.normalizeTemplatePermissions(smbEnabled);
+        
+        // Keep the doNotDeleteThemes .preserve flag file in sync with the
+        // restored value so uninstall/install behaves as the restored
+        // config.json expects.
+        try {
+            var doNotDelete = self.config.get('doNotDeleteThemes') === true;
+            if (doNotDelete) {
+                if (!fs.existsSync(DATA_DIR)) { fs.mkdirSync(DATA_DIR, { recursive: true }); }
+                fs.writeFileSync(DATA_DIR + '/.preserve', '', 'utf8');
+            } else {
+                if (fs.existsSync(DATA_DIR + '/.preserve')) { fs.unlinkSync(DATA_DIR + '/.preserve'); }
+            }
+        } catch (e) {
+            self.logger.warn(id + 'restoreSettingsBackup: preserve flag sync failed: ' + e.message);
+        }
+        
+        // Update config version hash so remote clients pick up the new config
+        self.updateConfigVersion();
+        
+        // Remove runFlag so peppymeter restarts on next trigger
+        if (fs.existsSync(runFlag)) { fs.removeSync(runFlag); }
+        
+        self.logger.info(id + 'restoreSettingsBackup: restored backup "' + backupName + '"');
+        self.commandRouter.pushToastMessage('success',
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_RESTORED'));
+        
+        self.updateUIConfig();
+        defer.resolve();
+    } catch (e) {
+        self.logger.error(id + 'restoreSettingsBackup: ' + e.message);
+        self.commandRouter.pushToastMessage('error',
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_RESTORE_FAILED'));
+        defer.resolve();
+    }
+    
+    return defer.promise;
+};
+
+// Delete a backup by name. Refuses to touch anything outside BackupsPath
+// even if a traversal attempt somehow slips past the name regex.
+peppyScreensaver.prototype.deleteSettingsBackup = function (data) {
+    var self = this;
+    var defer = libQ.defer();
+    
+    try {
+        var backupName = '';
+        if (data && data.selectedBackup) {
+            backupName = (typeof data.selectedBackup === 'object') ? data.selectedBackup.value : String(data.selectedBackup);
+        }
+        backupName = (backupName || '').trim();
+        
+        if (!backupName) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_NOT_SELECTED'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        if (!BackupNameRegex.test(backupName) || backupName.indexOf('..') !== -1 || backupName.indexOf('/') !== -1 || backupName.indexOf('\\') !== -1) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_NAME_INVALID'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        var targetDir = BackupsPath + '/' + backupName;
+        if (!fs.existsSync(targetDir)) {
+            self.commandRouter.pushToastMessage('error',
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_NOT_FOUND'));
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        // Belt-and-braces: resolve and confirm still within BackupsPath
+        var resolved = path.resolve(targetDir);
+        var resolvedRoot = path.resolve(BackupsPath);
+        if (resolved.indexOf(resolvedRoot + '/') !== 0 && resolved !== resolvedRoot) {
+            self.logger.error(id + 'deleteSettingsBackup: refusing to delete outside backups root: ' + resolved);
+            defer.resolve();
+            return defer.promise;
+        }
+        
+        fs.removeSync(targetDir);
+        
+        self.logger.info(id + 'deleteSettingsBackup: deleted backup "' + backupName + '"');
+        self.commandRouter.pushToastMessage('success',
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_DELETED'));
+        
+        self.updateUIConfig();
+        defer.resolve();
+    } catch (e) {
+        self.logger.error(id + 'deleteSettingsBackup: ' + e.message);
+        self.commandRouter.pushToastMessage('error',
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+            self.commandRouter.getI18nString('PEPPY_SCREENSAVER.BACKUP_DELETE_FAILED'));
+        defer.resolve();
+    }
+    
+    return defer.promise;
+};
 
 peppyScreensaver.prototype.setUIConfig = function(data) {
 	var self = this;
