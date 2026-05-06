@@ -36,6 +36,13 @@ if [ -f /etc/X11/Xsession.d/50-peppy-xhost ]; then
   rm -f /etc/X11/Xsession.d/50-peppy-xhost
 fi
 
+# Remove runtime sudoers fragment
+SUDOERS_FILE="/etc/sudoers.d/volumio-user-peppy_screensaver"
+if [ -f "$SUDOERS_FILE" ]; then
+  echo "Removing sudoers file..."
+  rm -f "$SUDOERS_FILE"
+fi
+
 # Remove library symlink
 if [ -L "$PLUGIN_DIR/lib/libpeppyalsa.so" ]; then
   echo "Removing library symlink..."

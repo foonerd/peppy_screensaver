@@ -180,6 +180,36 @@ chmod -R 755 "$PLUGIN_DIR/bin"
 chown -R volumio:volumio "$PLUGIN_DIR/bin"
 
 # =============================================================================
+# SETUP: Runtime sudoers for template permission normalization
+# =============================================================================
+echo ""
+echo "Setting up sudoers for runtime permission normalization..."
+
+SUDOERS_FILE="/etc/sudoers.d/volumio-user-peppy_screensaver"
+
+cat > "$SUDOERS_FILE" << 'EOF'
+# Peppy Screensaver runtime permission normalization
+volumio ALL=(ALL) NOPASSWD: /bin/chown -R volumio:volumio /data/INTERNAL/peppy_screensaver/templates
+volumio ALL=(ALL) NOPASSWD: /bin/chown -R volumio:volumio /data/INTERNAL/peppy_screensaver/templates_spectrum
+volumio ALL=(ALL) NOPASSWD: /bin/chmod -R 777 /data/INTERNAL/peppy_screensaver/templates
+volumio ALL=(ALL) NOPASSWD: /bin/chmod -R 755 /data/INTERNAL/peppy_screensaver/templates
+volumio ALL=(ALL) NOPASSWD: /bin/chmod -R 777 /data/INTERNAL/peppy_screensaver/templates_spectrum
+volumio ALL=(ALL) NOPASSWD: /bin/chmod -R 755 /data/INTERNAL/peppy_screensaver/templates_spectrum
+volumio ALL=(ALL) NOPASSWD: /usr/bin/find /data/INTERNAL/peppy_screensaver/templates -type f -exec /bin/chmod 666 {} +
+volumio ALL=(ALL) NOPASSWD: /usr/bin/find /data/INTERNAL/peppy_screensaver/templates -type f -exec /bin/chmod 644 {} +
+volumio ALL=(ALL) NOPASSWD: /usr/bin/find /data/INTERNAL/peppy_screensaver/templates_spectrum -type f -exec /bin/chmod 666 {} +
+volumio ALL=(ALL) NOPASSWD: /usr/bin/find /data/INTERNAL/peppy_screensaver/templates_spectrum -type f -exec /bin/chmod 644 {} +
+EOF
+
+chmod 0440 "$SUDOERS_FILE"
+if ! visudo -c -f "$SUDOERS_FILE"; then
+  echo "Invalid sudoers file, removing: $SUDOERS_FILE"
+  rm -f "$SUDOERS_FILE"
+  exit 1
+fi
+echo "Sudoers configured: $SUDOERS_FILE"
+
+# =============================================================================
 # SETUP: Architecture-specific ALSA template
 # =============================================================================
 echo ""
