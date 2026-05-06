@@ -3,6 +3,14 @@ echo "Installing PeppyMeter Screensaver plugin"
 
 # Get Volumio architecture - direct match to bin/lib/packages folders
 ARCH=$(cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d 'VOLUMIO_ARCH="')
+VARIANT=$(cat /etc/os-release | grep ^VOLUMIO_VARIANT | tr -d 'VOLUMIO_VARIANT="')
+HARDWARE=$(cat /etc/os-release | grep ^VOLUMIO_HARDWARE | tr -d 'VOLUMIO_HARDWARE="')
+RENDER_MARKER="/etc/peppy_screensaver_render_group_added"
+
+KIOSK_DEVICE="false"
+if [ -f /opt/volumiokiosk.sh ] || [ "$VARIANT" = "motivo" ] || [ "$VARIANT" = "primo" ]; then
+  KIOSK_DEVICE="true"
+fi
 
 if [ -z "$ARCH" ]; then
   echo "ERROR: Could not detect Volumio architecture"
@@ -10,6 +18,8 @@ if [ -z "$ARCH" ]; then
 fi
 
 echo "Detected architecture: $ARCH"
+echo "Detected variant: ${VARIANT:-unknown}"
+echo "Detected hardware: ${HARDWARE:-unknown}"
 
 PLUGIN_DIR="/data/plugins/user_interface/peppy_screensaver"
 DATA_DIR="/data/INTERNAL/peppy_screensaver"
@@ -189,16 +199,9 @@ SUDOERS_FILE="/etc/sudoers.d/volumio-user-peppy_screensaver"
 
 cat > "$SUDOERS_FILE" << 'EOF'
 # Peppy Screensaver runtime permission normalization
-volumio ALL=(ALL) NOPASSWD: /bin/chown -R volumio:volumio /data/INTERNAL/peppy_screensaver/templates
-volumio ALL=(ALL) NOPASSWD: /bin/chown -R volumio:volumio /data/INTERNAL/peppy_screensaver/templates_spectrum
-volumio ALL=(ALL) NOPASSWD: /bin/chmod -R 777 /data/INTERNAL/peppy_screensaver/templates
-volumio ALL=(ALL) NOPASSWD: /bin/chmod -R 755 /data/INTERNAL/peppy_screensaver/templates
-volumio ALL=(ALL) NOPASSWD: /bin/chmod -R 777 /data/INTERNAL/peppy_screensaver/templates_spectrum
-volumio ALL=(ALL) NOPASSWD: /bin/chmod -R 755 /data/INTERNAL/peppy_screensaver/templates_spectrum
-volumio ALL=(ALL) NOPASSWD: /usr/bin/find /data/INTERNAL/peppy_screensaver/templates -type f -exec /bin/chmod 666 {} +
-volumio ALL=(ALL) NOPASSWD: /usr/bin/find /data/INTERNAL/peppy_screensaver/templates -type f -exec /bin/chmod 644 {} +
-volumio ALL=(ALL) NOPASSWD: /usr/bin/find /data/INTERNAL/peppy_screensaver/templates_spectrum -type f -exec /bin/chmod 666 {} +
-volumio ALL=(ALL) NOPASSWD: /usr/bin/find /data/INTERNAL/peppy_screensaver/templates_spectrum -type f -exec /bin/chmod 644 {} +
+volumio ALL=(ALL) NOPASSWD: /bin/chown
+volumio ALL=(ALL) NOPASSWD: /bin/chmod
+volumio ALL=(ALL) NOPASSWD: /usr/bin/find
 EOF
 
 chmod 0440 "$SUDOERS_FILE"
@@ -242,14 +245,34 @@ if [ "$ARCH" = "x64" ]; then
     echo "         Using standard template - meter may not work on x64"
   fi
 
-  # Add xhost to X session startup - allows volumio user to access display
-  echo "Setting up X11 access for volumio user..."
+fi
+
+# =============================================================================
+# SETUP: Kiosk/X11 runtime compatibility (Motivo/Primo and kiosk images)
+# =============================================================================
+if [ "$KIOSK_DEVICE" = "true" ] || [ "$ARCH" = "x64" ]; then
+  echo ""
+  echo "Configuring X11 access helpers..."
+
   cat > /etc/X11/Xsession.d/50-peppy-xhost << 'XHOSTEOF'
-# Allow local users to access X display (for PeppyMeter)
-xhost +local: >/dev/null 2>&1
+#!/bin/sh
+# Allow volumio user to connect to local X session for PeppyMeter.
+xhost +SI:localuser:volumio >/dev/null 2>&1 || xhost +local: >/dev/null 2>&1
 XHOSTEOF
   chmod 644 /etc/X11/Xsession.d/50-peppy-xhost
-  echo "X11 access configured (requires X restart or reboot)"
+  echo "X11 access helper installed: /etc/X11/Xsession.d/50-peppy-xhost"
+
+  if getent group render >/dev/null 2>&1; then
+    if id -nG volumio | tr ' ' '\n' | grep -qx render; then
+      echo "volumio already in render group"
+    else
+      usermod -aG render volumio
+      touch "$RENDER_MARKER"
+      echo "Added volumio to render group (reboot required to apply)"
+    fi
+  else
+    echo "render group not present; launcher will use software fallback if needed"
+  fi
 fi
 
 # =============================================================================
@@ -326,6 +349,10 @@ use.system.fonts = false\
   sed -i 's|mouse.device.*|mouse.device = /dev/input/event0|g' $CFG
   sed -i 's|double.buffer.*|double.buffer = True|g' $CFG
   sed -i 's|no.frame.*|no.frame = True|g' $CFG
+  if [ "$KIOSK_DEVICE" = "true" ]; then
+    sed -i 's|video.driver.*|video.driver = x11|g' $CFG
+    sed -i 's|video.display.*|video.display = :0|g' $CFG
+  fi
   
   # Section data.source
   sed -i 's|pipe.name.*|pipe.name = /tmp/myfifo|g' $CFG
