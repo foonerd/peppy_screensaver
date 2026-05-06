@@ -2,6 +2,7 @@
 echo "Uninstalling PeppyMeter Screensaver plugin"
 
 PLUGIN_DIR="/data/plugins/user_interface/peppy_screensaver"
+RENDER_MARKER="/etc/peppy_screensaver_render_group_added"
 
 # Unmount MPD template if mounted
 MPD="/volumio/app/plugins/music_service/mpd/mpd.conf.tmpl"
@@ -30,10 +31,26 @@ fi
 # =============================================================================
 DATA_DIR="/data/INTERNAL/peppy_screensaver"
 
-# Remove x64 X session script if present
+# Remove X session helper script if present
 if [ -f /etc/X11/Xsession.d/50-peppy-xhost ]; then
-  echo "Removing x64 X11 access script..."
+  echo "Removing X11 access script..."
   rm -f /etc/X11/Xsession.d/50-peppy-xhost
+fi
+
+# Remove render-group membership only if plugin added it
+if [ -f "$RENDER_MARKER" ]; then
+  if getent group render >/dev/null 2>&1; then
+    gpasswd -d volumio render >/dev/null 2>&1 || true
+    echo "Removed volumio from render group (plugin-managed membership)"
+  fi
+  rm -f "$RENDER_MARKER"
+fi
+
+# Remove runtime sudoers fragment
+SUDOERS_FILE="/etc/sudoers.d/volumio-user-peppy_screensaver"
+if [ -f "$SUDOERS_FILE" ]; then
+  echo "Removing sudoers file..."
+  rm -f "$SUDOERS_FILE"
 fi
 
 # Remove library symlink
