@@ -67,7 +67,7 @@ const REMOTE_HANDLER_NAME_REGEX = /^(volumio_[A-Za-z0-9_]+\.py|screensaverspectr
 const REMOTE_FONT_NAME_REGEX = /^[A-Za-z0-9 ._\-]+\.(ttf|otf)$/;
 const REMOTE_CAPABILITIES = ['fanart', 'folderlayer', 'italic', 'samplerate_color', 'progress_markers', 'spectrum', 'remote', 'type_display_mode'];
 const THEME_PREVIEW_FILES = ['preview.png', 'preview.jpg', 'preview.jpeg', 'art.png', 'art.jpg'];
-const THEME_GALLERY_COLS = 3;
+const THEME_GALLERY_COLS = 2;
 const THEME_GALLERY_ACTIVE_BORDER = '#54C688';
 const THEME_GALLERY_ACTIVE_SHADOW = '#2a6848';
 // Gallery preview resolution logging - gated by peppy_config debug.level
@@ -3338,12 +3338,13 @@ peppyScreensaver.prototype.buildThemeGalleryHtml = function (themes, activeFolde
   }
 
   // Volumio modal-custom.html binds message with ng-bind-html ($sanitize).
-  // Inline style= attributes are stripped. Use only HTML attributes / tables.
-  // Fixed img width="200" overflowed portrait; width="100%" scales to each
-  // column so 3-up still fits a narrow modal without clipping.
+  // style= and <style> are stripped; class and HTML table/img attrs survive.
+  // Tables size from image intrinsic min-content, so 3 columns + large
+  // previews overflow phone portrait. Use 2 columns and Bootstrap
+  // img-responsive (max-width:100%) so thumbs cannot force horizontal clip.
   var activeLabel = escapeThemeGalleryHtml(self.commandRouter.getI18nString('PEPPY_SCREENSAVER.THEME_GALLERY_ACTIVE'));
   var html = '<p>' + escapeThemeGalleryHtml(self.commandRouter.getI18nString('PEPPY_SCREENSAVER.THEME_GALLERY_SELECT_HINT')) + '</p>';
-  html += '<table align="center" width="100%" cellspacing="10" cellpadding="4">';
+  html += '<table align="center" width="100%" cellspacing="4" cellpadding="2">';
   var colsPerRow = THEME_GALLERY_COLS;
   var colWidth = Math.floor(100 / colsPerRow);
   var currentResolution = null;
@@ -3380,7 +3381,7 @@ peppyScreensaver.prototype.buildThemeGalleryHtml = function (themes, activeFolde
 
       html += '<td align="center" valign="top" width="' + colWidth + '%">';
       html += frameStart;
-      html += '<img width="100%" src="' + imgSrc + '" alt="' + label + '"/>';
+      html += '<img class="img-responsive" width="100%" src="' + imgSrc + '" alt="' + label + '"/>';
       html += '<br/>';
       if (isActive) {
         html += '<font color="' + THEME_GALLERY_ACTIVE_BORDER + '"><b>' + label + ' (' + activeLabel + ')</b></font>';
