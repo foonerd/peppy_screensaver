@@ -888,8 +888,9 @@ peppyScreensaver.prototype.getUIConfig = function() {
                     C('cachesize').attributes[0].placeholder];
             }
 
-            // meter sensitivity
-            C('meterGain').value = parseInt(peppy_config.data.source['volume.gain.db'], 10) || 0;
+            // meter sensitivity (may be negative; do not use || 0 which would clobber valid 0)
+            var meterGainVal = parseInt(peppy_config.data.source['volume.gain.db'], 10);
+            C('meterGain').value = Number.isFinite(meterGainVal) ? meterGainVal : 0;
             minmax[15] = [C('meterGain').attributes[2].min,
                 C('meterGain').attributes[3].max,
                 C('meterGain').attributes[0].placeholder];

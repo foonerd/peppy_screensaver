@@ -483,8 +483,8 @@
                              "label": "TRANSLATE.PEPPY_SCREENSAVER.METER_SENSITIVITY",
                              "attributes": [
                                              {"placeholder": 0},
-                                             {"maxlength": 2},
-                                             {"min": 0},
+                                             {"maxlength": 3},
+                                             {"min": -12},
                                              {"max": 12}
                                            ],
                              "value": 0
