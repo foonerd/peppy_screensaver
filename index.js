@@ -67,11 +67,13 @@ const REMOTE_HANDLER_NAME_REGEX = /^(volumio_[A-Za-z0-9_]+\.py|screensaverspectr
 const REMOTE_FONT_NAME_REGEX = /^[A-Za-z0-9 ._\-]+\.(ttf|otf)$/;
 const REMOTE_CAPABILITIES = ['fanart', 'folderlayer', 'italic', 'samplerate_color', 'progress_markers', 'spectrum', 'remote', 'type_display_mode'];
 const THEME_PREVIEW_FILES = ['preview.png', 'preview.jpg', 'preview.jpeg', 'art.png', 'art.jpg'];
-const THEME_GALLERY_COLS = 3;
-const THEME_GALLERY_IMG_WIDTH = 200;
+// Gallery cards wrap via flex; these are max sizes for desktop / landscape.
+const THEME_GALLERY_CARD_MIN_WIDTH = 140;
+const THEME_GALLERY_CARD_MAX_WIDTH = 220;
+const THEME_GALLERY_IMG_MAX_WIDTH = 200;
 const THEME_GALLERY_ACTIVE_BORDER = '#54C688';
 const THEME_GALLERY_ACTIVE_SHADOW = '#2a6848';
-// Gallery preview resolution logging — gated by peppy_config debug.level
+// Gallery preview resolution logging - gated by peppy_config debug.level
 // basic: resolved source; verbose: candidates/skips; trace: per-section detail
 function galleryLog(logger, level, msg) {
     if (!peppy_config || !peppy_config.current) return;
@@ -3019,16 +3021,6 @@ function escapeThemeGalleryHtml(text) {
     .replace(/"/g, '&quot;');
 }
 
-function buildThemeGalleryActiveFrameOpen() {
-  return '<table cellpadding="2" cellspacing="0" bgcolor="' + THEME_GALLERY_ACTIVE_SHADOW + '">' +
-    '<tr><td><table cellpadding="2" cellspacing="0" bgcolor="' + THEME_GALLERY_ACTIVE_BORDER + '">' +
-    '<tr><td align="center">';
-}
-
-function buildThemeGalleryActiveFrameClose() {
-  return '</td></tr></table></td></tr></table>';
-}
-
 function escapeThemeGalleryJsString(text) {
   return JSON.stringify(String(text));
 }
@@ -3338,90 +3330,86 @@ peppyScreensaver.prototype.buildThemeGalleryHtml = function (themes, activeFolde
     return '';
   }
 
+  // Flex wrap (inline styles) so portrait phones get 1 column and landscape /
+  // desktop still show multiple cards. Fixed 3-column tables with 200px images
+  // overflow Volumio's modal in portrait and clip previews off-screen.
   var activeLabel = escapeThemeGalleryHtml(self.commandRouter.getI18nString('PEPPY_SCREENSAVER.THEME_GALLERY_ACTIVE'));
-  var html = '<p>' + escapeThemeGalleryHtml(self.commandRouter.getI18nString('PEPPY_SCREENSAVER.THEME_GALLERY_SELECT_HINT')) + '</p>';
-  html += '<table align="center" width="100%" cellspacing="10" cellpadding="4">';
-  var colsPerRow = THEME_GALLERY_COLS;
-  var colWidth = Math.floor(100 / colsPerRow);
+  var html = '<p style="margin:0 0 12px 0;">' +
+    escapeThemeGalleryHtml(self.commandRouter.getI18nString('PEPPY_SCREENSAVER.THEME_GALLERY_SELECT_HINT')) +
+    '</p>';
+  html += '<div style="display:block;width:100%;max-width:100%;box-sizing:border-box;overflow-x:hidden;">';
+
   var currentResolution = null;
   var firstResolution = true;
-  var rowThemes = [];
+  var rowOpen = false;
+  var cardStyle = 'flex:1 1 ' + THEME_GALLERY_CARD_MIN_WIDTH + 'px;' +
+    'max-width:' + THEME_GALLERY_CARD_MAX_WIDTH + 'px;' +
+    'min-width:0;' +
+    'box-sizing:border-box;' +
+    'text-align:center;' +
+    'padding:8px;' +
+    'margin:0;';
+  var imgStyle = 'display:block;width:100%;max-width:' + THEME_GALLERY_IMG_MAX_WIDTH +
+    'px;height:auto;margin:0 auto;';
+  var rowStyle = 'display:flex;flex-wrap:wrap;justify-content:center;' +
+    'align-items:flex-start;width:100%;max-width:100%;box-sizing:border-box;gap:8px;';
 
-  function flushRow(themesInRow, centered) {
-    var padLeft = 0;
-    var idx;
-    var theme;
-    var isActive;
-    var label;
-    var imgSrc;
-    var frameStart;
-    var frameEnd;
+  function openRow() {
+    if (!rowOpen) {
+      html += '<div style="' + rowStyle + '">';
+      rowOpen = true;
+    }
+  }
 
-    if (!themesInRow.length) {
-      return;
+  function closeRow() {
+    if (rowOpen) {
+      html += '</div>';
+      rowOpen = false;
     }
-    if (centered && themesInRow.length < colsPerRow) {
-      padLeft = Math.floor((colsPerRow - themesInRow.length) / 2);
-    }
-    html += '<tr>';
-    for (idx = 0; idx < padLeft; idx++) {
-      html += '<td width="' + colWidth + '%"></td>';
-    }
-    for (idx = 0; idx < themesInRow.length; idx++) {
-      theme = themesInRow[idx];
-      isActive = theme.folder === activeFolder;
-      label = escapeThemeGalleryHtml(theme.shortLabel);
-      imgSrc = '/albumart?sectionimage=' + theme.sectionImage;
-      frameStart = isActive ? buildThemeGalleryActiveFrameOpen() : '';
-      frameEnd = isActive ? buildThemeGalleryActiveFrameClose() : '';
+  }
 
-      html += '<td align="center" valign="top" width="' + colWidth + '%">';
-      html += frameStart;
-      html += '<img width="' + THEME_GALLERY_IMG_WIDTH + '" src="' + imgSrc + '" alt="' + label + '"/>';
-      html += '<br/>';
-      if (isActive) {
-        html += '<font color="' + THEME_GALLERY_ACTIVE_BORDER + '"><b>' + label + ' (' + activeLabel + ')</b></font>';
-      } else {
-        // target attribute is required: it makes AngularJS $location skip its
-        // same-origin link-rewriting handler, so the browser actually navigates
-        // to the select.html shim instead of routing inside the SPA.
-        html += '<a target="_self" href="/albumart?sectionimage=' + theme.selectSectionImage + '"><b>' + label + '</b></a>';
-      }
-      html += frameEnd;
-      html += '</td>';
+  function appendThemeCard(theme) {
+    var isActive = theme.folder === activeFolder;
+    var label = escapeThemeGalleryHtml(theme.shortLabel);
+    var imgSrc = '/albumart?sectionimage=' + theme.sectionImage;
+    var frameStyle = cardStyle;
+    if (isActive) {
+      frameStyle += 'border:3px solid ' + THEME_GALLERY_ACTIVE_BORDER + ';' +
+        'box-shadow:0 0 0 2px ' + THEME_GALLERY_ACTIVE_SHADOW + ';' +
+        'border-radius:4px;';
     }
-    for (idx = padLeft + themesInRow.length; idx < colsPerRow; idx++) {
-      html += '<td width="' + colWidth + '%"></td>';
+
+    openRow();
+    html += '<div style="' + frameStyle + '">';
+    html += '<img style="' + imgStyle + '" src="' + imgSrc + '" alt="' + label + '"/>';
+    html += '<div style="margin-top:6px;word-wrap:break-word;overflow-wrap:break-word;">';
+    if (isActive) {
+      html += '<font color="' + THEME_GALLERY_ACTIVE_BORDER + '"><b>' + label + ' (' + activeLabel + ')</b></font>';
+    } else {
+      // target attribute is required: it makes AngularJS $location skip its
+      // same-origin link-rewriting handler, so the browser actually navigates
+      // to the select.html shim instead of routing inside the SPA.
+      html += '<a target="_self" href="/albumart?sectionimage=' + theme.selectSectionImage + '"><b>' + label + '</b></a>';
     }
-    html += '</tr>';
+    html += '</div></div>';
   }
 
   themes.forEach(function (theme) {
     if (theme.resolution !== currentResolution) {
-      if (rowThemes.length) {
-        flushRow(rowThemes, true);
-        rowThemes = [];
-      }
+      closeRow();
       if (!firstResolution) {
-        html += '<tr><td colspan="' + colsPerRow + '"><hr/></td></tr>';
+        html += '<hr style="width:100%;margin:12px 0;border:0;border-top:1px solid #555;"/>';
       }
       firstResolution = false;
       currentResolution = theme.resolution;
-      html += '<tr><td align="center" colspan="' + colsPerRow + '"><b>' +
-        escapeThemeGalleryHtml(currentResolution) + '</b></td></tr>';
+      html += '<div style="width:100%;text-align:center;font-weight:bold;margin:8px 0 4px 0;">' +
+        escapeThemeGalleryHtml(currentResolution) + '</div>';
     }
-    rowThemes.push(theme);
-    if (rowThemes.length >= colsPerRow) {
-      flushRow(rowThemes, false);
-      rowThemes = [];
-    }
+    appendThemeCard(theme);
   });
 
-  if (rowThemes.length) {
-    flushRow(rowThemes, true);
-  }
-
-  html += '</table>';
+  closeRow();
+  html += '</div>';
   return html;
 };
 
