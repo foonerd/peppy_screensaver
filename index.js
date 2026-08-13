@@ -67,6 +67,7 @@ const REMOTE_HANDLER_NAME_REGEX = /^(volumio_[A-Za-z0-9_]+\.py|screensaverspectr
 const REMOTE_FONT_NAME_REGEX = /^[A-Za-z0-9 ._\-]+\.(ttf|otf)$/;
 const REMOTE_CAPABILITIES = ['fanart', 'folderlayer', 'italic', 'samplerate_color', 'progress_markers', 'spectrum', 'remote', 'type_display_mode'];
 const THEME_PREVIEW_FILES = ['preview.png', 'preview.jpg', 'preview.jpeg', 'art.png', 'art.jpg'];
+const THEME_GALLERY_CACHE_EXTS = ['.png', '.jpg', '.jpeg'];
 const THEME_GALLERY_COLS = 2;
 const THEME_GALLERY_ACTIVE_BORDER = '#54C688';
 const THEME_GALLERY_ACTIVE_SHADOW = '#2a6848';
@@ -3236,6 +3237,30 @@ peppyScreensaver.prototype.findThemePreviewFile = function (themeFolder) {
   return resolved ? resolved.path : null;
 };
 
+peppyScreensaver.prototype.removeThemeGalleryCacheSiblings = function (themeFolder, keepExt, cacheKeySuffix) {
+  var self = this;
+  var i;
+  var ext;
+  var siblingName;
+  var siblingPath;
+  var suffix = cacheKeySuffix || '';
+  if (!fs.existsSync(ThemeGalleryDir)) {
+    return;
+  }
+  for (i = 0; i < THEME_GALLERY_CACHE_EXTS.length; i++) {
+    ext = THEME_GALLERY_CACHE_EXTS[i];
+    if (ext === keepExt) {
+      continue;
+    }
+    siblingName = themeFolder + suffix + ext;
+    siblingPath = ThemeGalleryDir + '/' + siblingName;
+    if (fs.existsSync(siblingPath)) {
+      fs.removeSync(siblingPath);
+      galleryLog(self.logger, 'verbose', 'removed leftover cache ' + siblingName);
+    }
+  }
+};
+
 peppyScreensaver.prototype.ensureThemeGalleryCacheEntry = function (themeFolder, previewPath, cacheKeySuffix) {
   var self = this;
   try {
@@ -3246,16 +3271,26 @@ peppyScreensaver.prototype.ensureThemeGalleryCacheEntry = function (themeFolder,
     var cacheName = themeFolder + (cacheKeySuffix || '') + ext;
     var cachePath = ThemeGalleryDir + '/' + cacheName;
     var srcStat = fs.statSync(previewPath);
+    var version = String(Math.floor(srcStat.mtimeMs)) + '-' + String(srcStat.size);
+    var needCopy = true;
     if (fs.existsSync(cachePath)) {
       var dstStat = fs.statSync(cachePath);
-      if (dstStat.mtimeMs >= srcStat.mtimeMs) {
+      if (dstStat.size === srcStat.size && dstStat.mtimeMs >= srcStat.mtimeMs) {
         galleryLog(self.logger, 'trace', 'cache hit ' + cacheName + ' <- ' + previewPath);
-        return ThemeGallerySectionPrefix + cacheName;
+        needCopy = false;
+      } else if (dstStat.size !== srcStat.size) {
+        galleryLog(self.logger, 'verbose', 'cache stale size ' + cacheName + ' (' + dstStat.size + ' != ' + srcStat.size + ')');
       }
     }
-    fs.copySync(previewPath, cachePath);
-    galleryLog(self.logger, 'verbose', 'cached ' + cacheName + ' <- ' + previewPath);
-    return ThemeGallerySectionPrefix + cacheName;
+    if (needCopy) {
+      fs.copySync(previewPath, cachePath);
+      galleryLog(self.logger, 'verbose', 'cached ' + cacheName + ' <- ' + previewPath);
+    }
+    self.removeThemeGalleryCacheSiblings(themeFolder, ext, cacheKeySuffix);
+    return {
+      sectionImage: ThemeGallerySectionPrefix + cacheName,
+      version: version
+    };
   } catch (e) {
     galleryLog(self.logger, 'verbose', 'cache failed for ' + themeFolder + ': ' + e.message);
     return null;
@@ -3301,8 +3336,8 @@ peppyScreensaver.prototype.collectThemeGalleryEntries = function () {
       return;
     }
     var previewPath = resolved.path;
-    var sectionImage = self.ensureThemeGalleryCacheEntry(file, previewPath);
-    if (!sectionImage) {
+    var cached = self.ensureThemeGalleryCacheEntry(file, previewPath);
+    if (!cached) {
       return;
     }
     var selectSectionImage = self.ensureThemeGallerySelectPage(file);
@@ -3314,7 +3349,8 @@ peppyScreensaver.prototype.collectThemeGalleryEntries = function () {
       label: self.formatThemeShortLabel(file) + ' \u00b7 ' + self.parseThemeResolution(file),
       shortLabel: self.formatThemeShortLabel(file),
       resolution: self.parseThemeResolution(file),
-      sectionImage: sectionImage,
+      sectionImage: cached.sectionImage,
+      previewVersion: cached.version,
       selectSectionImage: selectSectionImage,
       previewSource: resolved.source,
       previewSection: resolved.section
@@ -3375,7 +3411,7 @@ peppyScreensaver.prototype.buildThemeGalleryHtml = function (themes, activeFolde
       theme = themesInRow[idx];
       isActive = theme.folder === activeFolder;
       label = escapeThemeGalleryHtml(theme.shortLabel);
-      imgSrc = '/albumart?sectionimage=' + theme.sectionImage;
+      imgSrc = '/albumart?sectionimage=' + theme.sectionImage + '&t=' + theme.previewVersion;
       frameStart = isActive ? buildThemeGalleryActiveFrameOpen() : '';
       frameEnd = isActive ? buildThemeGalleryActiveFrameClose() : '';
 
@@ -3935,7 +3971,9 @@ peppyScreensaver.prototype.removeThemeFolderConfirmed = function (data) {
   try {
     if (fs.existsSync(ThemeGalleryDir)) {
       fs.readdirSync(ThemeGalleryDir).forEach(function (f) {
-        if (f === folder + '.png' || f === folder + '.jpg' || f === folder + '.jpeg' || f === folder + '.select.html') {
+        var cacheExt = path.extname(f).toLowerCase();
+        var cacheBase = cacheExt ? f.slice(0, -cacheExt.length) : f;
+        if (f === folder + '.select.html' || (cacheBase === folder && THEME_GALLERY_CACHE_EXTS.indexOf(cacheExt) !== -1)) {
           fs.removeSync(ThemeGalleryDir + '/' + f);
         }
       });
