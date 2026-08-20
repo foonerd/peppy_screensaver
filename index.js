@@ -353,7 +353,7 @@ peppyScreensaver.prototype.onStart = function() {
                             var alsaConf = parseInt(self.config.get('alsaSelection'),10);
                             var arch = '';
                             try { arch = execSync('cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'').toString().trim(); } catch(e) {}
-                            if (alsaConf == 1 || arch === 'x64') {
+                            if ((alsaConf == 1 || arch === 'x64') && state.service === 'mpd') {
                                 exec('mpc enable 1 2>/dev/null', function(err) {});
                             }
                             exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {        
@@ -372,17 +372,15 @@ peppyScreensaver.prototype.onStart = function() {
             // Pause or stop detected.
             //
             // Classification:
-            //   volatile===true   → volatile service transition (Spotify/Airplay handoff) → ignore
-            //   status==='pause'  → always genuine
+            //   status==='pause'  → genuine, including Soloist (Volumio sets volatile:true
+            //                        for the whole volatile session, so volatile is not a
+            //                        pause/handoff discriminator)
             //   isGetEmptyState   → end-of-queue (Volumio pushEmptyState has no volatile field,
             //                        empty title/uri). Deterministic — always genuine.
-            //   volatile===false + metadata → track-change fall-through OR user stop.
-            //                        Indistinguishable by payload; use grace timer so a
+            //   status==='stop'   → track-change fall-through OR user stop. Grace timer so a
             //                        following 'play' (track change) can cancel the stop.
             
-            if (isVolatile) {
-                // volatile===true: service transition, ignore completely
-            } else if (status === 'pause' || isGetEmptyState) {
+            if (status === 'pause' || isGetEmptyState) {
                 // Pause or end-of-queue: genuine stop, act immediately
                 self.logger.info('peppy_screensaver: Genuine stop — ' + (status === 'pause' ? 'paused' : 'end of queue'));
                 
@@ -477,8 +475,10 @@ peppyScreensaver.prototype.onStart = function() {
                 }, TRANSITION_GRACE_MS);
             }
             
-            // Defensive: clear stale persist file on any transitional/volatile stop
-            if (isVolatile) {
+            // Volatile Soloist/spop pause is genuine persist. Do not delete the
+            // persist file on that path — Python only draws the persist countdown
+            // while the file exists. Clear it on volatile stop/handoff only.
+            if (isVolatile && status !== 'pause' && !isGetEmptyState) {
                 try {
                     if (fs.existsSync(persistFile)) {
                         fs.removeSync(persistFile);
