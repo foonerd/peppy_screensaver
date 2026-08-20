@@ -3201,12 +3201,14 @@ class TurntableHandler:
             import time as time_module
             current_time = time_module.time()
             
-            # Check for persist file (countdown mode for external control)
-            # Defensive: only show countdown when NOT transitional (volatile explicitly False)
+            # Persist file is the genuine-pause signal from the host plugin.
+            # Soloist stays volatile=true for the whole session, so requiring
+            # not is_transitional here showed frozen track remaining on pause
+            # while MPD (volatile=false) showed the countdown.
             persist_countdown_sec = None
             persist_display_mode = "freeze"
             persist_file = os.path.join(tempfile.gettempdir(), 'peppy_persist')
-            if not is_playing and not is_transitional and os.path.exists(persist_file):
+            if not is_playing and os.path.exists(persist_file):
                 try:
                     with open(persist_file, 'r') as f:
                         parts = f.read().strip().split(':')
