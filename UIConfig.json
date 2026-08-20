@@ -18,6 +18,7 @@
                                       "useDSP",
                                       "useSpotify",
                                       "useUSBDAC",
+                                      "useSoloist",
                                       "useAirplay"
                                       ]
                               },
@@ -62,6 +63,14 @@
                              "doc": "TRANSLATE.PEPPY_SCREENSAVER.USBDAC_DOC",
                              "label": "TRANSLATE.PEPPY_SCREENSAVER.USBDAC",
                              "value": false
+                            },
+                            {
+                             "id": "useSoloist",
+                             "element": "switch",
+                             "visibleIf": {"field": "useDSP", "value": false},
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.SOLOIST_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.SOLOIST",
+                             "value": true
                             },
                             {
                              "id": "useAirplay",

@@ -107,6 +107,7 @@ var remoteConfigVersion = '';  // MD5 hash of config.txt for change detection
 var availMeters = '';
 var uiNeedsUpdate;
 const spotify_config = '/data/plugins/music_service/spop/config.yml.tmpl';
+const soloist_index = '/data/plugins/music_service/soloist_connect/index.js';
 const dsp_config = '/data/plugins/audio_interface/fusiondsp/camilladsp.conf.yml';
 module.exports = peppyScreensaver;
 
@@ -144,6 +145,9 @@ peppyScreensaver.prototype.onVolumioStart = function()
 	var configFile = self.commandRouter.pluginManager.getConfigurationFile(self.context,'config.json');
 	self.config = new (require('v-conf'))();
 	self.config.loadFile(configFile);
+	if (self.config.get('useSoloist') === undefined) {
+		self.config.addConfigValue('useSoloist', 'boolean', true);
+	}
         
     return libQ.resolve();
 };
@@ -249,12 +253,17 @@ peppyScreensaver.prototype.onStart = function() {
       // Apply saved ALSA config on startup
       var alsaconf = parseInt(self.config.get('alsaSelection'),10);
       self.switch_alsaConfig(alsaconf);
+      if (self.connectProvider() === 'conflict') {
+        self.commandRouter.pushToastMessage('warning',
+          self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+          self.commandRouter.getI18nString('PEPPY_SCREENSAVER.CONNECT_CONFLICT_DESC'));
+      }
       
       // event callback if outputdevice or mixer changed
       self.commandRouter.sharedVars.registerCallback('alsa.outputdevice', self.switch_alsaModular.bind(self));
       
       // synchronize external spotify settings with own configuration  
-      if (fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED'){
+      if (self.connectProvider() === 'spop'){
         var spotifydata = fs.readFileSync(spotify_config, 'utf8'); 
         //var useSpot = self.config.get('useSpotify');
         //if ((useSpot && spotifydata.includes('volumio')) || (!useSpot && spotifydata.includes('spotify'))) {
@@ -742,18 +751,38 @@ peppyScreensaver.prototype.getUIConfig = function() {
                     self.config.set('useDSP', false);
                     C('useDSP').hidden = true;
                 }
-                // Spotify integration
-                if (fs.existsSync(spotify_config)){
-                    if (self.getPluginStatus ('music_service', 'spop') === 'STARTED') {
-                        if (self.config.get('useDSP')) {
-                            self.config.set('useSpotify', false);
-                        } else {
-                            C('useSpotify').value = self.config.get('useSpotify');
-                            C('useUSBDAC').value = self.config.get('useUSBDAC');
+                // Spotify Connect (spop) and Soloist are exclusive. The operator
+                // enables one music_service plugin; this UI shows that plugin's
+                // meter switch only. useSpotify still rewrites librespot YAML.
+                var connectProvider = self.connectProvider();
+                C('useSoloist').hidden = true;
+                if (connectProvider === 'conflict') {
+                    C('useSpotify').hidden = true;
+                    C('useUSBDAC').hidden = true;
+                    for (var _as = 0; _as < uiconf.sections.length; _as++) {
+                        if (uiconf.sections[_as].id === 'audio_source_conf') {
+                            uiconf.sections[_as].description = self.commandRouter.getI18nString('PEPPY_SCREENSAVER.CONNECT_CONFLICT_DESC');
+                            break;
                         }
+                    }
+                    self.commandRouter.pushToastMessage('warning',
+                        self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                        self.commandRouter.getI18nString('PEPPY_SCREENSAVER.CONNECT_CONFLICT_DESC'));
+                } else if (connectProvider === 'soloist') {
+                    C('useSpotify').hidden = true;
+                    C('useUSBDAC').hidden = true;
+                    if (self.config.get('useDSP')) {
+                        self.config.set('useSoloist', false);
                     } else {
-                        C('useSpotify').hidden = true; // hide spotify
-                        C('useUSBDAC').hidden = true; // hide USB-DAC
+                        C('useSoloist').hidden = false;
+                        C('useSoloist').value = self.config.get('useSoloist') === true;
+                    }
+                } else if (connectProvider === 'spop') {
+                    if (self.config.get('useDSP')) {
+                        self.config.set('useSpotify', false);
+                    } else {
+                        C('useSpotify').value = self.config.get('useSpotify');
+                        C('useUSBDAC').value = self.config.get('useUSBDAC');
                     }
                 } else {
                     self.config.set('useSpotify', false);
@@ -1345,7 +1374,9 @@ peppyScreensaver.prototype.saveAudioSourceConf = function (confData) {
       alsaLog(self.logger, 'basic', 'saveAudioSourceConf: useDSP toggled ' + self.config.get('useDSP') + ' -> ' + confData.useDSP);
       self.config.set('useDSP', confData.useDSP);
       self.checkDSPactive(!confData.useDSP);
-      self.switch_Spotify(!confData.useDSP);
+      if (self.connectProvider() === 'spop') {
+          self.switch_Spotify(!confData.useDSP);
+      }
       noChanges = false;
       uiNeedsReboot = true;
   }
@@ -1359,8 +1390,9 @@ peppyScreensaver.prototype.saveAudioSourceConf = function (confData) {
       uiNeedsReboot = true;
   }
 
-  // write spotify / USB-DAC
-  if (self.getPluginStatus ('music_service', 'spop') === 'STARTED') {
+  // write spotify / USB-DAC (spop only) or Soloist metering (soloist only)
+  var connectProvider = self.connectProvider();
+  if (connectProvider === 'spop') {
       if (confData.useDSP) {
           self.config.set('useSpotify', false);
       } else {
@@ -1374,6 +1406,14 @@ peppyScreensaver.prototype.saveAudioSourceConf = function (confData) {
               noChanges = false;
               uiNeedsReboot = true;
           }
+      }
+  } else if (connectProvider === 'soloist') {
+      if (confData.useDSP) {
+          self.config.set('useSoloist', false);
+      } else if (self.config.get('useSoloist') != confData.useSoloist) {
+          self.config.set('useSoloist', !!confData.useSoloist);
+          noChanges = false;
+          uiNeedsReboot = true;
       }
   }
 
@@ -4708,9 +4748,12 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
     conf = conf.replace('${alsaDirect}', 'peppy2_off');
     conf = conf.replace('${type}', plugType);
 
-    //for spotify
+    //for spotify / Soloist — exclusive. Conflict leaves pcm.spotify empty.
+    var connectProvider = self.connectProvider();
     if (!useDSP) {
-        if (useSpot){
+        if (connectProvider === 'spop' && useSpot){
+            conf = conf.replace('${spotMeter}', 'spotify');
+        } else if (connectProvider === 'soloist' && self.config.get('useSoloist') === true && alsaConf == 1) {
             conf = conf.replace('${spotMeter}', 'spotify');
         } else {
             conf = conf.replace('${spotDirect}', 'spotify');
@@ -4743,7 +4786,7 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
             defer.resolve(); // resolve anyway to not block chain
         } else {
             alsaLog(self.logger, 'basic', 'config written: ' + asoundConf);
-            if (fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED'){
+            if (self.connectProvider() === 'spop'){
                 var cmdret = self.commandRouter.executeOnPlugin('music_service', 'spop', 'initializeLibrespotDaemon', '');            
             }
             defer.resolve();
@@ -4774,8 +4817,26 @@ peppyScreensaver.prototype.writeSoftMixerFile = function (data) {
 peppyScreensaver.prototype.updateALSAConfigFile = function () {
 	var self = this;
     var defer = libQ.defer();
-    self.commandRouter.executeOnPlugin('audio_interface', 'alsa_controller', 'updateALSAConfigFile');
-    defer.resolve();
+    var done = false;
+    var finish = function () {
+        if (done) return;
+        done = true;
+        self.notifySoloistMetering();
+        defer.resolve();
+    };
+    var ret;
+    try {
+        ret = self.commandRouter.executeOnPlugin('audio_interface', 'alsa_controller', 'updateALSAConfigFile');
+    } catch (e) {
+        self.logger.error(id + 'updateALSAConfigFile: ' + e);
+        finish();
+        return defer.promise;
+    }
+    if (ret && typeof ret.then === 'function') {
+        ret.then(finish).fail(finish);
+    } else {
+        finish();
+    }
     return defer.promise;
 };
     
@@ -4812,6 +4873,32 @@ peppyScreensaver.prototype.getPluginStatus = function (category, name) {
   var retStr = PlugInConfig.get(category + '.' + name + '.status');
   retStr = typeof retStr === 'undefined' ? 'null' : retStr;
   return retStr;  
+};
+
+// Operator enables Soloist or stock Spotify Connect, not both.
+peppyScreensaver.prototype.connectProvider = function () {
+  var soloist = fs.existsSync(soloist_index) && this.getPluginStatus('music_service', 'soloist_connect') === 'STARTED';
+  var spop = fs.existsSync(spotify_config) && this.getPluginStatus('music_service', 'spop') === 'STARTED';
+  if (soloist && spop) return 'conflict';
+  if (soloist) return 'soloist';
+  if (spop) return 'spop';
+  return 'none';
+};
+
+peppyScreensaver.prototype.soloistMeteringWanted = function () {
+  var useDSP = fs.existsSync(dsp_config) && this.config.get('useDSP');
+  var dsd = parseInt(this.config.get('alsaSelection'), 10) === 1;
+  return this.connectProvider() === 'soloist' && !useDSP && dsd && this.config.get('useSoloist') === true;
+};
+
+peppyScreensaver.prototype.notifySoloistMetering = function () {
+  if (this.getPluginStatus('music_service', 'soloist_connect') !== 'STARTED') return;
+  this.commandRouter.executeOnPlugin(
+    'music_service',
+    'soloist_connect',
+    'setPeppyMetering',
+    this.soloistMeteringWanted()
+  );
 };
 //-------------------------------------------------------------
 
@@ -5132,7 +5219,7 @@ peppyScreensaver.prototype.restoreSettingsBackup = function (data) {
         var dispOut = parseInt(self.config.get('displayOutput'), 10);
         self.switch_DisplayPort(dispOut);
         
-        if (fs.existsSync(spotify_config) && self.getPluginStatus('music_service', 'spop') === 'STARTED') {
+        if (self.connectProvider() === 'spop') {
             var useSpot = self.config.get('useSpotify');
             self.switch_Spotify(useSpot);
         }
