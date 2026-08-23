@@ -158,6 +158,7 @@ peppyScreensaver.prototype.onStart = function() {
     var lastStateIsPlaying = false;
     self.Timeout = null;
     self.persistTimer = null;
+    self.meterChild = null;
 
     // load language strings here again, otherwise needs restart after installation
     self.commandRouter.loadI18nStrings();
@@ -347,24 +348,35 @@ peppyScreensaver.prototype.onStart = function() {
                     var ScreenTimeout = (parseInt(self.config.get('timeout'),10)) * 1000;
                   
                     if (ScreenTimeout > 0){ // for 0 do nothing
-                        self.Timeout = setInterval(function () {
-                          if (!fs.existsSync(runFlag)){
-                            // Enable mpd_peppyalsa output before starting meter - only for DSD mode or x64
-                            // Modular ALSA uses inline meter and output 1 must stay disabled
-                            var alsaConf = parseInt(self.config.get('alsaSelection'),10);
-                            var arch = '';
-                            try { arch = execSync('cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'').toString().trim(); } catch(e) {}
-                            if ((alsaConf == 1 || arch === 'x64') && state.service === 'mpd') {
-                                exec('mpc enable 1 2>/dev/null', function(err) {});
-                            }
-                            exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {        
+                        var startMeterOnce = function () {
+                          if (self.meterChild && self.meterChild.exitCode === null) {
+                            return;
+                          }
+                          // Enable mpd_peppyalsa output before starting meter - only for DSD mode or x64
+                          // Modular ALSA uses inline meter and output 1 must stay disabled
+                          var alsaConf = parseInt(self.config.get('alsaSelection'),10);
+                          var arch = '';
+                          try { arch = execSync('cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'').toString().trim(); } catch(e) {}
+                          if ((alsaConf == 1 || arch === 'x64') && state.service === 'mpd') {
+                              exec('mpc enable 1 2>/dev/null', function(err) {});
+                          }
+                          var child = exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {
                             if (error !== null) {
                                 self.logger.error(id + 'Error start PeppyMeter: ' + error);
                             } else {
                                 self.logger.info(id + 'Start PeppyMeter');
-                            }    
+                            }
+                            if (self.meterChild === child) {
+                                self.meterChild = null;
+                                if (self.Timeout) {
+                                    startMeterOnce();
+                                }
+                            }
                           });
-                          }        
+                          self.meterChild = child;
+                        };
+                        self.Timeout = setInterval(function () {
+                            startMeterOnce();
                         }, ScreenTimeout);
                     }
                 }
@@ -4782,11 +4794,13 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
     conf = conf.replace('${type}', plugType);
 
     //for spotify / Soloist — exclusive. Conflict leaves pcm.spotify empty.
+    // Name pcm.spotify from the Soloist install marker, not STARTED. Motivo
+    // writes this file before plugins.json says STARTED; hanger does not.
     var connectProvider = self.connectProvider();
     if (!useDSP) {
         if (connectProvider === 'spop' && useSpot){
             conf = conf.replace('${spotMeter}', 'spotify');
-        } else if (connectProvider === 'soloist' && self.config.get('useSoloist') === true && alsaConf == 1) {
+        } else if (fs.existsSync(soloist_index) && connectProvider !== 'spop' && connectProvider !== 'conflict' && self.config.get('useSoloist') === true && alsaConf == 1) {
             conf = conf.replace('${spotMeter}', 'spotify');
         } else {
             conf = conf.replace('${spotDirect}', 'spotify');
