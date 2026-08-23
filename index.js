@@ -165,6 +165,7 @@ peppyScreensaver.prototype.onStart = function() {
     // create fifo pipe for PeppyMeter/PeppySpectrum
     self.install_mkfifo('/tmp/myfifo');
     self.install_mkfifo('/tmp/myfifosa');
+    self.holdMeterFifos();
     // load snd dummy for peppymeter output 
     self.install_dummy();
 
@@ -594,6 +595,8 @@ peppyScreensaver.prototype.onStart = function() {
 peppyScreensaver.prototype.onStop = function() {
     var self = this;
     var defer=libQ.defer();
+
+    self.releaseMeterFifos();
 
     self.commandRouter.stateMachine.stop().then(function () {
         if (fs.existsSync(MPD)){
@@ -4311,6 +4314,36 @@ peppyScreensaver.prototype.install_mkfifo = function (fifoName) {
   } catch (err) {
     self.logger.info('failed to create ' + fifoName + ' ' + err);
   }    
+};
+
+// peppyalsa opens these write-only. No reader → ENXIO at snd_pcm_open of any
+// metered PCM, including before the screensaver (the real reader) appears.
+// Hold RDWR and never read: the kernel sees a reader, the Python meter still
+// gets every byte. Do not depend on install_mkfifo (async exec).
+peppyScreensaver.prototype.holdMeterFifos = function () {
+  var self = this;
+  self.releaseMeterFifos();
+  self._meterFifoFds = [];
+  ['/tmp/myfifo', '/tmp/myfifosa'].forEach(function (fifoName) {
+    try {
+      if (!fs.existsSync(fifoName)) {
+        execSync('/usr/bin/mkfifo -m 646 ' + fifoName, { uid: 1000, gid: 1000 });
+      }
+      var fd = fs.openSync(fifoName, fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+      self._meterFifoFds.push(fd);
+    } catch (err) {
+      self.logger.info(id + 'cannot hold ' + fifoName + ': ' + err);
+    }
+  });
+};
+
+peppyScreensaver.prototype.releaseMeterFifos = function () {
+  var fds = this._meterFifoFds;
+  this._meterFifoFds = [];
+  if (!fds) return;
+  fds.forEach(function (fd) {
+    try { fs.closeSync(fd); } catch (e) { /* already closed */ }
+  });
 };
 
 // switch alsa config
