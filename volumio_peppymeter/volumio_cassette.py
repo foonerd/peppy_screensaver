@@ -2003,41 +2003,31 @@ class CassetteHandler:
         use_queue = (queue_mode == "queue" and not volatile and 
                      meta.get("queue_progress_pct") is not None)
         
-        if use_queue:
-            effective_duration = meta.get("queue_duration", 0) or 0
-            effective_progress_pct = meta.get("queue_progress_pct", 0.0)
-            effective_time_remaining = meta.get("queue_time_remaining", 0.0)
-        else:
-            # Track mode (default or fallback)
-            effective_duration = duration
-            if duration > 0:
-                seek = meta.get("seek", 0) or 0
-                effective_progress_pct = (seek / 1000.0 / duration) * 100.0
-                effective_time_remaining = duration - (seek / 1000.0)
-            else:
-                effective_progress_pct = 0.0
-                effective_time_remaining = None
-        
-        # Pass effective progress to indicators via metadata
-        # This allows progress bar to reflect queue progress when queue mode is active
-        meta["_effective_progress_pct"] = effective_progress_pct
-        
-        # Seek interpolation - calculate current position based on elapsed time
-        # CRITICAL: Don't use 'or' fallback - 0 is a valid seek position!
         seek_raw = meta.get("_seek_raw")
         if seek_raw is None:
             seek_raw = meta.get("seek", 0) or 0
         seek = seek_raw
         seek_update_time = meta.get("_seek_update", 0)
-        
-        # Interpolate seek based on elapsed time when playing
-        # Use _seek_raw to avoid accumulation error from previous frames
-        # Webradio excluded by duration=0 check
         if is_playing and duration > 0:
             if seek_update_time > 0:
                 elapsed_ms = (time.time() - seek_update_time) * 1000
                 seek = min(duration * 1000, seek_raw + elapsed_ms)
-                meta["seek"] = seek  # Update for indicators (progress bar)
+                meta["seek"] = seek
+
+        if use_queue:
+            effective_duration = meta.get("queue_duration", 0) or 0
+            effective_progress_pct = meta.get("queue_progress_pct", 0.0)
+            effective_time_remaining = meta.get("queue_time_remaining", 0.0)
+        else:
+            effective_duration = duration
+            if duration > 0:
+                effective_progress_pct = (seek / 1000.0 / duration) * 100.0
+                effective_time_remaining = duration - (seek / 1000.0)
+            else:
+                effective_progress_pct = 0.0
+                effective_time_remaining = None
+
+        meta["_effective_progress_pct"] = effective_progress_pct
         
         # Adaptive spool speeds: dynamically adjust based on progress
         # Left spool slows down (less tape), right spool speeds up (more tape accumulated)

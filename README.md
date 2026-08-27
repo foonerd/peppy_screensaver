@@ -77,8 +77,9 @@ The plugin settings are organized into sections:
 |---------|-------------|
 | ALSA Device | Audio input source for visualization |
 | DSP | Enable DSP processing |
-| Use Spotify | Include Spotify playback (x64: see Troubleshooting for config) |
-| Use USB DAC | Include USB DAC playback |
+| Use Spotify | Meter stock Spotify Connect (`spop`). Hidden when Soloist is the active Connect plugin (x64: see Troubleshooting) |
+| Use Soloist | Meter Soloist Connect on DSD native. Hidden when stock Spotify Connect is active. Modular already meters `pcm.volumio` |
+| Use USB DAC | Include USB DAC playback (stock Spotify Connect only) |
 | Use Airplay | Include Airplay playback |
 | Timeout | Idle timeout before screensaver activates |
 | Meter | Select active meter skin |
@@ -90,6 +91,8 @@ The plugin settings are organized into sections:
 | Do Not Delete Themes | Preserve custom themes during install/uninstall |
 | Use System Fonts | Use Volumio system fonts (Lato) instead of PeppyFont |
 | Allow Template Updates via Network Share | Open template folder permissions for SMB access |
+
+**Spotify Connect and Soloist are exclusive.** Enable only one music-service plugin. The Audio Source section shows that plugin's meter switch. If both are started, Peppy hides both switches and will not rewrite either Spotify ALSA path until one is disabled.
 
 #### Network Share Access for Templates
 
@@ -234,6 +237,8 @@ Controls display persistence during pause and track changes.
 **Time display modes:**
 - **Freeze**: Shows track time at moment of pause (default)
 - **Countdown**: Shows time until display turns off (orange color)
+
+Soloist (and stock Spotify Connect) sessions stay `volatile: true` for the whole session. Pause is still a genuine persist: the host keeps `/tmp/peppy_persist` so freeze/countdown work, including on turntable skins. The file is cleared on volatile stop or handoff, not on pause.
 
 **Queue progress mode:** Determines how cassette reels and turntable tonearm track playback progress:
 - **Single Track**: Animations based on current track duration (default)
@@ -834,6 +839,16 @@ sudo apt-get install -y libsdl2-ttf-2.0-0 libsdl2-image-2.0-0 libsdl2-mixer-2.0-
 ```bash
 sudo chown -R volumio:volumio /data/plugins/user_interface/peppy_screensaver
 ```
+
+### Spotify Connect and Soloist
+
+Stock Spotify Connect (`spop`) and Soloist Connect cannot be metered at the same time. Enable one plugin in Volumio.
+
+- **Stock Spotify:** Use Spotify integration (and USB DAC if needed). Apply rewrites librespot YAML.
+- **Soloist, modular ALSA:** Meters already run on `pcm.volumio`. Soloist stays on `plug:volumio`.
+- **Soloist, DSD native:** Enable Soloist integration and Apply. Peppy names `pcm.spotify` as the 4-channel meter and asks Soloist to play `plug:spotify`. `pcm.Peppyalsa` stays empty so DSD remains bit-perfect.
+
+If both plugins are started, Peppy shows a conflict warning and leaves the Spotify ALSA path empty.
 
 ### x64 Spotify Configuration
 

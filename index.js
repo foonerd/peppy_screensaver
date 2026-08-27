@@ -67,11 +67,11 @@ const REMOTE_HANDLER_NAME_REGEX = /^(volumio_[A-Za-z0-9_]+\.py|screensaverspectr
 const REMOTE_FONT_NAME_REGEX = /^[A-Za-z0-9 ._\-]+\.(ttf|otf)$/;
 const REMOTE_CAPABILITIES = ['fanart', 'folderlayer', 'italic', 'samplerate_color', 'progress_markers', 'spectrum', 'remote', 'type_display_mode'];
 const THEME_PREVIEW_FILES = ['preview.png', 'preview.jpg', 'preview.jpeg', 'art.png', 'art.jpg'];
-const THEME_GALLERY_COLS = 3;
-const THEME_GALLERY_IMG_WIDTH = 200;
+const THEME_GALLERY_CACHE_EXTS = ['.png', '.jpg', '.jpeg'];
+const THEME_GALLERY_COLS = 2;
 const THEME_GALLERY_ACTIVE_BORDER = '#54C688';
 const THEME_GALLERY_ACTIVE_SHADOW = '#2a6848';
-// Gallery preview resolution logging — gated by peppy_config debug.level
+// Gallery preview resolution logging - gated by peppy_config debug.level
 // basic: resolved source; verbose: candidates/skips; trace: per-section detail
 function galleryLog(logger, level, msg) {
     if (!peppy_config || !peppy_config.current) return;
@@ -107,6 +107,7 @@ var remoteConfigVersion = '';  // MD5 hash of config.txt for change detection
 var availMeters = '';
 var uiNeedsUpdate;
 const spotify_config = '/data/plugins/music_service/spop/config.yml.tmpl';
+const soloist_index = '/data/plugins/music_service/soloist_connect/index.js';
 const dsp_config = '/data/plugins/audio_interface/fusiondsp/camilladsp.conf.yml';
 module.exports = peppyScreensaver;
 
@@ -144,6 +145,9 @@ peppyScreensaver.prototype.onVolumioStart = function()
 	var configFile = self.commandRouter.pluginManager.getConfigurationFile(self.context,'config.json');
 	self.config = new (require('v-conf'))();
 	self.config.loadFile(configFile);
+	if (self.config.get('useSoloist') === undefined) {
+		self.config.addConfigValue('useSoloist', 'boolean', true);
+	}
         
     return libQ.resolve();
 };
@@ -154,6 +158,7 @@ peppyScreensaver.prototype.onStart = function() {
     var lastStateIsPlaying = false;
     self.Timeout = null;
     self.persistTimer = null;
+    self.meterChild = null;
 
     // load language strings here again, otherwise needs restart after installation
     self.commandRouter.loadI18nStrings();
@@ -161,6 +166,7 @@ peppyScreensaver.prototype.onStart = function() {
     // create fifo pipe for PeppyMeter/PeppySpectrum
     self.install_mkfifo('/tmp/myfifo');
     self.install_mkfifo('/tmp/myfifosa');
+    self.holdMeterFifos();
     // load snd dummy for peppymeter output 
     self.install_dummy();
 
@@ -249,12 +255,17 @@ peppyScreensaver.prototype.onStart = function() {
       // Apply saved ALSA config on startup
       var alsaconf = parseInt(self.config.get('alsaSelection'),10);
       self.switch_alsaConfig(alsaconf);
+      if (self.connectProvider() === 'conflict') {
+        self.commandRouter.pushToastMessage('warning',
+          self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+          self.commandRouter.getI18nString('PEPPY_SCREENSAVER.CONNECT_CONFLICT_DESC'));
+      }
       
       // event callback if outputdevice or mixer changed
       self.commandRouter.sharedVars.registerCallback('alsa.outputdevice', self.switch_alsaModular.bind(self));
       
       // synchronize external spotify settings with own configuration  
-      if (fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED'){
+      if (self.connectProvider() === 'spop'){
         var spotifydata = fs.readFileSync(spotify_config, 'utf8'); 
         //var useSpot = self.config.get('useSpotify');
         //if ((useSpot && spotifydata.includes('volumio')) || (!useSpot && spotifydata.includes('spotify'))) {
@@ -337,24 +348,35 @@ peppyScreensaver.prototype.onStart = function() {
                     var ScreenTimeout = (parseInt(self.config.get('timeout'),10)) * 1000;
                   
                     if (ScreenTimeout > 0){ // for 0 do nothing
-                        self.Timeout = setInterval(function () {
-                          if (!fs.existsSync(runFlag)){
-                            // Enable mpd_peppyalsa output before starting meter - only for DSD mode or x64
-                            // Modular ALSA uses inline meter and output 1 must stay disabled
-                            var alsaConf = parseInt(self.config.get('alsaSelection'),10);
-                            var arch = '';
-                            try { arch = execSync('cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'').toString().trim(); } catch(e) {}
-                            if (alsaConf == 1 || arch === 'x64') {
-                                exec('mpc enable 1 2>/dev/null', function(err) {});
-                            }
-                            exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {        
+                        var startMeterOnce = function () {
+                          if (self.meterChild && self.meterChild.exitCode === null) {
+                            return;
+                          }
+                          // Enable mpd_peppyalsa output before starting meter - only for DSD mode or x64
+                          // Modular ALSA uses inline meter and output 1 must stay disabled
+                          var alsaConf = parseInt(self.config.get('alsaSelection'),10);
+                          var arch = '';
+                          try { arch = execSync('cat /etc/os-release | grep ^VOLUMIO_ARCH | tr -d \'VOLUMIO_ARCH="\'').toString().trim(); } catch(e) {}
+                          if ((alsaConf == 1 || arch === 'x64') && state.service === 'mpd') {
+                              exec('mpc enable 1 2>/dev/null', function(err) {});
+                          }
+                          var child = exec( RunPeppyFile, { uid: 1000, gid: 1000 }, function (error, stdout, stderr) {
                             if (error !== null) {
                                 self.logger.error(id + 'Error start PeppyMeter: ' + error);
                             } else {
                                 self.logger.info(id + 'Start PeppyMeter');
-                            }    
+                            }
+                            if (self.meterChild === child) {
+                                self.meterChild = null;
+                                if (self.Timeout) {
+                                    startMeterOnce();
+                                }
+                            }
                           });
-                          }        
+                          self.meterChild = child;
+                        };
+                        self.Timeout = setInterval(function () {
+                            startMeterOnce();
                         }, ScreenTimeout);
                     }
                 }
@@ -363,17 +385,15 @@ peppyScreensaver.prototype.onStart = function() {
             // Pause or stop detected.
             //
             // Classification:
-            //   volatile===true   → volatile service transition (Spotify/Airplay handoff) → ignore
-            //   status==='pause'  → always genuine
+            //   status==='pause'  → genuine, including Soloist (Volumio sets volatile:true
+            //                        for the whole volatile session, so volatile is not a
+            //                        pause/handoff discriminator)
             //   isGetEmptyState   → end-of-queue (Volumio pushEmptyState has no volatile field,
             //                        empty title/uri). Deterministic — always genuine.
-            //   volatile===false + metadata → track-change fall-through OR user stop.
-            //                        Indistinguishable by payload; use grace timer so a
+            //   status==='stop'   → track-change fall-through OR user stop. Grace timer so a
             //                        following 'play' (track change) can cancel the stop.
             
-            if (isVolatile) {
-                // volatile===true: service transition, ignore completely
-            } else if (status === 'pause' || isGetEmptyState) {
+            if (status === 'pause' || isGetEmptyState) {
                 // Pause or end-of-queue: genuine stop, act immediately
                 self.logger.info('peppy_screensaver: Genuine stop — ' + (status === 'pause' ? 'paused' : 'end of queue'));
                 
@@ -468,8 +488,10 @@ peppyScreensaver.prototype.onStart = function() {
                 }, TRANSITION_GRACE_MS);
             }
             
-            // Defensive: clear stale persist file on any transitional/volatile stop
-            if (isVolatile) {
+            // Volatile Soloist/spop pause is genuine persist. Do not delete the
+            // persist file on that path — Python only draws the persist countdown
+            // while the file exists. Clear it on volatile stop/handoff only.
+            if (isVolatile && status !== 'pause' && !isGetEmptyState) {
                 try {
                     if (fs.existsSync(persistFile)) {
                         fs.removeSync(persistFile);
@@ -585,6 +607,8 @@ peppyScreensaver.prototype.onStart = function() {
 peppyScreensaver.prototype.onStop = function() {
     var self = this;
     var defer=libQ.defer();
+
+    self.releaseMeterFifos();
 
     self.commandRouter.stateMachine.stop().then(function () {
         if (fs.existsSync(MPD)){
@@ -742,18 +766,38 @@ peppyScreensaver.prototype.getUIConfig = function() {
                     self.config.set('useDSP', false);
                     C('useDSP').hidden = true;
                 }
-                // Spotify integration
-                if (fs.existsSync(spotify_config)){
-                    if (self.getPluginStatus ('music_service', 'spop') === 'STARTED') {
-                        if (self.config.get('useDSP')) {
-                            self.config.set('useSpotify', false);
-                        } else {
-                            C('useSpotify').value = self.config.get('useSpotify');
-                            C('useUSBDAC').value = self.config.get('useUSBDAC');
+                // Spotify Connect (spop) and Soloist are exclusive. The operator
+                // enables one music_service plugin; this UI shows that plugin's
+                // meter switch only. useSpotify still rewrites librespot YAML.
+                var connectProvider = self.connectProvider();
+                C('useSoloist').hidden = true;
+                if (connectProvider === 'conflict') {
+                    C('useSpotify').hidden = true;
+                    C('useUSBDAC').hidden = true;
+                    for (var _as = 0; _as < uiconf.sections.length; _as++) {
+                        if (uiconf.sections[_as].id === 'audio_source_conf') {
+                            uiconf.sections[_as].description = self.commandRouter.getI18nString('PEPPY_SCREENSAVER.CONNECT_CONFLICT_DESC');
+                            break;
                         }
+                    }
+                    self.commandRouter.pushToastMessage('warning',
+                        self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME'),
+                        self.commandRouter.getI18nString('PEPPY_SCREENSAVER.CONNECT_CONFLICT_DESC'));
+                } else if (connectProvider === 'soloist') {
+                    C('useSpotify').hidden = true;
+                    C('useUSBDAC').hidden = true;
+                    if (self.config.get('useDSP')) {
+                        self.config.set('useSoloist', false);
                     } else {
-                        C('useSpotify').hidden = true; // hide spotify
-                        C('useUSBDAC').hidden = true; // hide USB-DAC
+                        C('useSoloist').hidden = false;
+                        C('useSoloist').value = self.config.get('useSoloist') === true;
+                    }
+                } else if (connectProvider === 'spop') {
+                    if (self.config.get('useDSP')) {
+                        self.config.set('useSpotify', false);
+                    } else {
+                        C('useSpotify').value = self.config.get('useSpotify');
+                        C('useUSBDAC').value = self.config.get('useUSBDAC');
                     }
                 } else {
                     self.config.set('useSpotify', false);
@@ -888,8 +932,9 @@ peppyScreensaver.prototype.getUIConfig = function() {
                     C('cachesize').attributes[0].placeholder];
             }
 
-            // meter sensitivity
-            C('meterGain').value = parseInt(peppy_config.data.source['volume.gain.db'], 10) || 0;
+            // meter sensitivity (may be negative; do not use || 0 which would clobber valid 0)
+            var meterGainVal = parseInt(peppy_config.data.source['volume.gain.db'], 10);
+            C('meterGain').value = Number.isFinite(meterGainVal) ? meterGainVal : 0;
             minmax[15] = [C('meterGain').attributes[2].min,
                 C('meterGain').attributes[3].max,
                 C('meterGain').attributes[0].placeholder];
@@ -1344,7 +1389,9 @@ peppyScreensaver.prototype.saveAudioSourceConf = function (confData) {
       alsaLog(self.logger, 'basic', 'saveAudioSourceConf: useDSP toggled ' + self.config.get('useDSP') + ' -> ' + confData.useDSP);
       self.config.set('useDSP', confData.useDSP);
       self.checkDSPactive(!confData.useDSP);
-      self.switch_Spotify(!confData.useDSP);
+      if (self.connectProvider() === 'spop') {
+          self.switch_Spotify(!confData.useDSP);
+      }
       noChanges = false;
       uiNeedsReboot = true;
   }
@@ -1358,8 +1405,9 @@ peppyScreensaver.prototype.saveAudioSourceConf = function (confData) {
       uiNeedsReboot = true;
   }
 
-  // write spotify / USB-DAC
-  if (self.getPluginStatus ('music_service', 'spop') === 'STARTED') {
+  // write spotify / USB-DAC (spop only) or Soloist metering (soloist only)
+  var connectProvider = self.connectProvider();
+  if (connectProvider === 'spop') {
       if (confData.useDSP) {
           self.config.set('useSpotify', false);
       } else {
@@ -1373,6 +1421,14 @@ peppyScreensaver.prototype.saveAudioSourceConf = function (confData) {
               noChanges = false;
               uiNeedsReboot = true;
           }
+      }
+  } else if (connectProvider === 'soloist') {
+      if (confData.useDSP) {
+          self.config.set('useSoloist', false);
+      } else if (self.config.get('useSoloist') != confData.useSoloist) {
+          self.config.set('useSoloist', !!confData.useSoloist);
+          noChanges = false;
+          uiNeedsReboot = true;
       }
   }
 
@@ -3236,6 +3292,30 @@ peppyScreensaver.prototype.findThemePreviewFile = function (themeFolder) {
   return resolved ? resolved.path : null;
 };
 
+peppyScreensaver.prototype.removeThemeGalleryCacheSiblings = function (themeFolder, keepExt, cacheKeySuffix) {
+  var self = this;
+  var i;
+  var ext;
+  var siblingName;
+  var siblingPath;
+  var suffix = cacheKeySuffix || '';
+  if (!fs.existsSync(ThemeGalleryDir)) {
+    return;
+  }
+  for (i = 0; i < THEME_GALLERY_CACHE_EXTS.length; i++) {
+    ext = THEME_GALLERY_CACHE_EXTS[i];
+    if (ext === keepExt) {
+      continue;
+    }
+    siblingName = themeFolder + suffix + ext;
+    siblingPath = ThemeGalleryDir + '/' + siblingName;
+    if (fs.existsSync(siblingPath)) {
+      fs.removeSync(siblingPath);
+      galleryLog(self.logger, 'verbose', 'removed leftover cache ' + siblingName);
+    }
+  }
+};
+
 peppyScreensaver.prototype.ensureThemeGalleryCacheEntry = function (themeFolder, previewPath, cacheKeySuffix) {
   var self = this;
   try {
@@ -3246,16 +3326,26 @@ peppyScreensaver.prototype.ensureThemeGalleryCacheEntry = function (themeFolder,
     var cacheName = themeFolder + (cacheKeySuffix || '') + ext;
     var cachePath = ThemeGalleryDir + '/' + cacheName;
     var srcStat = fs.statSync(previewPath);
+    var version = String(Math.floor(srcStat.mtimeMs)) + '-' + String(srcStat.size);
+    var needCopy = true;
     if (fs.existsSync(cachePath)) {
       var dstStat = fs.statSync(cachePath);
-      if (dstStat.mtimeMs >= srcStat.mtimeMs) {
+      if (dstStat.size === srcStat.size && dstStat.mtimeMs >= srcStat.mtimeMs) {
         galleryLog(self.logger, 'trace', 'cache hit ' + cacheName + ' <- ' + previewPath);
-        return ThemeGallerySectionPrefix + cacheName;
+        needCopy = false;
+      } else if (dstStat.size !== srcStat.size) {
+        galleryLog(self.logger, 'verbose', 'cache stale size ' + cacheName + ' (' + dstStat.size + ' != ' + srcStat.size + ')');
       }
     }
-    fs.copySync(previewPath, cachePath);
-    galleryLog(self.logger, 'verbose', 'cached ' + cacheName + ' <- ' + previewPath);
-    return ThemeGallerySectionPrefix + cacheName;
+    if (needCopy) {
+      fs.copySync(previewPath, cachePath);
+      galleryLog(self.logger, 'verbose', 'cached ' + cacheName + ' <- ' + previewPath);
+    }
+    self.removeThemeGalleryCacheSiblings(themeFolder, ext, cacheKeySuffix);
+    return {
+      sectionImage: ThemeGallerySectionPrefix + cacheName,
+      version: version
+    };
   } catch (e) {
     galleryLog(self.logger, 'verbose', 'cache failed for ' + themeFolder + ': ' + e.message);
     return null;
@@ -3301,8 +3391,8 @@ peppyScreensaver.prototype.collectThemeGalleryEntries = function () {
       return;
     }
     var previewPath = resolved.path;
-    var sectionImage = self.ensureThemeGalleryCacheEntry(file, previewPath);
-    if (!sectionImage) {
+    var cached = self.ensureThemeGalleryCacheEntry(file, previewPath);
+    if (!cached) {
       return;
     }
     var selectSectionImage = self.ensureThemeGallerySelectPage(file);
@@ -3314,7 +3404,8 @@ peppyScreensaver.prototype.collectThemeGalleryEntries = function () {
       label: self.formatThemeShortLabel(file) + ' \u00b7 ' + self.parseThemeResolution(file),
       shortLabel: self.formatThemeShortLabel(file),
       resolution: self.parseThemeResolution(file),
-      sectionImage: sectionImage,
+      sectionImage: cached.sectionImage,
+      previewVersion: cached.version,
       selectSectionImage: selectSectionImage,
       previewSource: resolved.source,
       previewSection: resolved.section
@@ -3337,9 +3428,14 @@ peppyScreensaver.prototype.buildThemeGalleryHtml = function (themes, activeFolde
     return '';
   }
 
+  // Volumio modal-custom.html binds message with ng-bind-html ($sanitize).
+  // style= and <style> are stripped; class and HTML table/img attrs survive.
+  // Tables size from image intrinsic min-content, so 3 columns + large
+  // previews overflow phone portrait. Use 2 columns and Bootstrap
+  // img-responsive (max-width:100%) so thumbs cannot force horizontal clip.
   var activeLabel = escapeThemeGalleryHtml(self.commandRouter.getI18nString('PEPPY_SCREENSAVER.THEME_GALLERY_ACTIVE'));
   var html = '<p>' + escapeThemeGalleryHtml(self.commandRouter.getI18nString('PEPPY_SCREENSAVER.THEME_GALLERY_SELECT_HINT')) + '</p>';
-  html += '<table align="center" width="100%" cellspacing="10" cellpadding="4">';
+  html += '<table align="center" width="100%" cellspacing="4" cellpadding="2">';
   var colsPerRow = THEME_GALLERY_COLS;
   var colWidth = Math.floor(100 / colsPerRow);
   var currentResolution = null;
@@ -3370,13 +3466,13 @@ peppyScreensaver.prototype.buildThemeGalleryHtml = function (themes, activeFolde
       theme = themesInRow[idx];
       isActive = theme.folder === activeFolder;
       label = escapeThemeGalleryHtml(theme.shortLabel);
-      imgSrc = '/albumart?sectionimage=' + theme.sectionImage;
+      imgSrc = '/albumart?sectionimage=' + theme.sectionImage + '&t=' + theme.previewVersion;
       frameStart = isActive ? buildThemeGalleryActiveFrameOpen() : '';
       frameEnd = isActive ? buildThemeGalleryActiveFrameClose() : '';
 
       html += '<td align="center" valign="top" width="' + colWidth + '%">';
       html += frameStart;
-      html += '<img width="' + THEME_GALLERY_IMG_WIDTH + '" src="' + imgSrc + '" alt="' + label + '"/>';
+      html += '<img class="img-responsive" width="100%" src="' + imgSrc + '" alt="' + label + '"/>';
       html += '<br/>';
       if (isActive) {
         html += '<font color="' + THEME_GALLERY_ACTIVE_BORDER + '"><b>' + label + ' (' + activeLabel + ')</b></font>';
@@ -3930,7 +4026,9 @@ peppyScreensaver.prototype.removeThemeFolderConfirmed = function (data) {
   try {
     if (fs.existsSync(ThemeGalleryDir)) {
       fs.readdirSync(ThemeGalleryDir).forEach(function (f) {
-        if (f === folder + '.png' || f === folder + '.jpg' || f === folder + '.jpeg' || f === folder + '.select.html') {
+        var cacheExt = path.extname(f).toLowerCase();
+        var cacheBase = cacheExt ? f.slice(0, -cacheExt.length) : f;
+        if (f === folder + '.select.html' || (cacheBase === folder && THEME_GALLERY_CACHE_EXTS.indexOf(cacheExt) !== -1)) {
           fs.removeSync(ThemeGalleryDir + '/' + f);
         }
       });
@@ -4228,6 +4326,36 @@ peppyScreensaver.prototype.install_mkfifo = function (fifoName) {
   } catch (err) {
     self.logger.info('failed to create ' + fifoName + ' ' + err);
   }    
+};
+
+// peppyalsa opens these write-only. No reader → ENXIO at snd_pcm_open of any
+// metered PCM, including before the screensaver (the real reader) appears.
+// Hold RDWR and never read: the kernel sees a reader, the Python meter still
+// gets every byte. Do not depend on install_mkfifo (async exec).
+peppyScreensaver.prototype.holdMeterFifos = function () {
+  var self = this;
+  self.releaseMeterFifos();
+  self._meterFifoFds = [];
+  ['/tmp/myfifo', '/tmp/myfifosa'].forEach(function (fifoName) {
+    try {
+      if (!fs.existsSync(fifoName)) {
+        execSync('/usr/bin/mkfifo -m 646 ' + fifoName, { uid: 1000, gid: 1000 });
+      }
+      var fd = fs.openSync(fifoName, fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+      self._meterFifoFds.push(fd);
+    } catch (err) {
+      self.logger.info(id + 'cannot hold ' + fifoName + ': ' + err);
+    }
+  });
+};
+
+peppyScreensaver.prototype.releaseMeterFifos = function () {
+  var fds = this._meterFifoFds;
+  this._meterFifoFds = [];
+  if (!fds) return;
+  fds.forEach(function (fd) {
+    try { fs.closeSync(fd); } catch (e) { /* already closed */ }
+  });
 };
 
 // switch alsa config
@@ -4665,9 +4793,14 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
     conf = conf.replace('${alsaDirect}', 'peppy2_off');
     conf = conf.replace('${type}', plugType);
 
-    //for spotify
+    //for spotify / Soloist — exclusive. Conflict leaves pcm.spotify empty.
+    // Name pcm.spotify from the Soloist install marker, not STARTED. Motivo
+    // writes this file before plugins.json says STARTED; hanger does not.
+    var connectProvider = self.connectProvider();
     if (!useDSP) {
-        if (useSpot){
+        if (connectProvider === 'spop' && useSpot){
+            conf = conf.replace('${spotMeter}', 'spotify');
+        } else if (fs.existsSync(soloist_index) && connectProvider !== 'spop' && connectProvider !== 'conflict' && self.config.get('useSoloist') === true && alsaConf == 1) {
             conf = conf.replace('${spotMeter}', 'spotify');
         } else {
             conf = conf.replace('${spotDirect}', 'spotify');
@@ -4700,7 +4833,7 @@ peppyScreensaver.prototype.writeAsoundConfigModular = function (alsaConf) {
             defer.resolve(); // resolve anyway to not block chain
         } else {
             alsaLog(self.logger, 'basic', 'config written: ' + asoundConf);
-            if (fs.existsSync(spotify_config) && self.getPluginStatus ('music_service', 'spop') === 'STARTED'){
+            if (self.connectProvider() === 'spop'){
                 var cmdret = self.commandRouter.executeOnPlugin('music_service', 'spop', 'initializeLibrespotDaemon', '');            
             }
             defer.resolve();
@@ -4731,8 +4864,26 @@ peppyScreensaver.prototype.writeSoftMixerFile = function (data) {
 peppyScreensaver.prototype.updateALSAConfigFile = function () {
 	var self = this;
     var defer = libQ.defer();
-    self.commandRouter.executeOnPlugin('audio_interface', 'alsa_controller', 'updateALSAConfigFile');
-    defer.resolve();
+    var done = false;
+    var finish = function () {
+        if (done) return;
+        done = true;
+        self.notifySoloistMetering();
+        defer.resolve();
+    };
+    var ret;
+    try {
+        ret = self.commandRouter.executeOnPlugin('audio_interface', 'alsa_controller', 'updateALSAConfigFile');
+    } catch (e) {
+        self.logger.error(id + 'updateALSAConfigFile: ' + e);
+        finish();
+        return defer.promise;
+    }
+    if (ret && typeof ret.then === 'function') {
+        ret.then(finish).fail(finish);
+    } else {
+        finish();
+    }
     return defer.promise;
 };
     
@@ -4769,6 +4920,32 @@ peppyScreensaver.prototype.getPluginStatus = function (category, name) {
   var retStr = PlugInConfig.get(category + '.' + name + '.status');
   retStr = typeof retStr === 'undefined' ? 'null' : retStr;
   return retStr;  
+};
+
+// Operator enables Soloist or stock Spotify Connect, not both.
+peppyScreensaver.prototype.connectProvider = function () {
+  var soloist = fs.existsSync(soloist_index) && this.getPluginStatus('music_service', 'soloist_connect') === 'STARTED';
+  var spop = fs.existsSync(spotify_config) && this.getPluginStatus('music_service', 'spop') === 'STARTED';
+  if (soloist && spop) return 'conflict';
+  if (soloist) return 'soloist';
+  if (spop) return 'spop';
+  return 'none';
+};
+
+peppyScreensaver.prototype.soloistMeteringWanted = function () {
+  var useDSP = fs.existsSync(dsp_config) && this.config.get('useDSP');
+  var dsd = parseInt(this.config.get('alsaSelection'), 10) === 1;
+  return this.connectProvider() === 'soloist' && !useDSP && dsd && this.config.get('useSoloist') === true;
+};
+
+peppyScreensaver.prototype.notifySoloistMetering = function () {
+  if (this.getPluginStatus('music_service', 'soloist_connect') !== 'STARTED') return;
+  this.commandRouter.executeOnPlugin(
+    'music_service',
+    'soloist_connect',
+    'setPeppyMetering',
+    this.soloistMeteringWanted()
+  );
 };
 //-------------------------------------------------------------
 
@@ -5089,7 +5266,7 @@ peppyScreensaver.prototype.restoreSettingsBackup = function (data) {
         var dispOut = parseInt(self.config.get('displayOutput'), 10);
         self.switch_DisplayPort(dispOut);
         
-        if (fs.existsSync(spotify_config) && self.getPluginStatus('music_service', 'spop') === 'STARTED') {
+        if (self.connectProvider() === 'spop') {
             var useSpot = self.config.get('useSpotify');
             self.switch_Spotify(useSpot);
         }

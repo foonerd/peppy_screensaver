@@ -770,6 +770,11 @@ class MetadataWatcher:
                 log_debug(f"[pushState] SEEK CHANGE: {_prev_seek}ms -> {seek}ms (delta={seek - _prev_seek}ms)", "trace", "metadata")
                 _prev_seek = seek
             
+            prev_uri = self.metadata.get("uri") or ""
+            prev_status = self.metadata.get("status") or ""
+            prev_seek_raw = self.metadata.get("_seek_raw")
+            prev_seek_update = self.metadata.get("_seek_update") or 0
+
             # Extract metadata
             self.metadata["artist"] = data.get("artist", "") or ""
             self.metadata["title"] = title
@@ -823,22 +828,46 @@ class MetadataWatcher:
             
             # Store duration and seek for progress calculation (tonearm, etc)
             self.metadata["duration"] = duration
-            self.metadata["seek"] = seek
-            self.metadata["_seek_raw"] = seek  # Original value, never modified by render loop
-            self.metadata["_seek_update"] = time.time()  # Track when seek was received
-            
-            # Always update time remaining from actual seek position
-            # This ensures pause/stop shows correct frozen time
-            if duration > 0:
-                self.time_remain_sec = max(0, duration - (seek // 1000))
-                self.time_last_update = time.time()
-                self.time_service = service
-            elif service != self.time_service:
-                # Service changed to one without duration (webradio)
-                self.time_remain_sec = -1
-                self.time_last_update = time.time()
-                self.time_service = service
-            
+            apply_seek_anchor = True
+            incoming_uri = data.get("uri", "") or ""
+            if (
+                status == "play"
+                and prev_status == "play"
+                and incoming_uri == prev_uri
+                and prev_seek_update > 0
+                and prev_seek_raw is not None
+            ):
+                interpolated = prev_seek_raw + (time.time() - prev_seek_update) * 1000
+                # Only drop a re-broadcast of the *same* snapshot (seek still
+                # at the last anchor while interpolation has moved on). A real
+                # seek/skip changes the raw value; remote clock skew plus a
+                # fresh position must still apply.
+                if abs(seek - prev_seek_raw) < 1500 and interpolated - seek > 500:
+                    apply_seek_anchor = False
+                    log_debug(
+                        f"[pushState] ignore stale seek {seek}ms vs interpolated {int(interpolated)}ms",
+                        "trace",
+                        "seek",
+                    )
+            if apply_seek_anchor:
+                self.metadata["seek"] = seek
+                self.metadata["_seek_raw"] = seek  # Original value, never modified by render loop
+                self.metadata["_seek_update"] = time.time()  # Track when seek was received
+                # Always update time remaining from actual seek position
+                # This ensures pause/stop shows correct frozen time
+                if duration > 0:
+                    self.time_remain_sec = max(0, duration - (seek // 1000))
+                    self.time_last_update = time.time()
+                    self.time_service = service
+                elif service != self.time_service:
+                    # Service changed to one without duration (webradio)
+                    self.time_remain_sec = -1
+                    self.time_last_update = time.time()
+                    self.time_service = service
+            else:
+                seek = int(prev_seek_raw + (time.time() - prev_seek_update) * 1000)
+                self.metadata["seek"] = seek
+
             self.metadata["_time_remain"] = self.time_remain_sec
             self.metadata["_time_update"] = self.time_last_update
             
