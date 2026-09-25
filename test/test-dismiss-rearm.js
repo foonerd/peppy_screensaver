@@ -3,7 +3,7 @@
  * User dismiss re-arms the full screensaver timeout.
  * Loads meterExitAction from index.js without executing the plugin.
  *
- * Run: node test-dismiss-rearm.js
+ * Run: node test/test-dismiss-rearm.js
  */
 
 'use strict';
@@ -11,7 +11,7 @@
 var fs = require('fs');
 var path = require('path');
 
-var src = fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8');
+var src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
 var match = src.match(/function meterExitAction\(cleanExit, timeoutArmed, dismissMarkerPresent\) \{\n    if \(!timeoutArmed\) return 'idle';\n    if \(cleanExit && dismissMarkerPresent\) return 'rearm';\n    return 'restart';\n\}/);
 if (!match) {
   console.error('FAIL: meterExitAction not found in index.js');

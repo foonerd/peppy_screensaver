@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """YouTube.svg is 900x336 and named with capitals. The icon must fit the type box.
 
-Run: python3 test_icon_fit.py
+Run: python3 test/test_icon_fit.py
 """
 
 import ast
 import pathlib
 import sys
 
-SRC = pathlib.Path(__file__).with_name('volumio_peppymeter') / 'volumio_typeformat.py'
+SRC = pathlib.Path(__file__).resolve().parent.parent / 'volumio_peppymeter' / 'volumio_typeformat.py'
 tree = ast.parse(SRC.read_text(encoding='utf-8'))
 wanted = {'match_icon_name', 'fit_icon_size'}
 funcs = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in wanted]

@@ -4,7 +4,7 @@
  * Verifies that persist file is only written for genuine pause/stop,
  * not during track/album transitions (getEmptyState with undefined volatile).
  *
- * Run: node test-volatile-logic.js
+ * Run: node test/test-volatile-logic.js
  */
 
 'use strict';

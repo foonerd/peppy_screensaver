@@ -3,14 +3,14 @@
 
 Loads should_mark_user_dismiss from volumio_peppymeter.py without importing pygame.
 
-Run: python3 test_user_dismiss.py
+Run: python3 test/test_user_dismiss.py
 """
 
 import ast
 import pathlib
 import sys
 
-SRC = pathlib.Path(__file__).with_name('volumio_peppymeter') / 'volumio_peppymeter.py'
+SRC = pathlib.Path(__file__).resolve().parent.parent / 'volumio_peppymeter' / 'volumio_peppymeter.py'
 tree = ast.parse(SRC.read_text(encoding='utf-8'))
 func = next(
     (node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'should_mark_user_dismiss'),

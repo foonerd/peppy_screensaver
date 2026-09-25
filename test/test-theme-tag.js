@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Edition tags select a theme folder. Empty rules do nothing.
- * Run: node test-theme-tag.js
+ * Run: node test/test-theme-tag.js
  */
 
 'use strict';
@@ -9,7 +9,7 @@
 var fs = require('fs');
 var path = require('path');
 
-var src = fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8');
+var src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
 var start = src.indexOf('// theme-tag-contract:start');
 var end = src.indexOf('// theme-tag-contract:end');
 if (start < 0 || end < start) {
