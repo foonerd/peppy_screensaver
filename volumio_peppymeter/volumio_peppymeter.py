@@ -17,6 +17,7 @@
 
 import os
 import sys
+import traceback
 import tempfile
 import time
 import ctypes
@@ -649,6 +650,27 @@ def seconds_remaining(duration, seek_ms):
     except (TypeError, ValueError):
         seek_num = 0
     return max(0, int(duration_num - (seek_num // 1000)))
+
+
+_RENDER_ERROR = {"text": "", "ts": 0.0, "count": 0}
+
+
+def log_render_error(exc):
+    """Log a handler render failure without flooding the log.
+
+    One bad frame must not end the display loop. The data source threads
+    are not daemons, so a dead main thread leaves a process that never
+    answers the run flag. Skip the frame, log once per distinct error and
+    then at most every 10 s, keep running.
+    """
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip()
+    now = time.time()
+    _RENDER_ERROR["count"] += 1
+    if text != _RENDER_ERROR["text"] or now - _RENDER_ERROR["ts"] >= 10.0:
+        _RENDER_ERROR["text"] = text
+        _RENDER_ERROR["ts"] = now
+        log_debug(f"[Render] handler.render failed ({_RENDER_ERROR['count']} frames skipped so far):\n{text}", "basic")
+        print(f"peppy: render error, frame skipped: {exc!r}", file=sys.stderr)
 
 
 class MetadataWatcher:
@@ -4958,7 +4980,11 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                 last_metadata["_queue_mode"] = queue_mode
                 
                 # Handler-based rendering (handler calls meter.run() internally)
-                dirty_rects = handler.render(last_metadata, now_ticks)
+                try:
+                    dirty_rects = handler.render(last_metadata, now_ticks)
+                except Exception as render_exc:
+                    log_render_error(render_exc)
+                    dirty_rects = []
                 
                 # PROFILING: Log frame timing
                 if PROFILING_TIMING_ENABLED:
@@ -5307,6 +5333,19 @@ if __name__ == "__main__":
         del pm
         del callback
         trim_memory()
+        if os.path.exists(PeppyRunning):
+            os.remove(PeppyRunning)
+        os._exit(1)
+    except Exception:
+        # Never leave a dead main thread behind: the non-daemon data source
+        # threads keep the interpreter alive and the run flag goes unanswered.
+        text = traceback.format_exc().rstrip()
+        log_debug(f"[Fatal] unhandled exception, exiting:\n{text}", "basic")
+        print(text, file=sys.stderr)
+        try:
+            callback.exit_trim_memory()
+        except Exception:
+            pass
         if os.path.exists(PeppyRunning):
             os.remove(PeppyRunning)
         os._exit(1)

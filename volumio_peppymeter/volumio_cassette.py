@@ -2370,6 +2370,7 @@ class CassetteHandler:
                 display_sec = -1
             
             if display_sec >= 0:
+                display_sec = int(display_sec)
                 mins = display_sec // 60
                 secs = display_sec % 60
                 time_str = f"{mins:02d}:{secs:02d}"

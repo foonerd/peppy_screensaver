@@ -42,6 +42,13 @@ function meterExitAction(cleanExit, timeoutArmed, dismissMarkerPresent) {
     return 'restart';
 }
 
+// A meter that dies this soon after launch is a crash, not a reload.
+// Do not respawn it at once; the armed interval retries at the screensaver cadence.
+var METER_CRASH_BACKOFF_MS = 10000;
+function meterRestartNow(cleanExit, ranMs) {
+    return cleanExit || ranMs >= METER_CRASH_BACKOFF_MS;
+}
+
 // theme-tag-contract:start
 function lastEditionTag(text) {
     var last = '';
@@ -444,10 +451,16 @@ peppyScreensaver.prototype.onStart = function() {
                                     }, ScreenTimeout);
                                     self.logger.info(id + 'User dismiss — re-arm ' + (ScreenTimeout / 1000) + 's');
                                 } else if (action === 'restart') {
-                                    startMeterOnce();
+                                    var ranMs = Date.now() - (child.peppyStartedAt || 0);
+                                    if (meterRestartNow(error === null, ranMs)) {
+                                        startMeterOnce();
+                                    } else {
+                                        self.logger.warn(id + 'PeppyMeter died ' + Math.round(ranMs / 1000) + 's after launch; next attempt in ' + (ScreenTimeout / 1000) + 's');
+                                    }
                                 }
                             }
                           });
+                          child.peppyStartedAt = Date.now();
                           self.meterChild = child;
                         };
                         self.Timeout = setInterval(function () {
