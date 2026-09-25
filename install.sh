@@ -143,7 +143,12 @@ PEPPYSPECTRUM_DIR="$PLUGIN_DIR/screensaver/spectrum"
 if [ ! -d "$PEPPYSPECTRUM_DIR" ]; then
   git clone --depth 1 https://github.com/foonerd/PeppySpectrum.git "$PEPPYSPECTRUM_DIR"
 else
-  echo "PeppySpectrum already installed"
+  echo "PeppySpectrum already installed - refreshing engine module"
+  if [ -d "$PEPPYSPECTRUM_DIR/.git" ]; then
+    git -C "$PEPPYSPECTRUM_DIR" fetch --depth 1 origin 2>/dev/null || true
+    # Update only the engine module; leave config.txt and template folders untouched.
+    git -C "$PEPPYSPECTRUM_DIR" checkout FETCH_HEAD -- spectrum.py 2>/dev/null || true
+  fi
 fi
 
 # =============================================================================

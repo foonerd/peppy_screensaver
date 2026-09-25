@@ -4469,10 +4469,12 @@ peppyScreensaver.prototype.install_mkfifo = function (fifoName) {
   }    
 };
 
-// peppyalsa opens these write-only. No reader → ENXIO at snd_pcm_open of any
-// metered PCM, including before the screensaver (the real reader) appears.
-// Hold RDWR and never read: the kernel sees a reader, the Python meter still
-// gets every byte. Do not depend on install_mkfifo (async exec).
+// peppyalsa opens these write-only and non-blocking, so its writer only exists
+// while some process holds the read end. Holding a read-write descriptor here
+// keeps a reader present at all times: the writer in the audio client opens
+// once and stays open across screensaver starts and stops, and the Python
+// readers see an empty pipe rather than end of file. Never read from it, the
+// meter must get every byte. Do not depend on install_mkfifo (async exec).
 peppyScreensaver.prototype.holdMeterFifos = function () {
   var self = this;
   self.releaseMeterFifos();
