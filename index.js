@@ -220,6 +220,96 @@ peppyScreensaver.prototype.onVolumioStart = function()
     return libQ.resolve();
 };
 
+// Glass, the successor of this plugin. The two cannot share the audio path:
+// while Glass is enabled this plugin does not start, and says so.
+const GLASS_PLUGIN = 'glass';
+
+peppyScreensaver.prototype.glassEnabled = function () {
+    var self = this;
+    try {
+        return self.commandRouter.pluginManager.isEnabled('user_interface', GLASS_PLUGIN) === true;
+    } catch (e) {
+        return false;
+    }
+};
+
+// Say why the plugin did not start, with the way back in one press. The
+// plugin disables itself, so the two are never both enabled at the next
+// start and the ALSA chain is built without it.
+peppyScreensaver.prototype.refuseForGlass = function () {
+    var self = this;
+    var name = self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME');
+    try {
+        self.commandRouter.pluginManager.disablePlugin('user_interface', 'peppy_screensaver');
+    } catch (e) {
+        self.logger.warn(id + 'could not disable itself: ' + (e && e.message ? e.message : e));
+    }
+    self.commandRouter.pushToastMessage('warning', name, self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_ENABLED_MSG'));
+    self.commandRouter.broadcastMessage('openModal', {
+        title: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_ENABLED_TITLE'),
+        message: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_ENABLED_MSG'),
+        size: 'lg',
+        buttons: [
+            {
+                name: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_KEEP_BTN'),
+                class: 'btn btn-info',
+                emit: 'closeModals',
+                payload: ''
+            },
+            {
+                name: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_DISABLE_BTN'),
+                class: 'btn btn-warning',
+                emit: 'callMethod',
+                payload: { endpoint: 'user_interface/peppy_screensaver', method: 'disableGlassAndStart', data: {} }
+            }
+        ]
+    });
+};
+
+// The way back: disable and stop Glass, which also rebuilds the ALSA chain
+// without it, then start this plugin.
+peppyScreensaver.prototype.disableGlassAndStart = function () {
+    var self = this;
+    var name = self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME');
+    self.commandRouter.closeModals();
+    if (!self.glassEnabled()) {
+        return self.commandRouter.enableAndStartPlugin('user_interface', 'peppy_screensaver');
+    }
+    return libQ.resolve()
+        .then(function () { return self.commandRouter.disableAndStopPlugin('user_interface', GLASS_PLUGIN); })
+        .then(function () {
+            self.commandRouter.pushToastMessage('success', name, self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_DISABLED'));
+            return self.commandRouter.enableAndStartPlugin('user_interface', 'peppy_screensaver');
+        })
+        .then(function () {
+            uiNeedsUpdate = true;
+            self.updateUIConfig();
+        })
+        .fail(function (e) {
+            self.logger.error(id + 'disabling ' + GLASS_PLUGIN + ': ' + (e && e.message ? e.message : e));
+            self.commandRouter.pushToastMessage('error', name, self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_DISABLE_FAILED'));
+        });
+};
+
+// How to move to Glass, for the settings page's button.
+peppyScreensaver.prototype.showGlassNotice = function () {
+    var self = this;
+    self.commandRouter.broadcastMessage('openModal', {
+        title: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_HOWTO_TITLE'),
+        message: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_NOTICE'),
+        size: 'lg',
+        buttons: [
+            {
+                name: self.commandRouter.getI18nString('COMMON.CLOSE'),
+                class: 'btn btn-info',
+                emit: 'closeModals',
+                payload: ''
+            }
+        ]
+    });
+    return libQ.resolve();
+};
+
 peppyScreensaver.prototype.onStart = function() {
     var self = this;
     var defer=libQ.defer();
@@ -230,7 +320,13 @@ peppyScreensaver.prototype.onStart = function() {
 
     // load language strings here again, otherwise needs restart after installation
     self.commandRouter.loadI18nStrings();
-    
+
+    // Glass has taken over the audio path: this plugin stays out of it.
+    if (self.glassEnabled()) {
+        self.refuseForGlass();
+        return libQ.reject(new Error('Glass is enabled'));
+    }
+
     // create fifo pipe for PeppyMeter/PeppySpectrum
     self.install_mkfifo('/tmp/myfifo');
     self.install_mkfifo('/tmp/myfifosa');
@@ -798,6 +894,18 @@ peppyScreensaver.prototype.getUIConfig = function() {
         __dirname + '/UIConfig.json')
         .then(function(uiconf)
         {
+
+        // Glass, the successor: while it is enabled the section offers the
+        // way back, otherwise it says how to move.
+        for (var _gs = 0; _gs < uiconf.sections.length; _gs++) {
+            if (uiconf.sections[_gs].id === 'glass_conf') {
+                var glassOn = self.glassEnabled();
+                uiconf.sections[_gs].description = self.commandRouter.getI18nString(glassOn ? 'PEPPY_SCREENSAVER.GLASS_ENABLED_MSG' : 'PEPPY_SCREENSAVER.GLASS_NOTICE');
+                uiconf.sections[_gs].saveButton.label = self.commandRouter.getI18nString(glassOn ? 'PEPPY_SCREENSAVER.GLASS_DISABLE_BTN' : 'PEPPY_SCREENSAVER.GLASS_HOWTO_BTN');
+                uiconf.sections[_gs].onSave.method = glassOn ? 'disableGlassAndStart' : 'showGlassNotice';
+                break;
+            }
+        }
 
         // Resolve a control by its (now unique) id, independent of which section or
         // position it occupies. This keeps getUIConfig correct across settings

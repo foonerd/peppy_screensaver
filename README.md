@@ -7,6 +7,8 @@ Uses optimized forks: [foonerd/PeppyMeter](https://github.com/foonerd/PeppyMeter
 
 Original Volumio plugin by [2aCD](https://github.com/2aCD-creator/volumio-plugins).
 
+> **Glass has taken over.** [Glass](https://github.com/foonerd/glass) is the successor of this plugin: the same themes, painted by a native display that needs about half the processor time and a tenth of the memory. This is the transition release and the last one of PeppyMeter Screensaver. It installs and runs as before, and stays stopped while Glass is enabled. To move: install Glass from its [releases](https://github.com/foonerd/glass/releases) and enable it; Glass takes over the themes and settings and offers to disable this plugin. Uninstall this plugin once Glass runs; with the themes set to be kept on uninstall, they stay for Glass to adopt.
+
 ## Requirements
 
 - Volumio 4.x (Bookworm-based)

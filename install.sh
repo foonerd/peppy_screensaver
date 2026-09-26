@@ -38,6 +38,20 @@ echo "Using binaries from: $BIN_SOURCE"
 echo "Using libraries from: $LIB_SOURCE"
 echo "Using packages from: $PKG_SOURCE"
 
+# Glass, the successor of this plugin, cannot share the audio path with it.
+# While Glass is enabled this plugin does not install; a refused install
+# leaves nothing behind.
+GLASS_DIR="/data/plugins/user_interface/glass"
+if [ -d "$GLASS_DIR" ] && [ -f /data/configuration/plugins.json ]; then
+  GLASS_ENABLED=$(node -e 'try { var d = require("/data/configuration/plugins.json"); var p = d.user_interface && d.user_interface.glass; console.log(p && p.enabled && p.enabled.value === true ? "yes" : "no"); } catch (e) { console.log("no"); }' 2>/dev/null)
+  if [ "$GLASS_ENABLED" = "yes" ]; then
+    echo "ERROR: Glass is enabled. Glass supersedes PeppyMeter Screensaver and the two cannot share the audio path."
+    echo "Disable Glass in Plugins first if you must install PeppyMeter Screensaver."
+    rm -rf "$PLUGIN_DIR"
+    exit 1
+  fi
+fi
+
 # =============================================================================
 # INSTALL: System dependencies
 # =============================================================================

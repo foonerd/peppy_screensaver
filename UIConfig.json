@@ -4,6 +4,20 @@
   },
   "sections": [
                 {
+                "id": "glass_conf",
+                "element": "section",
+                "label": "TRANSLATE.PEPPY_SCREENSAVER.GLASS_SECTION",
+                "description": "TRANSLATE.PEPPY_SCREENSAVER.GLASS_NOTICE",
+                "icon": "fa-exclamation-triangle",
+                "hidden": false,
+                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"showGlassNotice"},
+                "saveButton": {
+                    "label": "TRANSLATE.PEPPY_SCREENSAVER.GLASS_HOWTO_BTN",
+                    "data": []
+                },
+                "content": []
+                },
+                {
                 "id": "audio_source_conf",
                 "element": "section",
                 "label": "TRANSLATE.PEPPY_SCREENSAVER.AUDIO_SOURCE_CONF",
