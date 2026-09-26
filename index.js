@@ -31,6 +31,71 @@ const PluginPath = '/data/plugins/user_interface/peppy_screensaver';
 const DATA_DIR = '/data/INTERNAL/peppy_screensaver';  // themes (meters, spectrum, cassette, turntable, etc.)
 const runFlag = '/tmp/peppyrunning';   // for detection, if peppymeter always running
 const persistFile = '/tmp/peppy_persist';  // for persist countdown communication with Python
+const dismissFile = '/tmp/peppy_user_dismiss';  // real finger/click; launcher exports this path
+
+// User dismiss re-arms the full screensaver timeout.
+// A clean exit without the marker (settings reload) restarts now.
+// A non-zero exit restarts now. An unarmed interval does neither.
+function meterExitAction(cleanExit, timeoutArmed, dismissMarkerPresent) {
+    if (!timeoutArmed) return 'idle';
+    if (cleanExit && dismissMarkerPresent) return 'rearm';
+    return 'restart';
+}
+
+// A meter that dies this soon after launch is a crash, not a reload.
+// Do not respawn it at once; the armed interval retries at the screensaver cadence.
+var METER_CRASH_BACKOFF_MS = 10000;
+function meterRestartNow(cleanExit, ranMs) {
+    return cleanExit || ranMs >= METER_CRASH_BACKOFF_MS;
+}
+
+// theme-tag-contract:start
+function lastEditionTag(text) {
+    var last = '';
+    var match;
+    var re = /\[([^\[\]]+)\]/g;
+    var source = String(text || '');
+    while ((match = re.exec(source))) {
+        last = match[1].trim();
+    }
+    return last;
+}
+
+function folderNameFromUri(uri) {
+    var path = String(uri || '').split('?')[0];
+    try { path = decodeURIComponent(path); } catch (e) {}
+    var parts = path.split('/').filter(function (part) { return part !== ''; });
+    if (parts.length < 2) return '';
+    return parts[parts.length - 2];
+}
+
+function parseThemeTagRules(text) {
+    var rules = [];
+    String(text || '').split(/\r?\n|,/).forEach(function (line) {
+        var eq = line.indexOf('=');
+        if (eq <= 0) return;
+        var tag = line.slice(0, eq).trim().toLowerCase();
+        var folder = line.slice(eq + 1).trim();
+        if (!tag || !folder) return;
+        if (folder.indexOf('/') !== -1 || folder.indexOf('..') !== -1) return;
+        rules.push({ tag: tag, folder: folder });
+    });
+    return rules;
+}
+
+// null: no rules, leave the theme alone. '': rules exist but nothing matched (use home).
+function themeFolderForEdition(album, uri, rulesText) {
+    var rules = parseThemeTagRules(rulesText);
+    if (!rules.length) return null;
+    var map = {};
+    rules.forEach(function (rule) { map[rule.tag] = rule.folder; });
+    var albumTag = lastEditionTag(album).toLowerCase();
+    if (albumTag && map[albumTag]) return map[albumTag];
+    var folderTag = lastEditionTag(folderNameFromUri(uri)).toLowerCase();
+    if (folderTag && map[folderTag]) return map[folderTag];
+    return '';
+}
+// theme-tag-contract:end
 //---
 var PeppyPath = PluginPath + '/screensaver/peppymeter';
 var RunPeppyFile = PluginPath + '/run_peppymeter.sh';
@@ -148,7 +213,100 @@ peppyScreensaver.prototype.onVolumioStart = function()
 	if (self.config.get('useSoloist') === undefined) {
 		self.config.addConfigValue('useSoloist', 'boolean', true);
 	}
+	if (self.config.get('themeTagRules') === undefined) {
+		self.config.addConfigValue('themeTagRules', 'string', '');
+	}
         
+    return libQ.resolve();
+};
+
+// Glass, the successor of this plugin. The two cannot share the audio path:
+// while Glass is enabled this plugin does not start, and says so.
+const GLASS_PLUGIN = 'glass';
+
+peppyScreensaver.prototype.glassEnabled = function () {
+    var self = this;
+    try {
+        return self.commandRouter.pluginManager.isEnabled('user_interface', GLASS_PLUGIN) === true;
+    } catch (e) {
+        return false;
+    }
+};
+
+// Say why the plugin did not start, with the way back in one press. The
+// plugin disables itself, so the two are never both enabled at the next
+// start and the ALSA chain is built without it.
+peppyScreensaver.prototype.refuseForGlass = function () {
+    var self = this;
+    var name = self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME');
+    try {
+        self.commandRouter.pluginManager.disablePlugin('user_interface', 'peppy_screensaver');
+    } catch (e) {
+        self.logger.warn(id + 'could not disable itself: ' + (e && e.message ? e.message : e));
+    }
+    self.commandRouter.pushToastMessage('warning', name, self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_ENABLED_MSG'));
+    self.commandRouter.broadcastMessage('openModal', {
+        title: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_ENABLED_TITLE'),
+        message: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_ENABLED_MSG'),
+        size: 'lg',
+        buttons: [
+            {
+                name: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_KEEP_BTN'),
+                class: 'btn btn-info',
+                emit: 'closeModals',
+                payload: ''
+            },
+            {
+                name: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_DISABLE_BTN'),
+                class: 'btn btn-warning',
+                emit: 'callMethod',
+                payload: { endpoint: 'user_interface/peppy_screensaver', method: 'disableGlassAndStart', data: {} }
+            }
+        ]
+    });
+};
+
+// The way back: disable and stop Glass, which also rebuilds the ALSA chain
+// without it, then start this plugin.
+peppyScreensaver.prototype.disableGlassAndStart = function () {
+    var self = this;
+    var name = self.commandRouter.getI18nString('PEPPY_SCREENSAVER.PLUGIN_NAME');
+    self.commandRouter.closeModals();
+    if (!self.glassEnabled()) {
+        return self.commandRouter.enableAndStartPlugin('user_interface', 'peppy_screensaver');
+    }
+    return libQ.resolve()
+        .then(function () { return self.commandRouter.disableAndStopPlugin('user_interface', GLASS_PLUGIN); })
+        .then(function () {
+            self.commandRouter.pushToastMessage('success', name, self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_DISABLED'));
+            return self.commandRouter.enableAndStartPlugin('user_interface', 'peppy_screensaver');
+        })
+        .then(function () {
+            uiNeedsUpdate = true;
+            self.updateUIConfig();
+        })
+        .fail(function (e) {
+            self.logger.error(id + 'disabling ' + GLASS_PLUGIN + ': ' + (e && e.message ? e.message : e));
+            self.commandRouter.pushToastMessage('error', name, self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_DISABLE_FAILED'));
+        });
+};
+
+// How to move to Glass, for the settings page's button.
+peppyScreensaver.prototype.showGlassNotice = function () {
+    var self = this;
+    self.commandRouter.broadcastMessage('openModal', {
+        title: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_HOWTO_TITLE'),
+        message: self.commandRouter.getI18nString('PEPPY_SCREENSAVER.GLASS_NOTICE'),
+        size: 'lg',
+        buttons: [
+            {
+                name: self.commandRouter.getI18nString('COMMON.CLOSE'),
+                class: 'btn btn-info',
+                emit: 'closeModals',
+                payload: ''
+            }
+        ]
+    });
     return libQ.resolve();
 };
 
@@ -162,7 +320,13 @@ peppyScreensaver.prototype.onStart = function() {
 
     // load language strings here again, otherwise needs restart after installation
     self.commandRouter.loadI18nStrings();
-    
+
+    // Glass has taken over the audio path: this plugin stays out of it.
+    if (self.glassEnabled()) {
+        self.refuseForGlass();
+        return libQ.reject(new Error('Glass is enabled'));
+    }
+
     // create fifo pipe for PeppyMeter/PeppySpectrum
     self.install_mkfifo('/tmp/myfifo');
     self.install_mkfifo('/tmp/myfifosa');
@@ -172,6 +336,7 @@ peppyScreensaver.prototype.onStart = function() {
 
     // remove old flag
     if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+    try { if (fs.existsSync(dismissFile)) fs.removeSync(dismissFile); } catch (e) {}
 
     // get peppyMeter config and new baseFolder
     if (fs.existsSync(PeppyConf)){
@@ -339,6 +504,9 @@ peppyScreensaver.prototype.onStart = function() {
             try {
                 if (fs.existsSync(persistFile)) fs.removeSync(persistFile);
             } catch(e) {}
+            try { self.applyThemeTag(state); } catch (eTag) {
+                self.logger.warn(id + 'theme tag: ' + (eTag && eTag.message ? eTag.message : eTag));
+            }
             
             if (DSP_ON || Spotify_ON || Airplay_ON || Other_ON) {
                 // Ensure screensaver start interval exists when playing
@@ -366,13 +534,29 @@ peppyScreensaver.prototype.onStart = function() {
                             } else {
                                 self.logger.info(id + 'Start PeppyMeter');
                             }
+                            var dismissMarkerPresent = false;
+                            try { dismissMarkerPresent = fs.existsSync(dismissFile); } catch (e) {}
+                            var action = meterExitAction(error === null, !!self.Timeout, dismissMarkerPresent);
+                            try { if (dismissMarkerPresent) fs.removeSync(dismissFile); } catch (e) {}
                             if (self.meterChild === child) {
                                 self.meterChild = null;
-                                if (self.Timeout) {
-                                    startMeterOnce();
+                                if (action === 'rearm') {
+                                    clearInterval(self.Timeout);
+                                    self.Timeout = setInterval(function () {
+                                        startMeterOnce();
+                                    }, ScreenTimeout);
+                                    self.logger.info(id + 'User dismiss — re-arm ' + (ScreenTimeout / 1000) + 's');
+                                } else if (action === 'restart') {
+                                    var ranMs = Date.now() - (child.peppyStartedAt || 0);
+                                    if (meterRestartNow(error === null, ranMs)) {
+                                        startMeterOnce();
+                                    } else {
+                                        self.logger.warn(id + 'PeppyMeter died ' + Math.round(ranMs / 1000) + 's after launch; next attempt in ' + (ScreenTimeout / 1000) + 's');
+                                    }
                                 }
                             }
                           });
+                          child.peppyStartedAt = Date.now();
                           self.meterChild = child;
                         };
                         self.Timeout = setInterval(function () {
@@ -653,6 +837,7 @@ peppyScreensaver.prototype.onStop = function() {
         
         // remove old flag
         if (fs.existsSync(runFlag)){fs.removeSync(runFlag);}
+        try { if (fs.existsSync(dismissFile)) fs.removeSync(dismissFile); } catch (e) {}
         
         // Unregister REST endpoint
         self.commandRouter.removePluginRestEndpoint({
@@ -709,6 +894,18 @@ peppyScreensaver.prototype.getUIConfig = function() {
         __dirname + '/UIConfig.json')
         .then(function(uiconf)
         {
+
+        // Glass, the successor: while it is enabled the section offers the
+        // way back, otherwise it says how to move.
+        for (var _gs = 0; _gs < uiconf.sections.length; _gs++) {
+            if (uiconf.sections[_gs].id === 'glass_conf') {
+                var glassOn = self.glassEnabled();
+                uiconf.sections[_gs].description = self.commandRouter.getI18nString(glassOn ? 'PEPPY_SCREENSAVER.GLASS_ENABLED_MSG' : 'PEPPY_SCREENSAVER.GLASS_NOTICE');
+                uiconf.sections[_gs].saveButton.label = self.commandRouter.getI18nString(glassOn ? 'PEPPY_SCREENSAVER.GLASS_DISABLE_BTN' : 'PEPPY_SCREENSAVER.GLASS_HOWTO_BTN');
+                uiconf.sections[_gs].onSave.method = glassOn ? 'disableGlassAndStart' : 'showGlassNotice';
+                break;
+            }
+        }
 
         // Resolve a control by its (now unique) id, independent of which section or
         // position it occupies. This keeps getUIConfig correct across settings
@@ -867,6 +1064,7 @@ peppyScreensaver.prototype.getUIConfig = function() {
             C('fanartTransition').value.label = self.commandRouter.getI18nString(fanartTransitionLabels[fanartTransition] || fanartTransitionLabels.none);
             C('fanartTransitionMs').value = parseInt(self.config.get('fanartTransitionMs'), 10) || 600;
             C('fanartUnlimitedImages').value = self.config.get('fanartUnlimitedImages') === true;
+            C('themeTagRules').value = self.config.get('themeTagRules') || '';
             //if (self.config.get('activeFolder') == '') {
             var meterFolder = peppy_config.current[meterFolderStr];
             if (meterFolder.includes ('_')) {
@@ -3530,12 +3728,48 @@ peppyScreensaver.prototype.buildThemeGalleryButtons = function () {
   }];
 };
 
-peppyScreensaver.prototype.applyActiveThemeFolder = function (folder) {
+peppyScreensaver.prototype.applyThemeTag = function (state) {
   var self = this;
+  if (!state) state = self._themeTagState;
+  if (!state || !peppy_config || !peppy_config.current) return;
+  self._themeTagState = { album: state.album || '', uri: state.uri || '' };
+  var rulesText = '';
+  try { rulesText = self.config.get('themeTagRules') || ''; } catch (e) { return; }
+  var picked = themeFolderForEdition(self._themeTagState.album, self._themeTagState.uri, rulesText);
+  if (picked === null) {
+    self.themeTagOverride = false;
+    return;
+  }
+  var home = self.config.get('activeFolder') || '';
+  var target = picked || home;
+  if (!target) return;
+  if (picked) {
+    var pickedPath = base_folder_P + picked;
+    var pickedOk = false;
+    try { pickedOk = fs.existsSync(pickedPath) && fs.statSync(pickedPath).isDirectory(); } catch (e) {}
+    if (!pickedOk) {
+      self.logger.info(id + 'theme tag folder missing: ' + picked);
+      target = home;
+    }
+  }
+  if (!target || target === peppy_config.current[meterFolderStr]) {
+    self.themeTagOverride = !!(picked && target === picked);
+    return;
+  }
+  var result = self.applyActiveThemeFolder(target, { keepHome: true, allowBuiltin: true });
+  if (result && result.changed) {
+    self.logger.info(id + 'theme tag -> ' + target);
+  }
+  self.themeTagOverride = !!(picked && target === picked);
+};
+
+peppyScreensaver.prototype.applyActiveThemeFolder = function (folder, opts) {
+  var self = this;
+  opts = opts || {};
 
   galleryLog(self.logger, 'basic', 'applyActiveThemeFolder called folder=' + folder);
 
-  if (!folder || folder.indexOf('/') !== -1 || folder.indexOf('..') !== -1 || folder.indexOf('_') === -1) {
+  if (!folder || folder.indexOf('/') !== -1 || folder.indexOf('..') !== -1 || (!opts.allowBuiltin && folder.indexOf('_') === -1)) {
     galleryLog(self.logger, 'verbose', 'applyActiveThemeFolder rejected invalid folder');
     return { changed: false, error: 'invalid' };
   }
@@ -3561,14 +3795,19 @@ peppyScreensaver.prototype.applyActiveThemeFolder = function (folder) {
   var partFile = folder.split('_');
   var upperc = /\b([^-])/g;
   var str_empty = fs.existsSync(folderPath + '/meters.txt') ? '' : ' (empty)';
-  var folderTitle = (partFile[1]).replace(upperc, function (c) { return c.toUpperCase(); }) + '-' + partFile[2] + ' ' + partFile[0] + str_empty;
+  var folderTitle = folder;
+  if (partFile[1]) {
+    folderTitle = (partFile[1]).replace(upperc, function (c) { return c.toUpperCase(); }) + '-' + partFile[2] + ' ' + partFile[0] + str_empty;
+  }
 
   peppy_config.current[meterFolderStr] = folder;
   if (spectrum_config) {
     spectrum_config.current[SpectrumFolderStr] = folder;
   }
-  self.config.set('activeFolder', folder);
-  self.config.set('activeFolder_title', folderTitle);
+  if (!opts.keepHome) {
+    self.config.set('activeFolder', folder);
+    self.config.set('activeFolder_title', folderTitle);
+  }
   peppy_config.current.meter = 'random';
   self.config.set('randomSelection', '');
   self.checkMetersFile();
@@ -3596,8 +3835,10 @@ peppyScreensaver.prototype.applyActiveThemeFolder = function (folder) {
     fs.removeSync(runFlag);
   }
 
-  uiNeedsUpdate = true;
-  self.updateUIConfig();
+  if (!opts.keepHome) {
+    uiNeedsUpdate = true;
+    self.updateUIConfig();
+  }
 
   galleryLog(self.logger, 'basic', 'applyActiveThemeFolder applied ' + folder + ' -> ' + folderTitle);
   return { changed: true, label: folderTitle };
@@ -3784,6 +4025,14 @@ peppyScreensaver.prototype.saveThemesArtwork = function (data) {
         fs.writeFileSync(PeppyConf, ini.stringify(peppy_config, { whitespace: true }));
       }
     }
+
+    if (data && data.themeTagRules != null) {
+      var tagRules = String(data.themeTagRules);
+      if ((self.config.get('themeTagRules') || '') !== tagRules) {
+        self.config.set('themeTagRules', tagRules);
+      }
+    }
+    try { self.applyThemeTag(self._themeTagState); } catch (eTag) {}
 
     // Bump the config version (so remote clients pick up the change) and remove the
     // run flag so the running screensaver reloads and applies the new artwork
@@ -4328,10 +4577,12 @@ peppyScreensaver.prototype.install_mkfifo = function (fifoName) {
   }    
 };
 
-// peppyalsa opens these write-only. No reader → ENXIO at snd_pcm_open of any
-// metered PCM, including before the screensaver (the real reader) appears.
-// Hold RDWR and never read: the kernel sees a reader, the Python meter still
-// gets every byte. Do not depend on install_mkfifo (async exec).
+// peppyalsa opens these write-only and non-blocking, so its writer only exists
+// while some process holds the read end. Holding a read-write descriptor here
+// keeps a reader present at all times: the writer in the audio client opens
+// once and stays open across screensaver starts and stops, and the Python
+// readers see an empty pipe rather than end of file. Never read from it, the
+// meter must get every byte. Do not depend on install_mkfifo (async exec).
 peppyScreensaver.prototype.holdMeterFifos = function () {
   var self = this;
   self.releaseMeterFifos();

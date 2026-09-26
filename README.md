@@ -7,6 +7,8 @@ Uses optimized forks: [foonerd/PeppyMeter](https://github.com/foonerd/PeppyMeter
 
 Original Volumio plugin by [2aCD](https://github.com/2aCD-creator/volumio-plugins).
 
+> **Glass has taken over.** [Glass](https://github.com/foonerd/glass) is the successor of this plugin: the same themes, painted by a native display that needs about half the processor time and a tenth of the memory. This is the transition release and the last one of PeppyMeter Screensaver. It installs and runs as before, and stays stopped while Glass is enabled. To move: install Glass from its [releases](https://github.com/foonerd/glass/releases) and enable it; Glass takes over the themes and settings and offers to disable this plugin. Uninstall this plugin once Glass runs; with the themes set to be kept on uninstall, they stay for Glass to adopt.
+
 ## Requirements
 
 - Volumio 4.x (Bookworm-based)
@@ -81,7 +83,7 @@ The plugin settings are organized into sections:
 | Use Soloist | Meter Soloist Connect on DSD native. Hidden when stock Spotify Connect is active. Modular already meters `pcm.volumio` |
 | Use USB DAC | Include USB DAC playback (stock Spotify Connect only) |
 | Use Airplay | Include Airplay playback |
-| Timeout | Idle timeout before screensaver activates |
+| Timeout | Seconds before the screensaver appears. A touch or click dismisses it and this full timeout runs again. Pause turns it off until playback resumes, then the timeout runs again |
 | Meter | Select active meter skin |
 | Meter Position | Window position: centered or manual coordinates |
 | Position X/Y | Manual position coordinates (when not centered) |
@@ -128,6 +130,8 @@ Browse and manage meter themes, and configure the artist fanart slideshow. A sin
 | Setting | Description |
 |---------|-------------|
 | Browse themes | Opens a gallery of preview images for installed themes; click a theme name to apply it |
+| Active meter folder | Home theme. Used when no edition tag matches. Choosing a folder here or in Browse themes saves it as home |
+| Edition tag themes | Optional. Last `[tag]` in the album or folder name selects a theme folder. Empty keeps the home theme on every album |
 | Theme to remove | Delete an installed theme from both the meter and spectrum templates (with confirmation). Built-in themes return on plugin update/reinstall |
 | Artist fanart slideshow | Master switch for the artist fanart slideshow (default Off) |
 | fanart.tv key | Personal (default) uses your own key as the api_key; Project uses the built-in key (testing/development only) |
@@ -137,6 +141,8 @@ Browse and manage meter themes, and configure the artist fanart slideshow. A sin
 | Fanart transition | Slideshow transition: None / Fade in-out / Merge (crossfade), background-area fanart only |
 | Transition duration | Fanart transition length in ms (50–3000, default 600) |
 | Unlimited fanart images per artist | Off (default) keeps a safe **30 images/artist** cap. On removes the cap after a confirmation that **this can crash** Peppy Screensaver / Volumio (RAM/CPU, especially on Pi). Host setting; also affects remotes that load fanart from the host |
+
+**Edition tag themes** let one library open different themes by edition. Rules are comma-separated, `Vinyl=1920x1080_name_Vinyl, Tape=1920x1080_name_Tape`. The left side is the text inside the brackets, case-insensitive. The right side is an installed theme folder. The last `[...]` group is the tag, so `[Vinyl] 2016` matches Vinyl and `[1973] Dark Side [SACD] MCH` matches SACD. If the album tag is not a rule, the folder that contains the file is tried the same way. A word without brackets does not match. No match returns to the home theme. The home setting itself is not replaced. A match restarts the meter on that folder, and a remote client follows. The track title is not read.
 
 The fanart slideshow appears only when this master switch is **on** *and* the active theme declares a fanart area (`fanart.pos` / `fanart.dimension` in `meters.txt`). Images are resolved from a cascade: your personal artist-art folder (`/data/albumart/personal/artist/<Artist>/`) → an `<Artist>/fanart/` folder in your music library/NAS (at the artist level, next to the album folders) → fanart.tv (via MusicBrainz) → Volumio's artist art proxy. Your own `<Artist>/fanart/` images take priority over fanart.tv. See the [wiki: Plugin Settings](https://github.com/foonerd/peppy_screensaver/wiki/Plugin-Settings#themes--artwork) and [meters.txt reference](https://github.com/foonerd/peppy_screensaver/wiki/meters.txt-Reference#artist-fanart-slideshow-artist-photos--backgrounds).
 

@@ -25,6 +25,9 @@ fi
 export LD_LIBRARY_PATH="$PLUGIN_DIR/lib/$ARCH:$PLUGIN_DIR/lib/$ARCH/python/pygame.libs:$PLUGIN_DIR/lib/$ARCH/python/pillow.libs:$LD_LIBRARY_PATH"
 export PYTHONPATH="$PLUGIN_DIR/lib/$ARCH/python:$PYTHONPATH"
 export DISPLAY=:0
+# Real finger/click writes this. Remote launchers do not set it.
+# Do not delete it here: the plugin exit callback reads it after this process ends.
+export PEPPY_USER_DISMISS_FILE=/tmp/peppy_user_dismiss
 
 # Try to discover X authority cookie from running X server command line.
 if [ -z "$XAUTHORITY" ] || [ ! -f "$XAUTHORITY" ]; then

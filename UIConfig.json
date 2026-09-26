@@ -4,6 +4,20 @@
   },
   "sections": [
                 {
+                "id": "glass_conf",
+                "element": "section",
+                "label": "TRANSLATE.PEPPY_SCREENSAVER.GLASS_SECTION",
+                "description": "TRANSLATE.PEPPY_SCREENSAVER.GLASS_NOTICE",
+                "icon": "fa-exclamation-triangle",
+                "hidden": false,
+                "onSave": {"type":"controller", "endpoint":"user_interface/peppy_screensaver", "method":"showGlassNotice"},
+                "saveButton": {
+                    "label": "TRANSLATE.PEPPY_SCREENSAVER.GLASS_HOWTO_BTN",
+                    "data": []
+                },
+                "content": []
+                },
+                {
                 "id": "audio_source_conf",
                 "element": "section",
                 "label": "TRANSLATE.PEPPY_SCREENSAVER.AUDIO_SOURCE_CONF",
@@ -214,6 +228,7 @@
                               "label": "TRANSLATE.PEPPY_SCREENSAVER.APPLY",
                               "data": [
                                       "activeFolder",
+                                      "themeTagRules",
                                       "themeToRemove",
                                       "doNotDeleteThemes",
                                       "fanartEnabled",
@@ -252,6 +267,17 @@
                                     "label": "BuildIn 1280x400"
                                  }
                                ]
+                            },
+                            {
+                             "id": "themeTagRules",
+                             "element": "input",
+                             "doc": "TRANSLATE.PEPPY_SCREENSAVER.THEME_TAG_RULES_DOC",
+                             "label": "TRANSLATE.PEPPY_SCREENSAVER.THEME_TAG_RULES",
+                             "value": "",
+                             "attributes": [
+                                             {"placeholder": "Vinyl=1920x1080_name_Vinyl, Tape=1920x1080_name_Tape"},
+                                             {"maxlength": 800}
+                                           ]
                             },
                             {
                              "id": "browseThemes",

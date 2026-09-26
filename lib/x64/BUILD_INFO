@@ -1,0 +1,6 @@
+repo=https://github.com/foonerd/peppyalsa.git
+ref=fix/fifo-descriptor-lifecycle
+commit=8cf830fe66e4cba8ad12d530a96103386a4132f2
+arch=amd64
+cflags=
+built=2026-09-25T13:23:03Z

@@ -38,6 +38,20 @@ echo "Using binaries from: $BIN_SOURCE"
 echo "Using libraries from: $LIB_SOURCE"
 echo "Using packages from: $PKG_SOURCE"
 
+# Glass, the successor of this plugin, cannot share the audio path with it.
+# While Glass is enabled this plugin does not install; a refused install
+# leaves nothing behind.
+GLASS_DIR="/data/plugins/user_interface/glass"
+if [ -d "$GLASS_DIR" ] && [ -f /data/configuration/plugins.json ]; then
+  GLASS_ENABLED=$(node -e 'try { var d = require("/data/configuration/plugins.json"); var p = d.user_interface && d.user_interface.glass; console.log(p && p.enabled && p.enabled.value === true ? "yes" : "no"); } catch (e) { console.log("no"); }' 2>/dev/null)
+  if [ "$GLASS_ENABLED" = "yes" ]; then
+    echo "ERROR: Glass is enabled. Glass supersedes PeppyMeter Screensaver and the two cannot share the audio path."
+    echo "Disable Glass in Plugins first if you must install PeppyMeter Screensaver."
+    rm -rf "$PLUGIN_DIR"
+    exit 1
+  fi
+fi
+
 # =============================================================================
 # INSTALL: System dependencies
 # =============================================================================
@@ -143,7 +157,12 @@ PEPPYSPECTRUM_DIR="$PLUGIN_DIR/screensaver/spectrum"
 if [ ! -d "$PEPPYSPECTRUM_DIR" ]; then
   git clone --depth 1 https://github.com/foonerd/PeppySpectrum.git "$PEPPYSPECTRUM_DIR"
 else
-  echo "PeppySpectrum already installed"
+  echo "PeppySpectrum already installed - refreshing engine module"
+  if [ -d "$PEPPYSPECTRUM_DIR/.git" ]; then
+    git -C "$PEPPYSPECTRUM_DIR" fetch --depth 1 origin 2>/dev/null || true
+    # Update only the engine module; leave config.txt and template folders untouched.
+    git -C "$PEPPYSPECTRUM_DIR" checkout FETCH_HEAD -- spectrum.py 2>/dev/null || true
+  fi
 fi
 
 # =============================================================================

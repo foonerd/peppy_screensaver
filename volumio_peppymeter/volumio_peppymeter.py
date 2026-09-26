@@ -17,6 +17,7 @@
 
 import os
 import sys
+import traceback
 import tempfile
 import time
 import ctypes
@@ -631,6 +632,47 @@ def detect_skin_type(mc_vol):
 # =============================================================================
 # MetadataWatcher - Socket.io listener for pushState events
 # =============================================================================
+def seconds_remaining(duration, seek_ms):
+    """Seconds left in a file, or -1 when the source has no duration.
+
+    A NAS file and a following webradio stream can share service 'mpd'.
+    Duration is the signal, not the service string. No duration must not
+    keep the previous file's countdown.
+    """
+    try:
+        duration_num = float(duration or 0)
+    except (TypeError, ValueError):
+        duration_num = 0.0
+    if duration_num <= 0:
+        return -1
+    try:
+        seek_num = int(float(seek_ms or 0))
+    except (TypeError, ValueError):
+        seek_num = 0
+    return max(0, int(duration_num - (seek_num // 1000)))
+
+
+_RENDER_ERROR = {"text": "", "ts": 0.0, "count": 0}
+
+
+def log_render_error(exc):
+    """Log a handler render failure without flooding the log.
+
+    One bad frame must not end the display loop. The data source threads
+    are not daemons, so a dead main thread leaves a process that never
+    answers the run flag. Skip the frame, log once per distinct error and
+    then at most every 10 s, keep running.
+    """
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip()
+    now = time.time()
+    _RENDER_ERROR["count"] += 1
+    if text != _RENDER_ERROR["text"] or now - _RENDER_ERROR["ts"] >= 10.0:
+        _RENDER_ERROR["text"] = text
+        _RENDER_ERROR["ts"] = now
+        log_debug(f"[Render] handler.render failed ({_RENDER_ERROR['count']} frames skipped so far):\n{text}", "basic")
+        print(f"peppy: render error, frame skipped: {exc!r}", file=sys.stderr)
+
+
 class MetadataWatcher:
     """
     Watches Volumio pushState events via socket.io.
@@ -854,19 +896,20 @@ class MetadataWatcher:
                 self.metadata["_seek_raw"] = seek  # Original value, never modified by render loop
                 self.metadata["_seek_update"] = time.time()  # Track when seek was received
                 # Always update time remaining from actual seek position
-                # This ensures pause/stop shows correct frozen time
-                if duration > 0:
-                    self.time_remain_sec = max(0, duration - (seek // 1000))
-                    self.time_last_update = time.time()
-                    self.time_service = service
-                elif service != self.time_service:
-                    # Service changed to one without duration (webradio)
-                    self.time_remain_sec = -1
-                    self.time_last_update = time.time()
-                    self.time_service = service
+                # This ensures pause/stop shows correct frozen time.
+                # Duration 0 clears it even when the service string did not change.
+                self.time_remain_sec = seconds_remaining(duration, seek)
+                self.time_last_update = time.time()
+                self.time_service = service
             else:
                 seek = int(prev_seek_raw + (time.time() - prev_seek_update) * 1000)
                 self.metadata["seek"] = seek
+                # Stale seek must not rewind a file countdown, but a stream
+                # with no duration must still drop the previous file's clock.
+                if seconds_remaining(duration, seek) < 0:
+                    self.time_remain_sec = -1
+                    self.time_last_update = time.time()
+                    self.time_service = service
 
             self.metadata["_time_remain"] = self.time_remain_sec
             self.metadata["_time_update"] = self.time_last_update
@@ -4073,11 +4116,39 @@ def init_display(pm, meter_config_volumio, screen_w, screen_h, hide=False):
 # =============================================================================
 # Stop Watcher Thread
 # =============================================================================
+_external_stop = False
+
+
+def should_mark_user_dismiss(dismiss_path, external_stop, runflag_exists):
+    """True only for a real finger/click while the screensaver launcher asked for the marker."""
+    if external_stop or not runflag_exists:
+        return False
+    return bool(dismiss_path)
+
+
+def mark_user_dismiss():
+    """Write PEPPY_USER_DISMISS_FILE so the plugin re-arms the timeout.
+
+    Remote launchers leave the env unset. stop_watcher sets _external_stop
+    before its synthetic MOUSEBUTTONUP, and a missing runFlag is a plugin stop.
+    """
+    path = os.environ.get('PEPPY_USER_DISMISS_FILE')
+    if not should_mark_user_dismiss(path, _external_stop, os.path.exists(PeppyRunning)):
+        return
+    try:
+        with open(path, 'w') as handle:
+            handle.write('1')
+    except OSError:
+        pass
+
+
 def stop_watcher():
     """Watch for PeppyRunning file deletion to trigger stop."""
+    global _external_stop
     while os.path.exists(PeppyRunning):
         time.sleep(1)
-    # File deleted - send quit event
+    # Flag before the synthetic button-up so that event is not a user dismiss.
+    _external_stop = True
     pg.event.post(pg.event.Event(pg.MOUSEBUTTONUP))
 
 
@@ -4679,14 +4750,18 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
             r, b = bd["type"]
             screen.blit(b, r.topleft)
         
-        # Check local icons first
+        # Check local icons first. Stock YouTube.svg is not named youtube.svg.
+        from volumio_typeformat import existing_icon_file, fit_icon_size
         local_icons = {'tidal', 'cd', 'qobuz', 'dab', 'fm', 'radio'}
+        icon_path = None
         if fmt in local_icons:
-            icon_path = os.path.join(file_path, 'format-icons', f"{fmt}.svg")
-        else:
-            icon_path = f"/volumio/http/www3/app/assets-common/format-icons/{fmt}.svg"
+            icon_path = existing_icon_file(os.path.join(file_path, 'format-icons'), fmt + '.svg')
+        if not icon_path:
+            icon_path = existing_icon_file(
+                '/volumio/http/www3/app/assets-common/format-icons', fmt + '.svg'
+            )
         
-        if not os.path.exists(icon_path):
+        if not icon_path or not os.path.exists(icon_path):
             # Render text fallback
             if overlay_state.get("sample_font"):
                 txt_surf = overlay_state["sample_font"].render(fmt[:4], True, type_color)
@@ -4707,6 +4782,12 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                 pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
                 img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
                 img = img.convert_alpha()
+                fitted = fit_icon_size(img.get_width(), img.get_height(), type_rect.width, type_rect.height)
+                if fitted and fitted != (img.get_width(), img.get_height()):
+                    try:
+                        img = pg.transform.smoothscale(img, fitted)
+                    except Exception:
+                        img = pg.transform.scale(img, fitted)
             elif pg.version.ver.startswith("2"):
                 # Fallback: Pygame 2 native SVG (platform-dependent size)
                 img = pg.image.load(icon_path)
@@ -4844,6 +4925,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                         running = False
                     elif event.type in exit_events:
                         if cfg.get(EXIT_ON_TOUCH, False) or cfg.get(STOP_DISPLAY_ON_TOUCH, False):
+                            mark_user_dismiss()
                             running = False
                 clock.tick(MAIN_LOOP_FRAME_RATE)
                 continue
@@ -4898,7 +4980,11 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                 last_metadata["_queue_mode"] = queue_mode
                 
                 # Handler-based rendering (handler calls meter.run() internally)
-                dirty_rects = handler.render(last_metadata, now_ticks)
+                try:
+                    dirty_rects = handler.render(last_metadata, now_ticks)
+                except Exception as render_exc:
+                    log_render_error(render_exc)
+                    dirty_rects = []
                 
                 # PROFILING: Log frame timing
                 if PROFILING_TIMING_ENABLED:
@@ -4942,6 +5028,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                         running = False
                     elif event.type in exit_events:
                         if cfg.get(EXIT_ON_TOUCH, False) or cfg.get(STOP_DISPLAY_ON_TOUCH, False):
+                            mark_user_dismiss()
                             running = False
                 
                 clock.tick(MAIN_LOOP_FRAME_RATE)
@@ -4990,6 +5077,7 @@ def start_display_output(pm, callback, meter_config_volumio, volumio_host='local
                     running = False
             elif event.type in exit_events:
                 if cfg.get(EXIT_ON_TOUCH, False) or cfg.get(STOP_DISPLAY_ON_TOUCH, False):
+                    mark_user_dismiss()
                     running = False
         
         # Broadcast level data to remote clients (if server mode enabled)
@@ -5245,6 +5333,19 @@ if __name__ == "__main__":
         del pm
         del callback
         trim_memory()
+        if os.path.exists(PeppyRunning):
+            os.remove(PeppyRunning)
+        os._exit(1)
+    except Exception:
+        # Never leave a dead main thread behind: the non-daemon data source
+        # threads keep the interpreter alive and the run flag goes unanswered.
+        text = traceback.format_exc().rstrip()
+        log_debug(f"[Fatal] unhandled exception, exiting:\n{text}", "basic")
+        print(text, file=sys.stderr)
+        try:
+            callback.exit_trim_memory()
+        except Exception:
+            pass
         if os.path.exists(PeppyRunning):
             os.remove(PeppyRunning)
         os._exit(1)

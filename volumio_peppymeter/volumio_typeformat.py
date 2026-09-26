@@ -303,43 +303,102 @@ def load_sized_font(font_path, font_filename, size, bold=False):
     return pg.font.SysFont("DejaVuSans", size, bold=bool(bold))
 
 
+def match_icon_name(names, basename):
+    """Exact filename first, then the same name with different case.
+
+    Volumio ships YouTube.svg. Linux will not open that as youtube.svg.
+    """
+    if not basename:
+        return None
+    if basename in names:
+        return basename
+    target = basename.lower()
+    for name in names:
+        if name.lower() == target:
+            return name
+    return None
+
+
+def fit_icon_size(src_w, src_h, box_w, box_h):
+    """Pixel size that fits src inside the box, keeping aspect ratio.
+
+    Returns None when either side is not a positive size. A source smaller
+    than the box is enlarged to meet the nearer edge, which is the existing
+    icon behaviour.
+    """
+    try:
+        src_w = int(src_w)
+        src_h = int(src_h)
+        box_w = int(box_w)
+        box_h = int(box_h)
+    except (TypeError, ValueError):
+        return None
+    if src_w <= 0 or src_h <= 0 or box_w <= 0 or box_h <= 0:
+        return None
+    scale = min(float(box_w) / float(src_w), float(box_h) / float(src_h))
+    return (max(1, int(src_w * scale)), max(1, int(src_h * scale)))
+
+
+def existing_icon_file(directory, basename):
+    """Path to basename in directory, allowing YouTube.svg to satisfy youtube.svg."""
+    if not directory or not basename:
+        return None
+    exact = os.path.join(directory, basename)
+    if os.path.isfile(exact):
+        return exact
+    try:
+        match = match_icon_name(os.listdir(directory), basename)
+    except OSError:
+        return None
+    if not match:
+        return None
+    found = os.path.join(directory, match)
+    if os.path.isfile(found):
+        return found
+    return None
+
+
 def resolve_icon_path(fmt_key, skin_icons_dir, plugin_dir):
     """
     Resolution order:
       1. skin format-icons/{key}.png then .svg
       2. plugin-local format-icons/{key}.svg (all keys)
       3. Volumio stock SVG
-    Returns path string (may not exist); caller checks os.path.exists.
+    Filename match is case-insensitive. Returns a path that exists, or the
+    stock path even when it is missing so the caller can fall back to text.
     """
     if not fmt_key:
         return None
 
     if skin_icons_dir:
-        try:
-            for ext in (".png", ".svg"):
-                cand = os.path.join(skin_icons_dir, fmt_key + ext)
-                if os.path.isfile(cand):
-                    return cand
-        except Exception:
-            pass
+        for ext in (".png", ".svg"):
+            found = existing_icon_file(skin_icons_dir, fmt_key + ext)
+            if found:
+                return found
 
     if plugin_dir:
-        local_svg = os.path.join(plugin_dir, "format-icons", f"{fmt_key}.svg")
-        if os.path.isfile(local_svg):
-            return local_svg
+        found = existing_icon_file(
+            os.path.join(plugin_dir, "format-icons"), fmt_key + ".svg"
+        )
+        if found:
+            return found
 
-    return f"{VOLUMIO_STOCK_ICONS}/{fmt_key}.svg"
+    stock_dir = VOLUMIO_STOCK_ICONS
+    found = existing_icon_file(stock_dir, fmt_key + ".svg")
+    if found:
+        return found
+    return os.path.join(stock_dir, fmt_key + ".svg")
 
 
 def _scale_to_box(img, box_w, box_h):
     """Scale surface to fit inside box; keep aspect ratio."""
-    if img is None or box_w <= 0 or box_h <= 0:
+    if img is None:
         return img
-    w, h = img.get_width(), img.get_height()
-    if w <= 0 or h <= 0:
+    new_size = fit_icon_size(img.get_width(), img.get_height(), box_w, box_h)
+    if not new_size:
         return img
-    sc = min(float(box_w) / float(w), float(box_h) / float(h))
-    new_size = (max(1, int(w * sc)), max(1, int(h * sc)))
+    if new_size == (img.get_width(), img.get_height()):
+        return img
     try:
         return pg.transform.smoothscale(img, new_size)
     except Exception:
@@ -360,6 +419,9 @@ def _load_icon_surface(icon_path, box_w, box_h, type_color):
             pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
             img = pg.image.fromstring(pil_img.tobytes(), pil_img.size, "RGBA")
             img = img.convert_alpha()
+            # svg2png can ignore output size on a large pt-based file such as
+            # YouTube.svg (900 x 336). Fit again so the blit cannot exceed the box.
+            img = _scale_to_box(img, box_w, box_h)
         elif is_svg and pg.version.ver.startswith("2"):
             img = pg.image.load(icon_path)
             img = _scale_to_box(img, box_w, box_h)

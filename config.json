@@ -47,6 +47,10 @@
     "value":"BuildIn 480x320",
     "type":"string"
   },
+  "themeTagRules": {
+    "value": "",
+    "type": "string"
+  },
   "displayOutput": {
     "value":"0",
     "type":"number"
