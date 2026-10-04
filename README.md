@@ -1,3 +1,9 @@
+> **This project is closed (October 2026) and this repository is archived.**
+>
+> PeppyMeter Screensaver for Volumio is succeeded by **[Glass](https://github.com/foonerd/glass)**, a display for Volumio players that draws the same meter, spectrum, turntable and cassette themes with an engine of its own. Glass takes over an installed PeppyMeter Screensaver's themes and settings when it is first installed. Releases, documentation and support continue there: the [repository](https://github.com/foonerd/glass), its [wiki](https://github.com/foonerd/glass/wiki) and its [issues](https://github.com/foonerd/glass/issues). The themes continue in [glass_templates](https://github.com/foonerd/glass_templates).
+>
+> Nothing here is updated any more. The repository stays readable for reference.
+
 # PeppyMeter Screensaver for Volumio 4
 
 VU meter and spectrum analyzer screensaver plugin for Volumio 4.x (Bookworm).
